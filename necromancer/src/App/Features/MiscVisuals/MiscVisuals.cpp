@@ -643,12 +643,15 @@ void CMiscVisuals::Thirdperson(CViewSetup* pSetup)
 			CFG::Visuals_Thirdperson_Active = !CFG::Visuals_Thirdperson_Active;
 	}
 
-	const bool bShouldDoTP = CFG::Visuals_Thirdperson_Active
+	// Clean screenshot - force first person view
+	const bool bCleanScreenshot = CFG::Misc_Clean_Screenshot && I::EngineClient->IsTakingScreenshot();
+
+	const bool bShouldDoTP = !bCleanScreenshot && (CFG::Visuals_Thirdperson_Active
 		|| pLocal->InCond(TF_COND_TAUNTING)
 		|| pLocal->InCond(TF_COND_HALLOWEEN_KART)
 		|| pLocal->InCond(TF_COND_HALLOWEEN_THRILLER)
 		|| pLocal->InCond(TF_COND_HALLOWEEN_GHOST_MODE)
-		|| G::bStartedFakeTaunt;
+		|| G::bStartedFakeTaunt);
 
 	if (bShouldDoTP)
 	{

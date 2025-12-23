@@ -5,6 +5,7 @@
 #include "../../TF2/renderutils.h"
 #include "../../Steam/SteamInterfaces.h"
 #include "../../SDK.h"
+#include "../../../App/Features/CFG.h"
 #include <cstdint>
 
 #pragma warning (disable : 6385)
@@ -461,6 +462,10 @@ void CDraw::RenderBox(const Vec3& vOrigin, const Vec3& vMins, const Vec3& vMaxs,
 
 void CDraw::DrawStoredPaths()
 {
+	// Clean screenshot - don't draw simulation paths
+	if (CFG::Misc_Clean_Screenshot && I::EngineClient->IsTakingScreenshot())
+		return;
+
 	// Draw all stored paths
 	for (const auto& tPath : G::PathStorage)
 	{

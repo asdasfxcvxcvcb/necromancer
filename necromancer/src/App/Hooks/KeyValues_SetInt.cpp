@@ -15,6 +15,6 @@ MAKE_HOOK(KeyValues_SetInt, Signatures::KeyValues_SetInt.Get(), void, __fastcall
 
 	CALL_ORIGINAL(ecx, keyName, value);
 
-	if (CFG::Visuals_Reveal_Scoreboard && dwRetAddr == dwDesired && keyName && std::string_view(keyName).find("nemesis") != std::string_view::npos)
+	if (CFG::Visuals_Reveal_Scoreboard && !(CFG::Misc_Clean_Screenshot && I::EngineClient->IsTakingScreenshot()) && dwRetAddr == dwDesired && keyName && std::string_view(keyName).find("nemesis") != std::string_view::npos)
 		*static_cast<uintptr_t*>(_AddressOfReturnAddress()) = dwJump;
 }

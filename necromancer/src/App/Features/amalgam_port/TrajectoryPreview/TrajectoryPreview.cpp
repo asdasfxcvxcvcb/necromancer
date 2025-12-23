@@ -7,6 +7,10 @@ void CTrajectoryPreview::ProjectileTrace(C_TFPlayer* pPlayer, C_TFWeaponBase* pW
     if (!CFG::Visuals_Trajectory_Preview_Active || CFG::Visuals_Trajectory_Preview_Style == 0)
         return;
 
+    // Clean screenshot - don't draw trajectory preview
+    if (CFG::Misc_Clean_Screenshot && I::EngineClient->IsTakingScreenshot())
+        return;
+
     // Get current view angles for real-time preview
     Vec3 vAngles = I::EngineClient->GetViewAngles();
     int iFlags = bQuick ? ProjSimEnum::Trace | ProjSimEnum::InitCheck | ProjSimEnum::Quick 

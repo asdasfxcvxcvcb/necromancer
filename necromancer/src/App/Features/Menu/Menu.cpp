@@ -2879,6 +2879,12 @@ void CMenu::MainWindow()
 				CheckBox("World Model", CFG::Visuals_ViewModel_WorldModel);
 			}
 			GroupBoxEnd();
+
+			GroupBoxStart("Anti Capture", 150);
+			{
+				CheckBox("Clean Screenshot", CFG::Misc_Clean_Screenshot);
+			}
+			GroupBoxEnd();
 		}
 
 		if (VisualsTab == EVisualsTabs::OTHER2)

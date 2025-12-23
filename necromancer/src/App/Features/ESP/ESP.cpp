@@ -1125,6 +1125,10 @@ void CESP::DrawProjectileSimulation()
 {
 	if (!CFG::Visuals_Draw_Movement_Path_Style)
 		return;
+
+	// Clean screenshot - don't draw simulation paths
+	if (CFG::Misc_Clean_Screenshot && I::EngineClient->IsTakingScreenshot())
+		return;
 	
 	// Draw paths from G::PathStorage
 	for (auto it = G::PathStorage.begin(); it != G::PathStorage.end();)

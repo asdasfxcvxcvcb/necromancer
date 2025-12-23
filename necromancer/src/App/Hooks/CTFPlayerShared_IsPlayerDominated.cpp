@@ -15,7 +15,7 @@ MAKE_HOOK(CTFPlayerShared_IsPlayerDominated, Signatures::CTFPlayerShared_IsPlaye
 
 	const bool bResult = CALL_ORIGINAL(ecx, index);
 
-	if (CFG::Visuals_Reveal_Scoreboard && dwRetAddr == dwDesired && !bResult)
+	if (CFG::Visuals_Reveal_Scoreboard && !(CFG::Misc_Clean_Screenshot && I::EngineClient->IsTakingScreenshot()) && dwRetAddr == dwDesired && !bResult)
 		*static_cast<uintptr_t*>(_AddressOfReturnAddress()) = dwJump;
 
 	return bResult;

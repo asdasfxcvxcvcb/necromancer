@@ -150,6 +150,7 @@
     <ClCompile Include="src\App\Features\FakeLagFix\FakeLagFix.cpp" />
     <ClCompile Include="src\App\Features\Triggerbot\AutoSapper\AutoSapper.cpp" />
     <ClCompile Include="src\App\Features\Weather\Weather.cpp" />
+    <ClCompile Include="src\App\Hooks\CClientScoreBoardDialog_NeedsUpdate.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\App\Features\Aimbot\AimbotHitscan\AimbotHitscan.h" />
