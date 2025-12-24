@@ -5,388 +5,7 @@
 #include "../CFG.h"
 #include "../VisualUtils/VisualUtils.h"
 #include "../Players/Players.h"
-
-#include <winhttp.h>
-#include <nlohmann/json.hpp>
-#include <thread>
-#include <mutex>
-#include <set>
-
-#pragma comment(lib, "winhttp.lib")
-
-// Sourcebans data structure
-struct SourcebanInfo_t
-{
-	bool m_bFetched = false;
-	bool m_bFetching = false;
-	bool m_bHasBans = false;
-	bool m_bAlertDismissed = false; // Alert dismissed when user views profile
-	std::vector<std::string> m_vecBans; // "Server: Reason (State)"
-};
-
-static std::map<uint64_t, SourcebanInfo_t> g_mapSourcebans;
-static std::mutex g_mtxSourcebans;
-static std::set<uint64_t> g_setCheckedPlayers; // Track which players we've already queued for checking
-static bool g_bWasConnected = false; // Track connection state to detect new game joins
-
-// Pending chat alerts to be processed on main thread
-struct PendingBanAlert_t
-{
-	std::string playerName;
-	int banCount;
-	uint64_t steamID64; // To look up team at display time
-};
-static std::vector<PendingBanAlert_t> g_vecPendingBanAlerts;
-static std::mutex g_mtxPendingAlerts;
-
-// Process pending ban alerts on main thread (call from Paint hook or similar)
-void ProcessPendingBanAlerts()
-{
-	std::lock_guard<std::mutex> lock(g_mtxPendingAlerts);
-	if (g_vecPendingBanAlerts.empty())
-		return;
-
-	// Wait until local player exists and has chosen a class
-	const auto pLocal = H::Entities->GetLocal();
-	if (!pLocal || pLocal->m_iClass() == TF_CLASS_UNDEFINED)
-		return;
-
-	int nLocalTeam = pLocal->m_iTeamNum();
-	auto pResource = GetTFPlayerResource();
-
-	for (const auto& alert : g_vecPendingBanAlerts)
-	{
-		// Find player's team
-		bool bIsTeammate = false;
-		for (int n = 1; n <= I::EngineClient->GetMaxClients(); n++)
-		{
-			player_info_t pi{};
-			if (I::EngineClient->GetPlayerInfo(n, &pi) && !pi.fakeplayer)
-			{
-				uint64_t playerSteamID = static_cast<uint64_t>(pi.friendsID) + 0x0110000100000000ULL;
-				if (playerSteamID == alert.steamID64)
-				{
-					if (pResource)
-						bIsTeammate = (pResource->GetTeam(n) == nLocalTeam);
-					break;
-				}
-			}
-		}
-
-		// Color based on ban count: yellow (1-2), orange (3+)
-		Color_t banColor = (alert.banCount <= 2) ? Color_t{ 255, 255, 0, 255 } : Color_t{ 255, 165, 0, 255 };
-		Color_t alertColor = { 255, 50, 50, 255 }; // Red for ALERT!
-		Color_t nameColor = bIsTeammate ? CFG::Color_Teammate : CFG::Color_Enemy;
-		Color_t teamColor = bIsTeammate ? CFG::Color_Teammate : CFG::Color_Enemy;
-		const char* teamStr = bIsTeammate ? "Teammate" : "Enemy";
-
-		I::ClientModeShared->m_pChatElement->ChatPrintf(0,
-			std::format("\x1PLAYER [\x8{}{}] \x1HAS \x8{}{} BANS \x8{}ALERT! \x8{}({})",
-				nameColor.toHexStr(),
-				alert.playerName,
-				banColor.toHexStr(),
-				alert.banCount,
-				alertColor.toHexStr(),
-				teamColor.toHexStr(),
-				teamStr).c_str());
-	}
-	g_vecPendingBanAlerts.clear();
-}
-
-// Dismiss alert for a player (called when viewing their profile)
-static void DismissSourcebansAlert(uint64_t steamID64)
-{
-	std::lock_guard<std::mutex> lock(g_mtxSourcebans);
-	if (g_mapSourcebans.count(steamID64) > 0)
-		g_mapSourcebans[steamID64].m_bAlertDismissed = true;
-}
-
-// Async function to fetch sourcebans for multiple players (batch)
-static void FetchSourcebansBatch(const std::vector<uint64_t>& steamIDs)
-{
-	if (steamIDs.empty())
-		return;
-
-	// Mark all as fetching
-	{
-		std::lock_guard<std::mutex> lock(g_mtxSourcebans);
-		for (uint64_t id : steamIDs)
-		{
-			if (!g_mapSourcebans[id].m_bFetched && !g_mapSourcebans[id].m_bFetching)
-				g_mapSourcebans[id].m_bFetching = true;
-		}
-	}
-
-	std::thread([steamIDs]()
-	{
-		// Build comma-separated list of Steam IDs (max 100 per API call)
-		std::wstring steamIdList;
-		for (size_t i = 0; i < steamIDs.size() && i < 100; i++)
-		{
-			if (i > 0) steamIdList += L",";
-			wchar_t buf[32];
-			swprintf_s(buf, L"%llu", steamIDs[i]);
-			steamIdList += buf;
-		}
-
-		I::CVar->ConsoleColorPrintf({ 150, 200, 255, 255 }, "[Sourcebans] Checking %d players...\n", static_cast<int>(steamIDs.size()));
-
-		HINTERNET hSession = WinHttpOpen(L"Necromancer/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-		if (hSession)
-		{
-			HINTERNET hConnect = WinHttpConnect(hSession, L"steamhistory.net", INTERNET_DEFAULT_HTTPS_PORT, 0);
-			if (hConnect)
-			{
-				std::wstring path = L"/api/sourcebans?key=ebef9bef3d940cb190b5328697524103&shouldkey=1&steamids=" + steamIdList; //dummy account generated this key
-
-				HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", path.c_str(), NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
-				if (hRequest)
-				{
-					if (WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0))
-					{
-						if (WinHttpReceiveResponse(hRequest, NULL))
-						{
-							std::string response;
-							DWORD dwSize = 0;
-							DWORD dwDownloaded = 0;
-
-							do
-							{
-								dwSize = 0;
-								WinHttpQueryDataAvailable(hRequest, &dwSize);
-								if (dwSize > 0)
-								{
-									std::vector<char> buffer(dwSize + 1, 0);
-									WinHttpReadData(hRequest, buffer.data(), dwSize, &dwDownloaded);
-									response.append(buffer.data(), dwDownloaded);
-								}
-							} while (dwSize > 0);
-
-							I::CVar->ConsoleColorPrintf({ 150, 200, 255, 255 }, "[Sourcebans] Response received (%d bytes)\n", static_cast<int>(response.size()));
-							I::CVar->ConsoleColorPrintf({ 100, 100, 100, 255 }, "[Sourcebans] Raw: %s\n", response.substr(0, 500).c_str());
-
-							// Initialize all as fetched with no bans
-							std::lock_guard<std::mutex> lock(g_mtxSourcebans);
-							for (uint64_t id : steamIDs)
-							{
-								g_mapSourcebans[id].m_bFetched = true;
-								g_mapSourcebans[id].m_bFetching = false;
-							}
-
-							// Parse JSON response (with shouldkey=1, response is keyed by SteamID)
-							try
-							{
-								auto json = nlohmann::json::parse(response);
-								if (json.contains("response"))
-								{
-									const auto& resp = json["response"];
-									
-									// If it's an object (keyed by SteamID)
-									if (resp.is_object())
-									{
-										for (auto& [steamIdStr, bans] : resp.items())
-										{
-											uint64_t steamId = std::stoull(steamIdStr);
-											
-											if (bans.is_array())
-											{
-												for (const auto& ban : bans)
-												{
-													g_mapSourcebans[steamId].m_bHasBans = true;
-													std::string banStr;
-													
-													std::string server = "Unknown";
-													std::string reason = "No reason";
-													std::string state = "Unknown";
-													
-													if (ban.contains("Server") && !ban["Server"].is_null())
-														server = ban["Server"].get<std::string>();
-													if (ban.contains("BanReason") && !ban["BanReason"].is_null())
-														reason = ban["BanReason"].get<std::string>();
-													if (ban.contains("CurrentState") && !ban["CurrentState"].is_null())
-														state = ban["CurrentState"].get<std::string>();
-
-													banStr = server + ": " + reason + " (" + state + ")";
-													g_mapSourcebans[steamId].m_vecBans.push_back(banStr);
-
-													I::CVar->ConsoleColorPrintf({ 255, 100, 100, 255 }, "[Sourcebans] BAN FOUND: %llu - %s\n", steamId, banStr.c_str());
-												}
-											}
-										}
-									}
-									// If it's an array (old format without shouldkey)
-									else if (resp.is_array())
-									{
-										for (const auto& ban : resp)
-										{
-											if (ban.contains("SteamID") && !ban["SteamID"].is_null())
-											{
-												uint64_t steamId = std::stoull(ban["SteamID"].get<std::string>());
-												g_mapSourcebans[steamId].m_bHasBans = true;
-												
-												std::string banStr;
-												std::string server = "Unknown";
-												std::string reason = "No reason";
-												std::string state = "Unknown";
-												
-												if (ban.contains("Server") && !ban["Server"].is_null())
-													server = ban["Server"].get<std::string>();
-												if (ban.contains("BanReason") && !ban["BanReason"].is_null())
-													reason = ban["BanReason"].get<std::string>();
-												if (ban.contains("CurrentState") && !ban["CurrentState"].is_null())
-													state = ban["CurrentState"].get<std::string>();
-
-												banStr = server + ": " + reason + " (" + state + ")";
-												g_mapSourcebans[steamId].m_vecBans.push_back(banStr);
-
-												I::CVar->ConsoleColorPrintf({ 255, 100, 100, 255 }, "[Sourcebans] BAN FOUND: %llu - %s\n", steamId, banStr.c_str());
-											}
-										}
-									}
-								}
-
-								int nBannedCount = 0;
-								for (uint64_t id : steamIDs)
-								{
-									if (g_mapSourcebans[id].m_bHasBans)
-										nBannedCount++;
-								}
-								I::CVar->ConsoleColorPrintf({ 150, 255, 150, 255 }, "[Sourcebans] Check complete: %d/%d players have bans\n", nBannedCount, static_cast<int>(steamIDs.size()));
-
-								// Queue chat alerts for players with bans (will be processed on main thread)
-								if (CFG::Visuals_Chat_Ban_Alerts)
-								{
-									for (uint64_t id : steamIDs)
-									{
-										if (g_mapSourcebans[id].m_bHasBans && !g_mapSourcebans[id].m_bAlertDismissed)
-										{
-											int banCount = static_cast<int>(g_mapSourcebans[id].m_vecBans.size());
-											
-											// Find player name from entity list
-											std::string playerName = "Unknown";
-											for (int n = 1; n <= I::EngineClient->GetMaxClients(); n++)
-											{
-												player_info_t pi{};
-												if (I::EngineClient->GetPlayerInfo(n, &pi) && !pi.fakeplayer)
-												{
-													uint64_t playerSteamID = static_cast<uint64_t>(pi.friendsID) + 0x0110000100000000ULL;
-													if (playerSteamID == id)
-													{
-														playerName = pi.name;
-														break;
-													}
-												}
-											}
-											
-											// Queue alert for main thread
-											{
-												std::lock_guard<std::mutex> alertLock(g_mtxPendingAlerts);
-												g_vecPendingBanAlerts.push_back({ playerName, banCount });
-											}
-										}
-									}
-								}
-							}
-							catch (const std::exception& e)
-							{
-								I::CVar->ConsoleColorPrintf({ 255, 100, 100, 255 }, "[Sourcebans] JSON parse error: %s\n", e.what());
-							}
-						}
-					}
-					else
-					{
-						I::CVar->ConsoleColorPrintf({ 255, 100, 100, 255 }, "[Sourcebans] Failed to send request\n");
-					}
-					WinHttpCloseHandle(hRequest);
-				}
-				WinHttpCloseHandle(hConnect);
-			}
-			WinHttpCloseHandle(hSession);
-		}
-		else
-		{
-			I::CVar->ConsoleColorPrintf({ 255, 100, 100, 255 }, "[Sourcebans] Failed to open HTTP session\n");
-		}
-	}).detach();
-}
-
-// Single player fetch (for manual refresh)
-static void FetchSourcebans(uint64_t steamID64)
-{
-	FetchSourcebansBatch({ steamID64 });
-}
-
-// Check all players in the server (checks new players automatically)
-static void CheckAllPlayersSourcebans()
-{
-	if (!I::EngineClient->IsConnected())
-	{
-		// Reset when disconnected so we check again on next connect
-		if (g_bWasConnected)
-		{
-			g_bWasConnected = false;
-			std::lock_guard<std::mutex> lock(g_mtxSourcebans);
-			g_setCheckedPlayers.clear();
-			// Don't clear g_mapSourcebans - keep the cache for players we've seen before
-			
-			// Clear current session for player stats
-			F::Players->ClearCurrentSession();
-		}
-		return;
-	}
-
-	g_bWasConnected = true;
-
-	std::vector<uint64_t> steamIDsToCheck;
-
-	for (int n = 1; n < I::EngineClient->GetMaxClients() + 1; n++)
-	{
-		if (n == I::EngineClient->GetLocalPlayer())
-			continue;
-
-		player_info_t player_info{};
-		if (!I::EngineClient->GetPlayerInfo(n, &player_info) || player_info.fakeplayer)
-			continue;
-
-		if (player_info.friendsID == 0)
-			continue;
-
-		uint64_t steamID64 = static_cast<uint64_t>(player_info.friendsID) + 0x0110000100000000ULL;
-
-		// Skip if already checked or currently checking
-		{
-			std::lock_guard<std::mutex> lock(g_mtxSourcebans);
-			if (g_setCheckedPlayers.count(steamID64) > 0)
-				continue;
-			if (g_mapSourcebans[steamID64].m_bFetched || g_mapSourcebans[steamID64].m_bFetching)
-			{
-				g_setCheckedPlayers.insert(steamID64); // Mark as checked if already in cache
-				continue;
-			}
-			g_setCheckedPlayers.insert(steamID64);
-		}
-
-		// Record encounter for this player (first time seeing them this session)
-		F::Players->RecordEncounter(steamID64);
-
-		steamIDsToCheck.push_back(steamID64);
-	}
-
-	if (!steamIDsToCheck.empty())
-	{
-		FetchSourcebansBatch(steamIDsToCheck);
-	}
-}
-
-// Helper to check if a player has sourcebans alert (not dismissed)
-static bool HasSourcebansAlert(uint64_t steamID64)
-{
-	std::lock_guard<std::mutex> lock(g_mtxSourcebans);
-	auto it = g_mapSourcebans.find(steamID64);
-	if (it != g_mapSourcebans.end())
-		return it->second.m_bHasBans && !it->second.m_bAlertDismissed;
-	return false;
-}
+#include "../../CheaterDatabase/CheaterDatabase.h"
 
 #define multiselect(label, unique, ...) static std::vector<std::pair<const char *, bool &>> unique##multiselect = __VA_ARGS__; \
 SelectMulti(label, unique##multiselect)
@@ -2379,7 +1998,6 @@ void CMenu::MainWindow()
 				CheckBox("Target Lag Records", CFG::Aimbot_Melee_Target_LagRecords);
 
 				CheckBox("Predict Swing", CFG::Aimbot_Melee_Predict_Swing);
-				CheckBox("Visualize Prediction", CFG::Aimbot_Melee_Visualize_Prediction);
 				CheckBox("Walk To Target", CFG::Aimbot_Melee_Walk_To_Target);
 				CheckBox("Whip Teammates", CFG::Aimbot_Melee_Whip_Teammates);
 				CheckBox("Auto Repair Buildings", CFG::Aimbot_Melee_Auto_Repair);
@@ -4557,12 +4175,7 @@ void CMenu::MainWindow()
 
 			// Check if we need to fetch data
 			SourcebanInfo_t sourcebanInfo;
-			{
-				std::lock_guard<std::mutex> lock(g_mtxSourcebans);
-				auto it = g_mapSourcebans.find(steamID64);
-				if (it != g_mapSourcebans.end())
-					sourcebanInfo = it->second;
-			}
+			GetSourcebansInfo(steamID64, sourcebanInfo);
 
 			if (!sourcebanInfo.m_bFetched && !sourcebanInfo.m_bFetching)
 			{
@@ -4615,8 +4228,53 @@ void CMenu::MainWindow()
 				// Refresh button
 				if (Button("Refresh", false, 70))
 				{
-					std::lock_guard<std::mutex> lock(g_mtxSourcebans);
-					g_mapSourcebans.erase(steamID64);
+					ClearSourcebansCache(steamID64);
+				}
+			}
+		}
+		GroupBoxEnd();
+
+		// Verobay Database section
+		m_nCursorY += CFG::Menu_Spacing_Y;
+		GroupBoxStart("Verobay Database", 450);
+		{
+			m_nCursorY += CFG::Menu_Spacing_Y;
+
+			uint64_t steamID64 = static_cast<uint64_t>(player_info.friendsID) + 0x0110000100000000ULL;
+
+			VerobayInfo_t verobayInfo;
+			GetVerobayInfo(steamID64, verobayInfo);
+
+			if (!verobayInfo.m_bFetched && !verobayInfo.m_bFetching)
+			{
+				// Database not loaded yet
+				if (Button("Load Database", false, 120))
+				{
+					FetchVerobayDatabase();
+				}
+			}
+			else if (verobayInfo.m_bFetching)
+			{
+				H::Draw->String(H::Fonts->Get(EFonts::Menu), m_nCursorX, m_nCursorY, CFG::Menu_Text_Inactive, POS_DEFAULT, "Fetching database...");
+				m_nCursorY += H::Fonts->Get(EFonts::Menu).m_nTall + CFG::Menu_Spacing_Y;
+			}
+			else if (verobayInfo.m_bFetched)
+			{
+				if (verobayInfo.m_bFoundInDatabase)
+				{
+					H::Draw->String(H::Fonts->Get(EFonts::Menu), m_nCursorX, m_nCursorY, CFG::Color_Cheater, POS_DEFAULT, "FOUND IN DATABASE");
+					m_nCursorY += H::Fonts->Get(EFonts::Menu).m_nTall + CFG::Menu_Spacing_Y;
+				}
+				else
+				{
+					H::Draw->String(H::Fonts->Get(EFonts::Menu), m_nCursorX, m_nCursorY, CFG::Color_Friend, POS_DEFAULT, "Not found in database");
+					m_nCursorY += H::Fonts->Get(EFonts::Menu).m_nTall + CFG::Menu_Spacing_Y;
+				}
+
+				// Refresh button
+				if (Button("Refresh", false, 70))
+				{
+					RefreshVerobayDatabase();
 				}
 			}
 		}

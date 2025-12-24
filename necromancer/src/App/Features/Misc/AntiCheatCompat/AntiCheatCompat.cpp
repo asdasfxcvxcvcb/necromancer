@@ -3,12 +3,37 @@
 #include "../Misc.h"
 
 // Debug flag - set to true to enable console output
-static bool g_bDebugAntiCheat = true;
+static bool g_bDebugAntiCheat = false;
+
+// Store original values to restore when anti-cheat is disabled
+static bool g_bOriginalNeckbreaker = false;
+static bool g_bSavedOriginals = false;
 
 void CAntiCheatCompat::ProcessCommand(CUserCmd* pCmd, bool* pSendPacket)
 {
-	if (!CFG::Misc_AntiCheat_Enabled)
+	// Handle feature disabling when anti-cheat is enabled
+	if (CFG::Misc_AntiCheat_Enabled)
+	{
+		// Save original values once
+		if (!g_bSavedOriginals)
+		{
+			g_bOriginalNeckbreaker = CFG::Aimbot_Projectile_Neckbreaker;
+			g_bSavedOriginals = true;
+		}
+		
+		// Force disable neckbreaker - doesn't work well with anti-cheat
+		CFG::Aimbot_Projectile_Neckbreaker = false;
+	}
+	else
+	{
+		// Restore original values when anti-cheat is disabled
+		if (g_bSavedOriginals)
+		{
+			CFG::Aimbot_Projectile_Neckbreaker = g_bOriginalNeckbreaker;
+			g_bSavedOriginals = false;
+		}
 		return;
+	}
 
 	// Skip anti-cheat processing during rocket jump - we need exact angles for rocket jumping
 	// Matching Amalgam's behavior where AutoRocketJump bypasses anti-cheat checks

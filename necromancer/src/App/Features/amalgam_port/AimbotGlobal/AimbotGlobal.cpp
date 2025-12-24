@@ -1,5 +1,6 @@
 #include "AimbotGlobal.h"
 #include "../Ticks/Ticks.h"
+#include "../../Players/Players.h"
 
 void CAimbotGlobal::SortTargets(std::vector<Target_t>& targets, int iMethod)
 {
@@ -144,10 +145,15 @@ bool CAimbotGlobal::ShouldIgnore(C_BaseEntity* pTarget, C_TFPlayer* pLocal, C_TF
                 return true;
         }
 
-        // Friends (using SEOwnedDE's friend system)
+        // Friends/Ignored players (using SEOwnedDE's player list system)
         if (Vars::Aimbot::General::Ignore.Value & Vars::Aimbot::General::IgnoreEnum::Friends)
         {
-            // TODO: Check friend list
+            PlayerPriority priority{};
+            if (F::Players->GetInfo(pPlayer->entindex(), priority))
+            {
+                if (priority.Ignored)
+                    return true;
+            }
         }
     }
 

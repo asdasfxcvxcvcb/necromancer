@@ -3,9 +3,6 @@
 #include "../../../SDK/SDK.h"
 #include "MenuAnimations.h"
 
-// Process pending ban alerts (call from main thread)
-void ProcessPendingBanAlerts();
-
 // Draggable GroupBox system
 enum class EGroupBoxColumn { LEFT = 0, MIDDLE = 1, RIGHT = 2 };
 

@@ -11,6 +11,7 @@
     <ClCompile Include="src\App\Features\Materials\Materials.cpp" />
     <ClCompile Include="src\App\Features\Menu\LateRenderer\LateRenderer.cpp" />
     <ClCompile Include="src\App\Features\Menu\Menu.cpp" />
+    <ClCompile Include="src\App\CheaterDatabase\CheaterDatabase.cpp" />
     <ClCompile Include="src\App\Features\Misc\Misc.cpp" />
     <ClCompile Include="src\App\Features\Misc\AntiCheatCompat\AntiCheatCompat.cpp" />
     <ClCompile Include="src\App\Features\MiscVisuals\MiscVisuals.cpp" />
@@ -163,6 +164,7 @@
     <ClInclude Include="src\App\Features\Materials\Materials.h" />
     <ClInclude Include="src\App\Features\Menu\LateRenderer\LateRenderer.h" />
     <ClInclude Include="src\App\Features\Menu\Menu.h" />
+    <ClInclude Include="src\App\CheaterDatabase\CheaterDatabase.h" />
     <ClInclude Include="src\App\Features\Misc\Misc.h" />
     <ClInclude Include="src\App\Features\Misc\AntiCheatCompat\AntiCheatCompat.h" />
     <ClInclude Include="src\App\Features\MiscVisuals\MiscVisuals.h" />

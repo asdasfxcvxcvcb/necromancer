@@ -123,7 +123,6 @@ namespace CFG
 	CFGVAR(Aimbot_Melee_Walk_To_Target, false);
 	CFGVAR(Aimbot_Melee_Whip_Teammates, true);
 	CFGVAR(Aimbot_Melee_Crouch_Airborne, false);
-	CFGVAR(Aimbot_Melee_Visualize_Prediction, false);
 	CFGVAR(Aimbot_Melee_Auto_Repair, true); // Auto target friendly buildings that need repair/upgrade/ammo
 
 	// Wrangler Aimbot - uses hitscan settings for aim type, FOV, smoothing
