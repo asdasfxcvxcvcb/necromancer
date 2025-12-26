@@ -424,6 +424,7 @@ namespace CFG
 	CFGVAR(Visuals_Reveal_Scoreboard, true);
 	CFGVAR(Visuals_Scoreboard_Utility, true);
 	CFGVAR(Visuals_Tracer_Type, 0); //0 Default 1 C.A.P.P.E.R 2 Machina (White) 3 Machina (Team) 4 Big Nasty 5 Short Circuit 6 Mrasmus Zap 7 Random 8 Random (No Merasmus Zap)
+	CFGVAR(Visuals_Crit_Tracer_Type, 0); //0 Off 1 C.A.P.P.E.R 2 Machina (White) 3 Machina (Team) 4 Big Nasty 5 Short Circuit 6 Mrasmus Zap 7 Random 8 Random (No Merasmus Zap)
 
 	CFGVAR(Visuals_ViewModel_Active, false);
 	CFGVAR(Visuals_ViewModel_Sway, false);

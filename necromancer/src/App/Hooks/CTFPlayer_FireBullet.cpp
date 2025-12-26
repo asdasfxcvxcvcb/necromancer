@@ -2,6 +2,12 @@
 
 #include "../Features/CFG.h"
 
+// Global flag to track if current bullet is a crit (set by FireBullet, read by GetTracerType)
+namespace CritTracerState
+{
+	inline bool g_bCurrentBulletIsCrit = false;
+}
+
 MAKE_SIGNATURE(CTFPlayer_FireBullet, "client.dll", "48 89 74 24 ? 55 57 41 55 41 56 41 57 48 8D AC 24 ? ? ? ? 48 81 EC ? ? ? ? F3 41 0F 10 58", 0x0);
 
 MAKE_HOOK(CTFPlayer_FireBullet, Signatures::CTFPlayer_FireBullet.Get(), void, __fastcall,
@@ -11,6 +17,11 @@ MAKE_HOOK(CTFPlayer_FireBullet, Signatures::CTFPlayer_FireBullet.Get(), void, __
 	{
 		if (ecx == pLocal)
 		{
+			const bool bIsCrit = (nDamageType & DMG_CRITICAL) != 0;
+			
+			// Set global crit state for GetTracerType hook
+			CritTracerState::g_bCurrentBulletIsCrit = bIsCrit;
+
 			if (CFG::Visuals_Tracer_Type)
 			{
 				if (nDamageType & DMG_CRITICAL)
@@ -21,7 +32,15 @@ MAKE_HOOK(CTFPlayer_FireBullet, Signatures::CTFPlayer_FireBullet.Get(), void, __
 				info.m_iTracerFreq = 1;
 			}
 
-			if (CFG::Visuals_Beams_Active)
+			// Enable tracer for crit shots if crit tracer effect is set
+			if (CFG::Visuals_Crit_Tracer_Type > 0 && bIsCrit)
+			{
+				info.m_iTracerFreq = 1;
+			}
+
+			const bool bDrawBeam = CFG::Visuals_Beams_Active;
+
+			if (bDrawBeam)
 			{
 				info.m_iTracerFreq = 0;
 
@@ -56,9 +75,11 @@ MAKE_HOOK(CTFPlayer_FireBullet, Signatures::CTFPlayer_FireBullet.Get(), void, __
 				beam.m_flSpeed = CFG::Visuals_Beams_Speed;
 				beam.m_nStartFrame = 0;
 				beam.m_flFrameRate = 0;
+
 				beam.m_flRed = static_cast<float>(CFG::Color_Beams.r);
 				beam.m_flGreen = static_cast<float>(CFG::Color_Beams.g);
 				beam.m_flBlue = static_cast<float>(CFG::Color_Beams.b);
+
 				beam.m_nSegments = 2;
 				beam.m_bRenderable = true;
 				beam.m_nFlags = 0;
@@ -90,4 +111,7 @@ MAKE_HOOK(CTFPlayer_FireBullet, Signatures::CTFPlayer_FireBullet.Get(), void, __
 	}
 
 	CALL_ORIGINAL(ecx, pWpn, info, bDoEffects, nDamageType, nCustomDamageType);
+	
+	// Reset crit state after bullet is fired
+	CritTracerState::g_bCurrentBulletIsCrit = false;
 }

@@ -2831,6 +2831,18 @@ void CMenu::MainWindow()
 					{ "Random (No Zap)", 8 }
 					});
 
+				SelectSingle("Crit Tracer Effect", CFG::Visuals_Crit_Tracer_Type, {
+					{ "Off", 0 },
+					{ "C.A.P.P.E.R", 1 },
+					{ "Machina (White)", 2 },
+					{ "Machina (Team)", 3 },
+					{ "Big Nasty", 4 },
+					{ "Short Circuit", 5 },
+					{ "Mrasmus Zap", 6 },
+					{ "Random", 7 },
+					{ "Random (No Zap)", 8 }
+					});
+
 				SelectSingle("Movement Sim", CFG::Visuals_Simulation_Movement_Style, {
 					{ "Off", 0 },
 					{ "Line", 1 },
