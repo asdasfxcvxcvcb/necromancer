@@ -311,12 +311,14 @@ bool CMenu::SliderFloat(const char *szLabel, float &flVar, float flMin, float fl
 		);
 	}
 
-	if (flVar < 0.0f)
-		flVar = flVar - fmodf((flVar - flStep / 2.0f), flStep) - flStep / 2.0f;
+	// Round to step - fixed for negative numbers
+	if (flStep > 0.f)
+	{
+		flVar = roundf(flVar / flStep) * flStep;
+	}
 
-	else flVar = flVar - fmodf((flVar + flStep / 2.0f), flStep) + flStep / 2.0f;
-
-	flVar = static_cast<float>(static_cast<int>(flVar * 100.0f + 0.5f)) / 100.0f;
+	// Round to 2 decimal places - fixed for negative numbers
+	flVar = roundf(flVar * 100.0f) / 100.0f;
 	flVar = std::clamp(flVar, flMin, flMax);
 
 	int nFillWidth = static_cast<int>(Math::RemapValClamped(
@@ -2142,6 +2144,8 @@ void CMenu::MainWindow()
 				CheckBox("Active", CFG::Aimbot_Amalgam_Projectile_Active);
 				CheckBox("Use Prime Time", CFG::Aimbot_Amalgam_Projectile_Mod_PrimeTime);
 				CheckBox("Midpoint Aim", CFG::Aimbot_Projectile_Midpoint_Aim);
+				CheckBox("Timed Double Donk", CFG::Aimbot_Projectile_Timed_Double_Donk);
+				CheckBox("Cancel Charge", CFG::Aimbot_Projectile_Cannon_Cancel_Charge);
 				
 				SelectSingle("Aim Type", CFG::Aimbot_Projectile_Aim_Type, {
 					{ "Plain", 0 },

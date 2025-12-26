@@ -602,6 +602,7 @@ void CAimbotProjectileArc::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBas
 	if (!CFG::Aimbot_Active || !CFG::Aimbot_Projectile_Active)
 	{
 		m_LockedTarget.Reset();
+		m_LooseCannonState.Reset();
 		return;
 	}
 
@@ -609,6 +610,7 @@ void CAimbotProjectileArc::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBas
 	if (!GetArcWeaponInfo(pWeapon, pLocal, weaponInfo))
 	{
 		m_LockedTarget.Reset();
+		m_LooseCannonState.Reset();
 		return;
 	}
 
@@ -618,21 +620,100 @@ void CAimbotProjectileArc::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBas
 	if (Shifting::bShifting && !Shifting::bShiftingWarp)
 		return;
 
-	if (!H::Input->IsDown(CFG::Aimbot_Key))
+	const int nWeaponID = pWeapon->GetWeaponID();
+	const bool bIsLooseCannon = (nWeaponID == TF_WEAPON_CANNON);
+	const bool bAimbotKeyDown = H::Input->IsDown(CFG::Aimbot_Key);
+	
+	// Track aimbot key state changes for Loose Cannon
+	bool bAimbotKeyJustReleased = m_LooseCannonState.m_bWasAimbotKeyDown && !bAimbotKeyDown;
+	m_LooseCannonState.m_bWasAimbotKeyDown = bAimbotKeyDown;
+	
+	// Check if Loose Cannon is currently charging
+	bool bLooseCannonCharging = false;
+	float flFuseTimeRemaining = 0.f;
+	if (bIsLooseCannon)
+	{
+		auto pCannon = pWeapon->As<CTFGrenadeLauncher>();
+		float flDetonateTime = pCannon->m_flDetonateTime();
+		bLooseCannonCharging = flDetonateTime > 0.f;
+		
+		// Calculate remaining fuse time
+		if (bLooseCannonCharging)
+		{
+			flFuseTimeRemaining = flDetonateTime - I::GlobalVars->curtime;
+		}
+	}
+	
+	// Cancel charge quick-switch: if fuse is about to expire (< 26ms), quick-switch to avoid self-damage
+	// Only triggers if cancel charge option is enabled
+	// Works for both aimbot-initiated and manual charges
+	// Uses multi-tick approach: hold attack -> switch away -> wait -> switch back
+	if (bIsLooseCannon && bLooseCannonCharging && CFG::Aimbot_Projectile_Cannon_Cancel_Charge && 
+		flFuseTimeRemaining > 0.f && flFuseTimeRemaining < 0.026f &&
+		m_LooseCannonState.m_nQuickSwitchPhase == 0)
+	{
+		// Fuse is about to expire! Start quick-switch
+		// Phase 0: Hold attack and switch away
+		pCmd->buttons |= IN_ATTACK; // Hold attack to prevent firing
+		I::EngineClient->ClientCmd_Unrestricted("lastinv");
+		m_LooseCannonState.m_nQuickSwitchPhase = 1;
+		m_LooseCannonState.m_nQuickSwitchCooldownTick = I::GlobalVars->tickcount + 1;
+		return;
+	}
+	
+	// Handle multi-tick quick-switch phase 1 (switch back to cannon)
+	if (m_LooseCannonState.m_nQuickSwitchPhase == 1)
+	{
+		if (I::GlobalVars->tickcount >= m_LooseCannonState.m_nQuickSwitchCooldownTick)
+		{
+			// Phase 1: Switch back to cannon
+			I::EngineClient->ClientCmd_Unrestricted("lastinv");
+			m_LooseCannonState.Reset();
+			m_LooseCannonState.m_nQuickSwitchCooldownTick = I::GlobalVars->tickcount + 1;
+		}
+		return;
+	}
+	
+	// Check cooldown after quick-switch - don't start charging again immediately
+	if (bIsLooseCannon && m_LooseCannonState.m_nQuickSwitchCooldownTick > 0)
+	{
+		if (I::GlobalVars->tickcount < m_LooseCannonState.m_nQuickSwitchCooldownTick)
+		{
+			// Still in cooldown, don't do anything
+			return;
+		}
+		else
+		{
+			// Cooldown expired
+			m_LooseCannonState.m_nQuickSwitchCooldownTick = 0;
+		}
+	}
+	
+	if (!bAimbotKeyDown)
 	{
 		m_LockedTarget.Reset();
+		if (!bIsLooseCannon)
+			m_LooseCannonState.Reset();
 		return;
 	}
 
 	G::bSimulatingProjectile = true;
 
-	const int nWeaponID = pWeapon->GetWeaponID();
-
-	// Check if this is a charge weapon (sticky launchers and bow)
+	// Check if this is a charge weapon (sticky launchers, bow, and Loose Cannon)
+	// Loose Cannon: holding fire controls the fuse time (1 second fuse, can be shortened)
 	bool bIsChargeWeapon = (nWeaponID == TF_WEAPON_PIPEBOMBLAUNCHER || 
 		nWeaponID == TF_WEAPON_STICKY_BALL_LAUNCHER || 
 		nWeaponID == TF_WEAPON_GRENADE_STICKY_BALL ||
-		nWeaponID == TF_WEAPON_COMPOUND_BOW);
+		nWeaponID == TF_WEAPON_COMPOUND_BOW ||
+		nWeaponID == TF_WEAPON_CANNON); // Loose Cannon
+	
+	// Check if user was already charging before aimbot key was pressed (manual charge)
+	// For Loose Cannon: if charging but aimbot didn't initiate it, skip timed double donk
+	bool bUserManualCharge = false;
+	if (bIsLooseCannon && bLooseCannonCharging && !m_LooseCannonState.m_bAimbotInitiatedCharge)
+	{
+		bUserManualCharge = true;
+	}
 	
 	// Track charge state for auto-charge (using ticks)
 	static int s_nChargeStartTick = 0;
@@ -642,17 +723,36 @@ void CAimbotProjectileArc::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBas
 	
 	if (bIsChargeWeapon)
 	{
-		auto pChargeWeapon = static_cast<C_TFPipebombLauncher*>(pWeapon);
-		float flChargeBegin = pChargeWeapon->m_flChargeBeginTime();
-		bIsCharging = flChargeBegin > 0.f;
-		
-		// Track when charge started
-		if (bIsCharging && s_nChargeStartTick == 0)
-			s_nChargeStartTick = I::GlobalVars->tickcount;
-		else if (!bIsCharging)
-			s_nChargeStartTick = 0;
+		if (nWeaponID == TF_WEAPON_CANNON)
+		{
+			// Loose Cannon uses m_flDetonateTime to track charge state
+			auto pCannon = pWeapon->As<CTFGrenadeLauncher>();
+			float flDetonateTime = pCannon->m_flDetonateTime();
+			bIsCharging = flDetonateTime > 0.f;
 			
-		nTicksCharged = bIsCharging ? (I::GlobalVars->tickcount - s_nChargeStartTick) : 0;
+			// Track when charge started
+			if (bIsCharging && s_nChargeStartTick == 0)
+				s_nChargeStartTick = I::GlobalVars->tickcount;
+			else if (!bIsCharging)
+				s_nChargeStartTick = 0;
+				
+			nTicksCharged = bIsCharging ? (I::GlobalVars->tickcount - s_nChargeStartTick) : 0;
+		}
+		else
+		{
+			// Sticky launchers and bow use m_flChargeBeginTime
+			auto pChargeWeapon = static_cast<C_TFPipebombLauncher*>(pWeapon);
+			float flChargeBegin = pChargeWeapon->m_flChargeBeginTime();
+			bIsCharging = flChargeBegin > 0.f;
+			
+			// Track when charge started
+			if (bIsCharging && s_nChargeStartTick == 0)
+				s_nChargeStartTick = I::GlobalVars->tickcount;
+			else if (!bIsCharging)
+				s_nChargeStartTick = 0;
+				
+			nTicksCharged = bIsCharging ? (I::GlobalVars->tickcount - s_nChargeStartTick) : 0;
+		}
 	}
 	
 	// Minimum charge ticks from config
@@ -681,11 +781,16 @@ void CAimbotProjectileArc::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBas
 	float flBestTime = weaponInfo.m_flMaxTime;
 	bool bHasValidPrediction = false;
 
+	// Check if we're using Crusader's Crossbow and should heal teammates
+	const bool bIsCrossbowHealing = (nWeaponID == TF_WEAPON_CROSSBOW) && CFG::Aimbot_Crossbow_Heal_Teammates;
+
 	// Collect potential targets
 	struct PotentialTarget_t {
 		C_TFPlayer* pPlayer;
 		float flFOV;
 		Vec3 vInitialPos;
+		bool bIsTeammate; // For crossbow healing priority
+		float flHealthPercent; // For healing priority
 	};
 	std::vector<PotentialTarget_t> vPotentialTargets;
 	
@@ -701,7 +806,32 @@ void CAimbotProjectileArc::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBas
 
 			auto pPlayer = pEntity->As<C_TFPlayer>();
 			if (pPlayer->deadflag()) continue;
-			if (pPlayer->m_iTeamNum() == pLocal->m_iTeamNum()) continue;
+			
+			bool bIsTeammate = pPlayer->m_iTeamNum() == pLocal->m_iTeamNum();
+			
+			// For Crusader's Crossbow: target teammates who need healing
+			if (bIsCrossbowHealing && bIsTeammate)
+			{
+				int iHealth = pPlayer->m_iHealth();
+				int iMaxHealth = pPlayer->GetMaxHealth();
+				
+				// Skip teammates at or above max health (can't heal them)
+				if (iHealth >= iMaxHealth)
+					continue;
+				
+				Vec3 vInitialPos = GetArcAimPosition(pPlayer, pWeapon);
+				Vec3 vInitialAngle = Math::CalcAngle(vShootPos, vInitialPos);
+				float flInitialFOV = Math::CalcFov(vViewAngles, vInitialAngle);
+				
+				if (flInitialFOV > CFG::Aimbot_Projectile_FOV * 3.0f) continue;
+				
+				float flHealthPercent = static_cast<float>(iHealth) / static_cast<float>(iMaxHealth);
+				vPotentialTargets.push_back({ pPlayer, flInitialFOV, vInitialPos, true, flHealthPercent });
+				continue;
+			}
+			
+			// Skip teammates for non-healing weapons
+			if (bIsTeammate) continue;
 
 			if (CFG::Aimbot_Ignore_Invisible && pPlayer->IsInvisible()) continue;
 			if (CFG::Aimbot_Ignore_Invulnerable && pPlayer->IsInvulnerable()) continue;
@@ -714,13 +844,46 @@ void CAimbotProjectileArc::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBas
 			
 			if (flInitialFOV > CFG::Aimbot_Projectile_FOV * 3.0f) continue;
 			
-			vPotentialTargets.push_back({ pPlayer, flInitialFOV, vInitialPos });
+			vPotentialTargets.push_back({ pPlayer, flInitialFOV, vInitialPos, false, 1.0f });
 		}
 		
-		std::sort(vPotentialTargets.begin(), vPotentialTargets.end(), 
-			[](const PotentialTarget_t& a, const PotentialTarget_t& b) {
-				return a.flFOV < b.flFOV;
-			});
+		// Sort targets based on weapon type and priority settings
+		if (bIsCrossbowHealing)
+		{
+			// For crossbow healing, sort by priority setting
+			switch (CFG::Aimbot_Crossbow_Heal_Priority)
+			{
+			case 0: // Lowest HP first
+				std::sort(vPotentialTargets.begin(), vPotentialTargets.end(),
+					[](const PotentialTarget_t& a, const PotentialTarget_t& b) {
+						// Teammates (healing targets) first, then by health percent
+						if (a.bIsTeammate != b.bIsTeammate)
+							return a.bIsTeammate > b.bIsTeammate;
+						if (a.bIsTeammate)
+							return a.flHealthPercent < b.flHealthPercent; // Lower health = higher priority
+						return a.flFOV < b.flFOV;
+					});
+				break;
+			case 1: // Closest first (by distance, approximated by FOV for now)
+			case 2: // FOV first
+			default:
+				std::sort(vPotentialTargets.begin(), vPotentialTargets.end(),
+					[](const PotentialTarget_t& a, const PotentialTarget_t& b) {
+						// Teammates (healing targets) first, then by FOV
+						if (a.bIsTeammate != b.bIsTeammate)
+							return a.bIsTeammate > b.bIsTeammate;
+						return a.flFOV < b.flFOV;
+					});
+				break;
+			}
+		}
+		else
+		{
+			std::sort(vPotentialTargets.begin(), vPotentialTargets.end(), 
+				[](const PotentialTarget_t& a, const PotentialTarget_t& b) {
+					return a.flFOV < b.flFOV;
+				});
+		}
 		
 		const int nMaxTargets = CFG::Aimbot_Projectile_Max_Targets;
 		int nTargetsSimulated = 0;
@@ -1045,9 +1208,16 @@ void CAimbotProjectileArc::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBas
 		if (bIsChargeWeapon && !bIsCharging)
 			m_LockedTarget.Reset();
 		
+		// Handle Loose Cannon: keep holding attack while we wait for target to reappear
+		// The cancel charge at fuse < 0.026s handles the critical case
+		if (bIsLooseCannon && bLooseCannonCharging && m_LooseCannonState.m_bAimbotInitiatedCharge)
+		{
+			pCmd->buttons |= IN_ATTACK;
+			return;
+		}
+		
 		// If we're charging but simulation failed to find target,
 		// keep holding attack to prevent firing without valid aim.
-		// This fixes the "shoots without simulation" bug.
 		if (bIsChargeWeapon && bIsCharging && CFG::Aimbot_AutoShoot)
 		{
 			pCmd->buttons |= IN_ATTACK;
@@ -1102,6 +1272,115 @@ void CAimbotProjectileArc::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBas
 			}
 			break;
 		}
+		case TF_WEAPON_CANNON:
+		{
+			// Loose Cannon: hold to control fuse time, release to fire
+			// The cannonball has a 1 second fuse that starts when you begin charging
+			// For Double-Donk: impact + explosion within 0.5s = mini-crit explosion
+			
+			// Check if user was manually charging before aimbot took over
+			// If so, skip timed double donk and just do normal projectile aimbot
+			if (bUserManualCharge)
+			{
+				// User was already charging - just fire when we have a valid prediction
+				if (bHasValidPrediction)
+				{
+					// Fire immediately since user is controlling the charge
+					pCmd->buttons &= ~IN_ATTACK; // Release to fire
+				}
+				break;
+			}
+			
+			if (bHasValidPrediction)
+			{
+				// If not charging yet, START charging and mark that aimbot initiated it
+				if (!bIsCharging)
+				{
+					m_LooseCannonState.m_bAimbotInitiatedCharge = true;
+					pCmd->buttons |= IN_ATTACK; // Start charging
+					return; // Don't fire yet
+				}
+				
+				// Calculate optimal charge time for Double Donk
+				// Fuse time is 1 second, starts when charging begins
+				// Double Donk requires explosion within 0.5s of impact
+				
+				if (CFG::Aimbot_Projectile_Timed_Double_Donk && m_LooseCannonState.m_bAimbotInitiatedCharge)
+				{
+					float flMortar = SDKUtils::AttribHookValue(0.f, "grenade_launcher_mortar_mode", pWeapon);
+					if (flMortar > 0.f)
+					{
+						// flBestTime is the projectile travel time to target
+						float flTravelTime = flBestTime;
+						
+						// Calculate optimal charge time for double donk
+						// Fuse starts when charging begins, so:
+						// fuse_remaining_when_fired = mortar_time - charge_time
+						// We want: fuse_remaining_when_fired = travel_time + delay
+						// So: mortar_time - charge_time = travel_time + delay
+						// charge_time = mortar_time - travel_time - delay
+						
+						// The slider value represents how long after impact the explosion should happen
+						// Positive = explode later, Negative = explode sooner (more charge time)
+						float flDesiredFuseAtImpact = CFG::Aimbot_Projectile_Double_Donk_Delay;
+						
+						// Add compensation for network latency and processing delay
+						// This makes us fire earlier to account for delays
+						float flLatencyCompensation = 0.1f; // 100ms compensation
+						
+						float flOptimalChargeTime = flMortar - flTravelTime - flDesiredFuseAtImpact + flLatencyCompensation;
+						
+						// Clamp to valid range
+						// Min: 0 (can't have negative charge time)
+						// Max: mortar_time - small buffer (don't overcharge and explode in face)
+						if (flOptimalChargeTime < 0.f)
+							flOptimalChargeTime = 0.f;
+						if (flOptimalChargeTime > flMortar - 0.05f)
+							flOptimalChargeTime = flMortar - 0.05f;
+						
+						// Convert to ticks
+						int nOptimalChargeTicks = TIME_TO_TICKS(flOptimalChargeTime);
+						
+						// Ensure at least 1 tick of charge for consistency
+						if (nOptimalChargeTicks < 1)
+							nOptimalChargeTicks = 1;
+						
+						// If we haven't charged enough, keep charging
+						if (nTicksCharged < nOptimalChargeTicks)
+						{
+							pCmd->buttons |= IN_ATTACK; // Keep charging
+							return; // Don't fire yet
+						}
+						
+						// Optimal charge reached - FIRE for double donk!
+						pCmd->buttons &= ~IN_ATTACK; // Release to fire
+						m_LooseCannonState.m_bAimbotInitiatedCharge = false;
+						break;
+					}
+				}
+				
+				// Non-double-donk mode or fallback: use minimum charge ticks
+				if (nTicksCharged < nMinChargeTicks)
+				{
+					pCmd->buttons |= IN_ATTACK; // Keep charging
+					return; // Don't fire yet
+				}
+				
+				// Charge is ready - FIRE!
+				pCmd->buttons &= ~IN_ATTACK; // Release to fire
+				m_LooseCannonState.m_bAimbotInitiatedCharge = false;
+			}
+			else
+			{
+				// No valid prediction - keep holding if charging
+				// The cancel charge at fuse < 0.026s handles the critical case
+				if (bIsCharging)
+				{
+					pCmd->buttons |= IN_ATTACK;
+				}
+			}
+			break;
+		}
 		default:
 			// Non-charge weapons: fire immediately when we have a valid prediction
 			if (bHasValidPrediction)
@@ -1131,6 +1410,24 @@ void CAimbotProjectileArc::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBas
 			float flChargeRate = SDKUtils::AttribHookValue(4.f, "stickybomb_charge_rate", pWeapon);
 			float flAmount = Math::RemapValClamped(flCharge, 0.f, flChargeRate, 0.f, 1.f);
 			G::bFiring = (!(pCmd->buttons & IN_ATTACK) && flAmount > 0.f) || flAmount >= 1.f;
+			break;
+		}
+		case TF_WEAPON_CANNON:
+		{
+			// Loose Cannon: fires when attack is released while charging
+			auto pCannon = pWeapon->As<CTFGrenadeLauncher>();
+			float flDetonateTime = pCannon->m_flDetonateTime();
+			float flMortar = SDKUtils::AttribHookValue(0.f, "grenade_launcher_mortar_mode", pWeapon);
+			if (flMortar > 0.f && flDetonateTime > 0.f)
+			{
+				float flCharge = flMortar - (flDetonateTime - I::GlobalVars->curtime);
+				float flAmount = Math::RemapValClamped(flCharge, 0.f, flMortar, 0.f, 1.f);
+				G::bFiring = (!(pCmd->buttons & IN_ATTACK) && flAmount > 0.f) || flAmount >= 1.f;
+			}
+			else
+			{
+				G::bFiring = G::bCanPrimaryAttack && (pCmd->buttons & IN_ATTACK);
+			}
 			break;
 		}
 		default:
@@ -1250,6 +1547,21 @@ bool CAimbotProjectileArc::IsFiring(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeap
 	{
 		auto pBow = static_cast<C_TFPipebombLauncher*>(pWeapon);
 		return !(pCmd->buttons & IN_ATTACK) && pBow->m_flChargeBeginTime() > 0.f;
+	}
+
+	case TF_WEAPON_CANNON:
+	{
+		// Loose Cannon: fires when attack is released while charging
+		auto pCannon = pWeapon->As<CTFGrenadeLauncher>();
+		float flDetonateTime = pCannon->m_flDetonateTime();
+		float flMortar = SDKUtils::AttribHookValue(0.f, "grenade_launcher_mortar_mode", pWeapon);
+		if (flMortar > 0.f && flDetonateTime > 0.f)
+		{
+			float flCharge = flMortar - (flDetonateTime - I::GlobalVars->curtime);
+			float flAmount = Math::RemapValClamped(flCharge, 0.f, flMortar, 0.f, 1.f);
+			return (!(pCmd->buttons & IN_ATTACK) && flAmount > 0.f) || flAmount >= 1.f;
+		}
+		return G::bCanPrimaryAttack && (pCmd->buttons & IN_ATTACK);
 	}
 
 	default:

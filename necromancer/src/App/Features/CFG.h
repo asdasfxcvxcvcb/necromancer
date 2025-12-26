@@ -90,6 +90,10 @@ namespace CFG
 	CFGVAR(Aimbot_Projectile_Neckbreaker, false);
 	CFGVAR(Aimbot_Projectile_NeckbreakerStep, 90);
 
+	// Crusader's Crossbow Healing Settings
+	CFGVAR(Aimbot_Crossbow_Heal_Teammates, true); // Auto-aim at teammates who need healing
+	CFGVAR(Aimbot_Crossbow_Heal_Priority, 0); // 0 = Lowest HP first, 1 = Closest first, 2 = FOV first
+
 	// Amalgam Projectile Aimbot Settings
 	CFGVAR(Aimbot_Amalgam_Projectile_Active, false); // Enable Amalgam projectile aimbot
 	CFGVAR(Aimbot_Amalgam_Projectile_Splash, 1); // 0=Off, 1=Include, 2=Prefer, 3=Only (default Include)
@@ -111,6 +115,11 @@ namespace CFG
 	// Midpoint Aim - aims at the midpoint of target's predicted path for better hit chance
 	CFGVAR(Aimbot_Projectile_Midpoint_Aim, false); // Enable midpoint aim
 	CFGVAR(Aimbot_Projectile_Midpoint_Max_Distance, 9.5f); // Max path distance in feet (1 foot = 16 units)
+
+	// Timed Double Donk - times Loose Cannon shots to explode ~0.5s after impact for mini-crit bonus
+	CFGVAR(Aimbot_Projectile_Timed_Double_Donk, false); // Enable timed double donk for Loose Cannon
+	CFGVAR(Aimbot_Projectile_Double_Donk_Delay, 0.01f); // Fuse expire delay after impact (-0.1 to 0.4 seconds)
+	CFGVAR(Aimbot_Projectile_Cannon_Cancel_Charge, true); // Cancel Loose Cannon charge if target is lost
 
 	CFGVAR(Aimbot_Melee_Active, false);
 	CFGVAR(Aimbot_Melee_Always_Active, false);

@@ -40,6 +40,28 @@ public:
 		}
 	};
 	LockedTarget_t m_LockedTarget;
+
+	// Loose Cannon specific tracking
+	struct LooseCannonState_t
+	{
+		bool m_bAimbotInitiatedCharge = false;  // True if aimbot started the charge (not user)
+		bool m_bWasAimbotKeyDown = false;       // Track aimbot key state for release detection
+		bool m_bNeedsQuickSwitch = false;       // True if we need to quick-switch to reset fuse
+		int m_nQuickSwitchTick = 0;             // Tick when quick-switch was initiated
+		int m_nQuickSwitchCooldownTick = 0;     // Cooldown after quick-switch to prevent immediate re-charge
+		int m_nQuickSwitchPhase = 0;            // 0 = not switching, 1 = switched away, waiting to switch back
+		
+		void Reset()
+		{
+			m_bAimbotInitiatedCharge = false;
+			m_bWasAimbotKeyDown = false;
+			m_bNeedsQuickSwitch = false;
+			m_nQuickSwitchTick = 0;
+			m_nQuickSwitchPhase = 0;
+			// Don't reset cooldown here
+		}
+	};
+	LooseCannonState_t m_LooseCannonState;
 };
 
 MAKE_SINGLETON_SCOPED(CAimbotProjectileArc, AimbotProjectileArc, F);
