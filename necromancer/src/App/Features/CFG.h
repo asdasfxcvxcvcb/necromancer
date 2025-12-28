@@ -641,6 +641,9 @@ namespace CFG
 	CFGVAR(Exploits_AntiAim_AntiOverlap, false); // Prevent real/fake overlap
 	CFGVAR(Exploits_AntiAim_InvalidShootPitch, false); // Hide pitch on shot
 
+	// Legit Anti-Aim - automatic yaw offsets based on class/weapon/movement
+	CFGVAR(Exploits_LegitAA_Enabled, false);
+
 	CFGVAR(Exploits_Crits_Force_Crit_Key, 0);
 	CFGVAR(Exploits_Crits_Force_Crit_Key_Melee, 0);
 	CFGVAR(Exploits_Crits_Skip_Random_Crits, true);

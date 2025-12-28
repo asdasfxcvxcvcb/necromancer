@@ -3297,60 +3297,66 @@ void CMenu::MainWindow()
 
 		m_mapGroupBoxes["Exploits_AntiAim"].m_fnRenderContent = [this]() {
 			CheckBox("Enabled", CFG::Exploits_AntiAim_Enabled);
-			SelectSingle("Real Pitch", CFG::Exploits_AntiAim_PitchReal, {
-				{ "None", 0 },
-				{ "Up", 1 },
-				{ "Down", 2 },
-				{ "Zero", 3 },
-				{ "Jitter", 4 },
-				{ "Reverse Jitter", 5 }
-			});
-			SelectSingle("Fake Pitch", CFG::Exploits_AntiAim_PitchFake, {
-				{ "None", 0 },
-				{ "Up", 1 },
-				{ "Down", 2 },
-				{ "Jitter", 3 },
-				{ "Reverse Jitter", 4 }
-			});
-			SelectSingle("Real Yaw", CFG::Exploits_AntiAim_YawReal, {
-				{ "Forward", 0 },
-				{ "Left", 1 },
-				{ "Right", 2 },
-				{ "Backwards", 3 },
-				{ "Edge", 4 },
-				{ "Jitter", 5 },
-				{ "Spin", 6 }
-			});
-			SelectSingle("Fake Yaw", CFG::Exploits_AntiAim_YawFake, {
-				{ "Forward", 0 },
-				{ "Left", 1 },
-				{ "Right", 2 },
-				{ "Backwards", 3 },
-				{ "Edge", 4 },
-				{ "Jitter", 5 },
-				{ "Spin", 6 }
-			});
-			SelectSingle("Real Base", CFG::Exploits_AntiAim_RealYawBase, {
-				{ "View", 0 },
-				{ "Target", 1 }
-			});
-			SelectSingle("Fake Base", CFG::Exploits_AntiAim_FakeYawBase, {
-				{ "View", 0 },
-				{ "Target", 1 }
-			});
-			SliderFloat("Real Offset", CFG::Exploits_AntiAim_RealYawOffset, -180.0f, 180.0f, 5.0f, "%.0f");
-			SliderFloat("Fake Offset", CFG::Exploits_AntiAim_FakeYawOffset, -180.0f, 180.0f, 5.0f, "%.0f");
-			// Show yaw value sliders only for Edge/Jitter modes
-			if (CFG::Exploits_AntiAim_YawReal == 4 || CFG::Exploits_AntiAim_YawReal == 5)
-				SliderFloat("Real Value", CFG::Exploits_AntiAim_RealYawValue, -180.0f, 180.0f, 5.0f, "%.0f");
-			if (CFG::Exploits_AntiAim_YawFake == 4 || CFG::Exploits_AntiAim_YawFake == 5)
-				SliderFloat("Fake Value", CFG::Exploits_AntiAim_FakeYawValue, -180.0f, 180.0f, 5.0f, "%.0f");
-			// Show spin speed only for Spin mode
-			if (CFG::Exploits_AntiAim_YawReal == 6 || CFG::Exploits_AntiAim_YawFake == 6)
-				SliderFloat("Spin Speed", CFG::Exploits_AntiAim_SpinSpeed, -30.0f, 30.0f, 1.0f, "%.0f");
+			CheckBox("Legit AA", CFG::Exploits_LegitAA_Enabled);
+			
+			if (!CFG::Exploits_LegitAA_Enabled)
+			{
+				SelectSingle("Real Pitch", CFG::Exploits_AntiAim_PitchReal, {
+					{ "None", 0 },
+					{ "Up", 1 },
+					{ "Down", 2 },
+					{ "Zero", 3 },
+					{ "Jitter", 4 },
+					{ "Reverse Jitter", 5 }
+				});
+				SelectSingle("Fake Pitch", CFG::Exploits_AntiAim_PitchFake, {
+					{ "None", 0 },
+					{ "Up", 1 },
+					{ "Down", 2 },
+					{ "Jitter", 3 },
+					{ "Reverse Jitter", 4 }
+				});
+				SelectSingle("Real Yaw", CFG::Exploits_AntiAim_YawReal, {
+					{ "Forward", 0 },
+					{ "Left", 1 },
+					{ "Right", 2 },
+					{ "Backwards", 3 },
+					{ "Edge", 4 },
+					{ "Jitter", 5 },
+					{ "Spin", 6 }
+				});
+				SelectSingle("Fake Yaw", CFG::Exploits_AntiAim_YawFake, {
+					{ "Forward", 0 },
+					{ "Left", 1 },
+					{ "Right", 2 },
+					{ "Backwards", 3 },
+					{ "Edge", 4 },
+					{ "Jitter", 5 },
+					{ "Spin", 6 }
+				});
+				SelectSingle("Real Base", CFG::Exploits_AntiAim_RealYawBase, {
+					{ "View", 0 },
+					{ "Target", 1 }
+				});
+				SelectSingle("Fake Base", CFG::Exploits_AntiAim_FakeYawBase, {
+					{ "View", 0 },
+					{ "Target", 1 }
+				});
+				SliderFloat("Real Offset", CFG::Exploits_AntiAim_RealYawOffset, -180.0f, 180.0f, 5.0f, "%.0f");
+				SliderFloat("Fake Offset", CFG::Exploits_AntiAim_FakeYawOffset, -180.0f, 180.0f, 5.0f, "%.0f");
+				// Show yaw value sliders only for Edge/Jitter modes
+				if (CFG::Exploits_AntiAim_YawReal == 4 || CFG::Exploits_AntiAim_YawReal == 5)
+					SliderFloat("Real Value", CFG::Exploits_AntiAim_RealYawValue, -180.0f, 180.0f, 5.0f, "%.0f");
+				if (CFG::Exploits_AntiAim_YawFake == 4 || CFG::Exploits_AntiAim_YawFake == 5)
+					SliderFloat("Fake Value", CFG::Exploits_AntiAim_FakeYawValue, -180.0f, 180.0f, 5.0f, "%.0f");
+				// Show spin speed only for Spin mode
+				if (CFG::Exploits_AntiAim_YawReal == 6 || CFG::Exploits_AntiAim_YawFake == 6)
+					SliderFloat("Spin Speed", CFG::Exploits_AntiAim_SpinSpeed, -30.0f, 30.0f, 1.0f, "%.0f");
+				CheckBox("Anti-Overlap", CFG::Exploits_AntiAim_AntiOverlap);
+				CheckBox("Hide Pitch on Shot", CFG::Exploits_AntiAim_InvalidShootPitch);
+			}
+			
 			CheckBox("Min Walk", CFG::Exploits_AntiAim_MinWalk);
-			CheckBox("Anti-Overlap", CFG::Exploits_AntiAim_AntiOverlap);
-			CheckBox("Hide Pitch on Shot", CFG::Exploits_AntiAim_InvalidShootPitch);
 		};
 
 		m_mapGroupBoxes["Exploits_Crithack"].m_fnRenderContent = [this]() {

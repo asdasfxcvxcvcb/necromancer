@@ -26,8 +26,14 @@ static constexpr uint32_t HashJitter(const char* str)
 
 bool CFakeAngle::AntiAimOn()
 {
-	return CFG::Exploits_AntiAim_Enabled
-		&& (CFG::Exploits_AntiAim_PitchReal
+	if (!CFG::Exploits_AntiAim_Enabled)
+		return false;
+	
+	// Legit AA counts as anti-aim being on
+	if (CFG::Exploits_LegitAA_Enabled)
+		return true;
+	
+	return (CFG::Exploits_AntiAim_PitchReal
 		|| CFG::Exploits_AntiAim_PitchFake
 		|| CFG::Exploits_AntiAim_YawReal
 		|| CFG::Exploits_AntiAim_YawFake
@@ -39,8 +45,14 @@ bool CFakeAngle::AntiAimOn()
 
 bool CFakeAngle::YawOn()
 {
-	return CFG::Exploits_AntiAim_Enabled
-		&& (CFG::Exploits_AntiAim_YawReal
+	if (!CFG::Exploits_AntiAim_Enabled)
+		return false;
+	
+	// Legit AA counts as yaw being on
+	if (CFG::Exploits_LegitAA_Enabled)
+		return true;
+	
+	return (CFG::Exploits_AntiAim_YawReal
 		|| CFG::Exploits_AntiAim_YawFake
 		|| CFG::Exploits_AntiAim_RealYawBase
 		|| CFG::Exploits_AntiAim_FakeYawBase
@@ -88,8 +100,117 @@ bool CFakeAngle::ShouldRun(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd
 	return true;
 }
 
+// Legit AA: Get yaw offset based on class, weapon slot, and movement direction
+static float GetLegitAAOffset(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd)
+{
+	if (!pLocal || !pWeapon || !pCmd)
+		return 0.0f;
+	
+	int iClass = pLocal->m_iClass();
+	
+	// Get weapon slot
+	int iSlot = pWeapon->GetSlot();
+	bool bPrimary = (iSlot == WEAPON_SLOT_PRIMARY);
+	bool bSecondary = (iSlot == WEAPON_SLOT_SECONDARY);
+	bool bMelee = (iSlot >= WEAPON_SLOT_MELEE);
+	
+	// Get movement direction
+	bool bForward = pCmd->forwardmove > 10.0f;
+	bool bBackward = pCmd->forwardmove < -10.0f;
+	bool bLeft = pCmd->sidemove < -10.0f;
+	bool bRight = pCmd->sidemove > 10.0f;
+	bool bStill = !bForward && !bBackward && !bLeft && !bRight;
+	
+	switch (iClass)
+	{
+		case TF_CLASS_SCOUT:
+			if (bStill) return -105.0f; // All weapons standing still
+			if (bMelee) return bLeft ? 100.0f : 100.0f;
+			if (bLeft) return bSecondary ? 100.0f : 120.0f;
+			return -110.0f;
+		
+		case TF_CLASS_SOLDIER:
+			if (bMelee) return bStill ? -95.0f : 100.0f;
+			if (bSecondary) return bStill ? 110.0f : 100.0f;
+			if (bStill) return -95.0f;
+			if (bRight) return -100.0f;
+			return 110.0f;
+		
+		case TF_CLASS_PYRO:
+			return bStill ? 110.0f : 115.0f;
+		
+		case TF_CLASS_DEMOMAN:
+			return 120.0f;
+		
+		case TF_CLASS_HEAVYWEAPONS:
+			return bStill ? 120.0f : 115.0f;
+		
+		case TF_CLASS_ENGINEER:
+			return 105.0f;
+		
+		case TF_CLASS_MEDIC:
+			if (bStill) return -180.0f;
+			if (bLeft && (bForward || bBackward)) return 125.0f;
+			if (bRight && (bForward || bBackward)) return -100.0f;
+			if (bForward || bBackward) return 105.0f;
+			if (bLeft) return 125.0f;
+			if (bRight) return -100.0f;
+			return 105.0f;
+		
+		case TF_CLASS_SNIPER:
+			if (bPrimary)
+			{
+				bool bScoped = pLocal->InCond(TF_COND_ZOOMED);
+				return bScoped ? -90.0f : -180.0f;
+			}
+			if (bSecondary)
+			{
+				if (bStill) return -180.0f;
+				if (bLeft && (bForward || bBackward)) return 90.0f;
+				if (bRight && (bForward || bBackward)) return -90.0f;
+				return -180.0f;
+			}
+			// Melee
+			if (bStill) return 120.0f;
+			if (bForward && !bLeft && !bRight) return -90.0f;
+			if (bBackward && !bLeft && !bRight) return -180.0f;
+			if (bRight) return -120.0f;
+			if (bLeft) return 110.0f;
+			return 120.0f;
+		
+		case TF_CLASS_SPY:
+			if (bSecondary && pWeapon->GetWeaponID() == TF_WEAPON_BUILDER)
+				return -180.0f; // Sapper
+			if (bMelee)
+				return bRight ? -120.0f : 100.0f;
+			// Primary/Revolver
+			if (bStill) return 180.0f;
+			if (bLeft && bBackward) return 90.0f;
+			if (bLeft && bForward) return 120.0f;
+			if (bLeft) return 110.0f;
+			if (bForward && !bRight) return 105.0f;
+			if (bBackward && !bRight) return 95.0f;
+			if (bRight) return -130.0f;
+			return 105.0f;
+	}
+	return 0.0f;
+}
+
 float CFakeAngle::GetYawOffset(C_TFPlayer* pLocal, bool bFake)
 {
+	// If Legit AA is enabled:
+	// - Fake yaw (what enemies see) = Forward (0)
+	// - Real yaw (your hitbox) = class/weapon/movement based offset
+	if (CFG::Exploits_LegitAA_Enabled)
+	{
+		if (bFake)
+			return 0.0f; // Fake yaw is forward
+		
+		// Real yaw uses the legit AA offset
+		auto pWeapon = H::Entities->GetWeapon();
+		return GetLegitAAOffset(pLocal, pWeapon, G::CurrentUserCmd);
+	}
+	
 	const int iMode = bFake ? CFG::Exploits_AntiAim_YawFake : CFG::Exploits_AntiAim_YawReal;
 	int iJitter = GetJitter(HashJitter("Yaw"));
 	
@@ -112,6 +233,10 @@ float CFakeAngle::GetYawOffset(C_TFPlayer* pLocal, bool bFake)
 
 float CFakeAngle::GetBaseYaw(C_TFPlayer* pLocal, CUserCmd* pCmd, bool bFake)
 {
+	// Legit AA: always use view-based yaw with no offset
+	if (CFG::Exploits_LegitAA_Enabled)
+		return pCmd->viewangles.y;
+	
 	const int iMode = bFake ? CFG::Exploits_AntiAim_FakeYawBase : CFG::Exploits_AntiAim_RealYawBase;
 	const float flOffset = bFake ? CFG::Exploits_AntiAim_FakeYawOffset : CFG::Exploits_AntiAim_RealYawOffset;
 	
@@ -178,6 +303,10 @@ float CFakeAngle::GetYaw(C_TFPlayer* pLocal, CUserCmd* pCmd, bool bFake)
 
 float CFakeAngle::GetPitch(float flCurPitch)
 {
+	// Legit AA: no pitch manipulation, use current pitch
+	if (CFG::Exploits_LegitAA_Enabled)
+		return flCurPitch;
+	
 	int iJitter = GetJitter(HashJitter("Pitch"));
 	
 	float flRealPitch = 0.0f, flFakePitch = 0.0f;
@@ -418,15 +547,19 @@ void CFakeAngle::SetupFakeModel(C_TFPlayer* pLocal)
 	}
 	
 	// Skip if angles are too similar (no point showing fake model)
-	// Compare the VISUAL angles (clamped pitch) since that's what the model shows
-	float flVisualRealPitch = std::clamp(m_vRealAngles.x, -89.0f, 89.0f);
-	float flVisualFakePitch = std::clamp(m_vFakeAngles.x, -89.0f, 89.0f);
-	float flPitchDiff = fabsf(flVisualRealPitch - flVisualFakePitch);
-	float flYawDiff = fabsf(Math::NormalizeAngle(m_vRealAngles.y - m_vFakeAngles.y));
-	if (flPitchDiff < 5.0f && flYawDiff < 5.0f)
+	// BUT always show for Legit AA since it's important to see the fake angle
+	if (!CFG::Exploits_LegitAA_Enabled)
 	{
-		m_bBonesSetup = false;
-		return;
+		// Compare the VISUAL angles (clamped pitch) since that's what the model shows
+		float flVisualRealPitch = std::clamp(m_vRealAngles.x, -89.0f, 89.0f);
+		float flVisualFakePitch = std::clamp(m_vFakeAngles.x, -89.0f, 89.0f);
+		float flPitchDiff = fabsf(flVisualRealPitch - flVisualFakePitch);
+		float flYawDiff = fabsf(Math::NormalizeAngle(m_vRealAngles.y - m_vFakeAngles.y));
+		if (flPitchDiff < 5.0f && flYawDiff < 5.0f)
+		{
+			m_bBonesSetup = false;
+			return;
+		}
 	}
 	
 	// Save original state
