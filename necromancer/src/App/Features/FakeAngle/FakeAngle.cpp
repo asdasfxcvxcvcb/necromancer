@@ -220,17 +220,44 @@ void CFakeAngle::FakeShotAngles(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUs
 	if (!CFG::Exploits_AntiAim_InvalidShootPitch || G::Attacking != 1 || pLocal->GetMoveType() != MOVETYPE_WALK)
 		return;
 	
+	if (!pWeapon)
+		return;
+	
 	// Don't apply to medigun or laser pointer
-	if (pWeapon)
-	{
-		int iWeaponID = pWeapon->GetWeaponID();
-		if (iWeaponID == TF_WEAPON_MEDIGUN || iWeaponID == TF_WEAPON_LASER_POINTER)
-			return;
-	}
+	int iWeaponID = pWeapon->GetWeaponID();
+	if (iWeaponID == TF_WEAPON_MEDIGUN || iWeaponID == TF_WEAPON_LASER_POINTER)
+		return;
+	
+	EWeaponType eWeaponType = H::AimUtils->GetWeaponType(pWeapon);
 	
 	G::bSilentAngles = true;
-	pCmd->viewangles.x = 180.0f - pCmd->viewangles.x;
-	pCmd->viewangles.y += 180.0f;
+	
+	switch (eWeaponType)
+	{
+		case EWeaponType::HITSCAN:
+		{
+			// Hitscan: flip pitch and yaw (180 - pitch, yaw + 180)
+			// This creates an "invalid" angle that still hits the same spot
+			pCmd->viewangles.x = 180.0f - pCmd->viewangles.x;
+			pCmd->viewangles.y += 180.0f;
+			break;
+		}
+		
+		case EWeaponType::PROJECTILE:
+		{
+			// Projectile: use +/-360 pitch exploit (compatible with neckbreaker roll)
+			// This hides the pitch visually while preserving the actual aim direction
+			// The server clamps pitch but the visual model shows the "fake" direction
+			// Preserve roll for neckbreaker compatibility
+			pCmd->viewangles.x += 360.0f * (pCmd->viewangles.x < 0.0f ? -1.0f : 1.0f);
+			break;
+		}
+		
+		default:
+			// Melee/Other: don't apply fake shot angles
+			G::bSilentAngles = false;
+			break;
+	}
 }
 
 void CFakeAngle::MinWalk(CUserCmd* pCmd, C_TFPlayer* pLocal)
