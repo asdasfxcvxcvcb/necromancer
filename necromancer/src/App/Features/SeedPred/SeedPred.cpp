@@ -215,12 +215,274 @@ void CSeedPred::Reset()
 	m_TimeDeltas.clear();
 }
 
+// Weapon-specific spread calculation helpers
+namespace
+{
+	// TF2 constants from source
+	constexpr float TF_MINIGUN_SPINUP_TIME = 0.75f;
+	constexpr float TF_MINIGUN_PENALTY_PERIOD = 1.0f;
+
+	// Weapon categories for spread handling
+	enum class EWeaponSpreadType
+	{
+		NONE,           // No spread (sniper rifle scoped, etc.)
+		SINGLE_BULLET,  // Single bullet with spread (pistol, SMG, revolver, minigun)
+		MULTI_PELLET,   // Shotgun-style (scattergun, shotguns, soda popper)
+		SPECIAL         // Special handling (ambassador, etc.)
+	};
+
+	// Get weapon spread type for proper handling
+	EWeaponSpreadType GetWeaponSpreadType(C_TFWeaponBase* weapon)
+	{
+		const int weaponID = weapon->GetWeaponID();
+
+		switch (weaponID)
+		{
+		// === SNIPER RIFLES (no spread when scoped) ===
+		case TF_WEAPON_SNIPERRIFLE:
+		case TF_WEAPON_SNIPERRIFLE_DECAP:     // Bazaar Bargain
+		case TF_WEAPON_SNIPERRIFLE_CLASSIC:   // Classic
+			return EWeaponSpreadType::NONE; // Handled by GetWeaponSpread() returning 0
+
+		// === SHOTGUNS (multi-pellet) ===
+		case TF_WEAPON_SHOTGUN_PRIMARY:       // Engineer primary
+		case TF_WEAPON_SHOTGUN_SOLDIER:       // Soldier secondary
+		case TF_WEAPON_SHOTGUN_HWG:           // Heavy secondary
+		case TF_WEAPON_SHOTGUN_PYRO:          // Pyro secondary
+		case TF_WEAPON_SHOTGUN_BUILDING_RESCUE: // Rescue Ranger
+		case TF_WEAPON_SCATTERGUN:            // Scout primary
+		case TF_WEAPON_SODA_POPPER:           // Scout primary
+		case TF_WEAPON_PEP_BRAWLER_BLASTER:   // Baby Face's Blaster
+		case TF_WEAPON_HANDGUN_SCOUT_PRIMARY: // Shortstop (4 pellets)
+			return EWeaponSpreadType::MULTI_PELLET;
+
+		// === SINGLE BULLET WEAPONS ===
+		case TF_WEAPON_PISTOL:                // Engineer/Scout pistol
+		case TF_WEAPON_PISTOL_SCOUT:          // Scout pistol
+		case TF_WEAPON_SMG:                   // Sniper SMG
+		case TF_WEAPON_CHARGED_SMG:           // Cleaner's Carbine
+		case TF_WEAPON_MINIGUN:               // Heavy primary
+		case TF_WEAPON_HANDGUN_SCOUT_SECONDARY: // Winger, Pretty Boy's, etc.
+		case TF_WEAPON_SENTRY_BULLET:         // Sentry gun bullets
+		case TF_WEAPON_SENTRY_REVENGE:        // Frontier Justice (crits from sentry)
+			return EWeaponSpreadType::SINGLE_BULLET;
+
+		// === REVOLVERS (special handling for Ambassador) ===
+		case TF_WEAPON_REVOLVER:
+			return EWeaponSpreadType::SPECIAL;
+
+		default:
+			// Check bullets per shot for unknown weapons
+			if (const auto pInfo = weapon->GetWeaponInfo())
+			{
+				int nBullets = pInfo->GetWeaponData(TF_WEAPON_PRIMARY_MODE).m_nBulletsPerShot;
+				nBullets = static_cast<int>(SDKUtils::AttribHookValue(static_cast<float>(nBullets), "mult_bullets_per_shot", weapon));
+				if (nBullets > 1)
+					return EWeaponSpreadType::MULTI_PELLET;
+			}
+			return EWeaponSpreadType::SINGLE_BULLET;
+		}
+	}
+
+	// Get minigun spread multiplier based on firing duration
+	// From tf_weapon_minigun.cpp: spread *= RemapValClamped(spinTime, 0, 1, 1.5, 1.0)
+	float GetMinigunSpreadMult(C_TFWeaponBase* weapon, C_TFPlayer* local)
+	{
+		const auto pMinigun = weapon->As<C_TFMinigun>();
+		if (!pMinigun)
+			return 1.5f;
+
+		const int nState = pMinigun->m_iWeaponState();
+		
+		// Not firing yet = worst spread
+		if (nState < AC_STATE_FIRING)
+			return 1.5f;
+
+		// Calculate firing duration from last fire time
+		const float flCurrentTime = local->m_nTickBase() * TICK_INTERVAL;
+		const float flFiringDuration = flCurrentTime - weapon->m_flLastFireTime();
+
+		// After 1 second of firing, spread is normal
+		if (flFiringDuration >= TF_MINIGUN_PENALTY_PERIOD)
+			return 1.0f;
+
+		// Ramp from 1.5x to 1.0x over 1 second
+		return Math::RemapValClamped(flFiringDuration, 0.0f, TF_MINIGUN_PENALTY_PERIOD, 1.5f, 1.0f);
+	}
+
+	// Get Ambassador spread multiplier based on time since last shot
+	// From tf_weapon_revolver.cpp: spread = RemapValClamped(timeSince, 1.0, 0.5, 0.0, baseSpread)
+	float GetAmbassadorSpreadMult(float timeSinceLastShot)
+	{
+		// After 1 second, perfect accuracy (0 spread)
+		if (timeSinceLastShot >= 1.0f)
+			return 0.0f;
+		
+		// Before 0.5 seconds, full spread
+		if (timeSinceLastShot <= 0.5f)
+			return 1.0f;
+
+		// Ramp from full spread to 0 between 0.5s and 1.0s
+		return Math::RemapValClamped(timeSinceLastShot, 0.5f, 1.0f, 1.0f, 0.0f);
+	}
+
+	// Check if weapon is Ambassador (revolver with set_weapon_mode = 1)
+	bool IsAmbassador(C_TFWeaponBase* weapon)
+	{
+		if (weapon->GetWeaponID() != TF_WEAPON_REVOLVER)
+			return false;
+		const int nWeaponMode = static_cast<int>(SDKUtils::AttribHookValue(0.0f, "set_weapon_mode", weapon));
+		return nWeaponMode == 1;
+	}
+
+	// Check if weapon is Diamondback (revolver with set_weapon_mode = 2)
+	bool IsDiamondback(C_TFWeaponBase* weapon)
+	{
+		if (weapon->GetWeaponID() != TF_WEAPON_REVOLVER)
+			return false;
+		const int nWeaponMode = static_cast<int>(SDKUtils::AttribHookValue(0.0f, "set_weapon_mode", weapon));
+		return nWeaponMode == 2;
+	}
+
+	// Check if weapon is L'Etranger (revolver with set_weapon_mode = 0 but has cloak_on_hit)
+	bool IsLetranger(C_TFWeaponBase* weapon)
+	{
+		if (weapon->GetWeaponID() != TF_WEAPON_REVOLVER)
+			return false;
+		const float fCloakOnHit = SDKUtils::AttribHookValue(0.0f, "add_cloak_on_hit", weapon);
+		return fCloakOnHit > 0.0f;
+	}
+
+	// Check if weapon is Enforcer (revolver with damage bonus while disguised)
+	bool IsEnforcer(C_TFWeaponBase* weapon)
+	{
+		if (weapon->GetWeaponID() != TF_WEAPON_REVOLVER)
+			return false;
+		const float fDisguiseDmg = SDKUtils::AttribHookValue(0.0f, "disguise_damage_bonus", weapon);
+		return fDisguiseDmg > 0.0f;
+	}
+
+	// Get perfect shot threshold for weapon type
+	// From tf_fx_shared.cpp: Multi-pellet = 0.25s, Single-pellet = 1.25s
+	float GetPerfectShotThreshold(C_TFWeaponBase* weapon, int bulletsPerShot)
+	{
+		const int weaponID = weapon->GetWeaponID();
+
+		// Multi-pellet weapons always use 0.25s
+		if (bulletsPerShot > 1)
+			return 0.25f;
+
+		// Ambassador has its own spread recovery system (handled separately)
+		if (IsAmbassador(weapon))
+			return 999.0f; // Never use standard perfect shot
+
+		// Weapon-specific thresholds for single-bullet weapons
+		switch (weaponID)
+		{
+		// === PISTOLS (faster recovery) ===
+		case TF_WEAPON_PISTOL:
+		case TF_WEAPON_PISTOL_SCOUT:
+		case TF_WEAPON_HANDGUN_SCOUT_SECONDARY: // Winger, Pretty Boy's Pocket Pistol
+			return 1.25f; // Standard single-bullet threshold
+
+		// === SMG (very fast recovery) ===
+		case TF_WEAPON_SMG:
+		case TF_WEAPON_CHARGED_SMG:             // Cleaner's Carbine
+			return 1.25f;
+
+		// === MINIGUN (never has perfect first shot) ===
+		case TF_WEAPON_MINIGUN:
+			return 999.0f;
+
+		// === REVOLVERS ===
+		case TF_WEAPON_REVOLVER:
+			// Standard revolver, L'Etranger, Enforcer, Diamondback
+			return 1.25f;
+
+		// === SNIPER RIFLES (no spread when scoped, full spread unscoped) ===
+		case TF_WEAPON_SNIPERRIFLE:
+		case TF_WEAPON_SNIPERRIFLE_DECAP:
+		case TF_WEAPON_SNIPERRIFLE_CLASSIC:
+			return 1.25f;
+
+		// === SENTRY GUNS ===
+		case TF_WEAPON_SENTRY_BULLET:
+		case TF_WEAPON_SENTRY_REVENGE:
+			return 999.0f; // Sentries don't have perfect shot
+
+		default:
+			return 1.25f; // Default single-bullet threshold
+		}
+	}
+
+	// Check if weapon has fixed spread pattern (competitive mode or attribute)
+	bool HasFixedSpreadPattern(C_TFWeaponBase* weapon)
+	{
+		static ConVar* tf_use_fixed_weaponspreads = I::CVar->FindVar("tf_use_fixed_weaponspreads");
+		if (tf_use_fixed_weaponspreads && tf_use_fixed_weaponspreads->GetBool())
+			return true;
+
+		// Some weapons have fixed spread via attribute
+		const int nFixedSpread = static_cast<int>(SDKUtils::AttribHookValue(0.0f, "fixed_shot_pattern", weapon));
+		return nFixedSpread != 0;
+	}
+
+	// Get Panic Attack spread multiplier based on health
+	// Lower health = tighter spread (inverse of normal panic attack behavior for damage)
+	float GetPanicAttackSpreadMult(C_TFWeaponBase* weapon, C_TFPlayer* local)
+	{
+		const float flReducedHealthBonus = SDKUtils::AttribHookValue(1.0f, "panic_attack_negative", weapon);
+		if (flReducedHealthBonus == 1.0f)
+			return 1.0f;
+
+		const float flHealthFrac = static_cast<float>(local->m_iHealth()) / static_cast<float>(local->GetMaxHealth());
+		return Math::RemapValClamped(flHealthFrac, 0.2f, 0.9f, flReducedHealthBonus, 1.0f);
+	}
+
+	// Get spread multiplier for weapons with consecutive shot scaling
+	// (e.g., some weapons get more spread the more you fire)
+	float GetConsecutiveShotSpreadMult(C_TFWeaponBase* weapon, float timeSinceLastShot)
+	{
+		const float flScaler = SDKUtils::AttribHookValue(0.0f, "mult_spread_scales_consecutive", weapon);
+		if (flScaler == 0.0f)
+			return 1.0f;
+
+		// If we haven't fired recently, no penalty
+		if (timeSinceLastShot > 0.5f)
+			return 1.0f;
+
+		// Estimate consecutive shots based on time since last shot
+		// This is approximate - ideally we'd track actual consecutive shots
+		const float flConsecutive = Math::RemapValClamped(timeSinceLastShot, 0.0f, 0.5f, 5.0f, 1.0f);
+		return Math::RemapValClamped(flConsecutive, 1.0f, 5.0f, 1.125f, 1.5f);
+	}
+
+	// Get weapon-specific spread multiplier (combines all modifiers)
+	float GetWeaponSpreadMultiplier(C_TFWeaponBase* weapon, C_TFPlayer* local, float timeSinceLastShot)
+	{
+		float flMult = 1.0f;
+		const int weaponID = weapon->GetWeaponID();
+
+		// Minigun: 1.5x spread during first second of firing
+		if (weaponID == TF_WEAPON_MINIGUN)
+		{
+			flMult *= GetMinigunSpreadMult(weapon, local);
+		}
+
+		// Panic Attack: spread based on health
+		flMult *= GetPanicAttackSpreadMult(weapon, local);
+
+		// Consecutive shot scaling
+		flMult *= GetConsecutiveShotSpreadMult(weapon, timeSinceLastShot);
+
+		return flMult;
+	}
+}
+
 void CSeedPred::AdjustAngles(CUserCmd* cmd)
 {
 	static ConVar* sv_usercmd_custom_random_seed = I::CVar->FindVar("sv_usercmd_custom_random_seed");
-	static ConVar* tf_use_fixed_weaponspreads = I::CVar->FindVar("tf_use_fixed_weaponspreads");
 	const bool bTimeBased = sv_usercmd_custom_random_seed && sv_usercmd_custom_random_seed->GetBool();
-	const bool bFixedSpread = tf_use_fixed_weaponspreads && tf_use_fixed_weaponspreads->GetBool();
 
 	// For time-based seeding we need sync; for MD5-per-cmd we don't
 	if (!CFG::Exploits_SeedPred_Active || !cmd || !G::bFiring || (bTimeBased && !m_Synced))
@@ -244,44 +506,48 @@ void CSeedPred::AdjustAngles(CUserCmd* cmd)
 	const int seed = GetSeedForCmd(cmd);
 	m_CachedSeed = seed;
 
-	// Perfect shot logic from TF2 source (tf_fx_shared.cpp):
-	// Multi-pellet: flTimeSinceLastShot > 0.25f
-	// Single-pellet: flTimeSinceLastShot > 1.25f
 	const float timeSinceLastShot = (local->m_nTickBase() * TICK_INTERVAL) - weapon->m_flLastFireTime();
-	
-	// Weapon-specific tuning
 	const int weaponID = weapon->GetWeaponID();
-	const bool isPistol = (weaponID == TF_WEAPON_PISTOL || weaponID == TF_WEAPON_PISTOL_SCOUT);
-	const bool isMinigun = (weaponID == TF_WEAPON_MINIGUN);
-	const bool isSMG = (weaponID == TF_WEAPON_SMG);
-	
-	// Minigun has dynamic spread - 1.5x during first second of firing (from TF2 source)
-	// We can't easily track firing duration here, so we assume worst case for correction
-	// This is handled by the game's spread value already
-	
-	float perfectShotThreshold = 1.25f;
-	if (isPistol) perfectShotThreshold = 0.5f;
-	else if (isSMG) perfectShotThreshold = 0.25f; // SMG recovers faster
-	
-	const bool perfectShot = (bulletsPerShot == 1 && timeSinceLastShot > perfectShotThreshold) ||
-	                         (bulletsPerShot > 1 && timeSinceLastShot > 0.25f);
+	const EWeaponSpreadType spreadType = GetWeaponSpreadType(weapon);
 
-	// Fixed spread patterns (competitive mode) - no seed prediction needed!
-	// Server uses predetermined pellet positions, not random
-	if (bFixedSpread && bulletsPerShot > 1)
+	// === WEAPON-SPECIFIC SPREAD MODIFIERS ===
+
+	// Get combined spread multiplier for this weapon
+	const float spreadMult = GetWeaponSpreadMultiplier(weapon, local, timeSinceLastShot);
+
+	// Ambassador: Special spread recovery (0.5s → 1.0s = full → zero spread)
+	const bool bIsAmbassador = IsAmbassador(weapon);
+	if (bIsAmbassador)
+	{
+		const float ambSpreadMult = GetAmbassadorSpreadMult(timeSinceLastShot);
+		
+		// Perfect accuracy after 1 second - no correction needed
+		if (ambSpreadMult <= 0.0f)
+			return;
+
+		// Scale spread by Ambassador's recovery multiplier
+		spread *= ambSpreadMult;
+	}
+
+	// Perfect shot logic from TF2 source (tf_fx_shared.cpp)
+	const float perfectShotThreshold = GetPerfectShotThreshold(weapon, bulletsPerShot);
+	const bool perfectShot = (timeSinceLastShot > perfectShotThreshold);
+
+	// Fixed spread patterns (competitive mode or weapon attribute) - no seed prediction needed!
+	if (HasFixedSpreadPattern(weapon) && bulletsPerShot > 1)
 	{
 		// In fixed spread mode, first pellet always goes center
-		// Just aim normally - no correction needed
 		return;
 	}
 
-	// Single-bullet weapons - direct angle correction
+	// === SINGLE-BULLET WEAPONS ===
 	if (bulletsPerShot == 1)
 	{
+		// Perfect first shot = no spread (except Ambassador which uses its own system)
 		if (perfectShot)
-			return; // First bullet has no spread after idle
+			return;
 
-		// Use pre-computed LUT when possible
+		// Use pre-computed LUT
 		Vec2 multiplier;
 		if (seed <= 255 && m_SpreadInit)
 		{
@@ -303,18 +569,17 @@ void CSeedPred::AdjustAngles(CUserCmd* cmd)
 		Math::VectorAngles(spreadDir, spreadAngles);
 
 		// Reverse the spread: aim where we need to so spread lands on target
-		// If spread pushes bullet to spreadAngles, we need to aim at (2*target - spreadAngles)
 		Vec3 correctedAngles = (cmd->viewangles * 2.0f) - spreadAngles;
 		Math::ClampAngles(correctedAngles);
 		
-		// Fix movement to match the new angles (important for silent aim)
 		H::AimUtils->FixMovement(cmd, correctedAngles);
 		cmd->viewangles = correctedAngles;
 		G::bSilentAngles = true;
 		return;
 	}
 
-	// Multi-bullet weapons (shotguns) - find bullet closest to average spread
+	// === MULTI-BULLET WEAPONS (SHOTGUNS, SCATTERGUNS, ETC.) ===
+	// Find bullet closest to center for maximum damage potential
 	// Also consider neighboring seeds (±1) to account for timing jitter
 	std::vector<Vec3> bulletDirections{};
 	Vec3 averageDir{};
@@ -330,24 +595,24 @@ void CSeedPred::AdjustAngles(CUserCmd* cmd)
 		Vec3 tryAverage{};
 		const int trySeed = (seed + tryOffset + 256) % 256;
 
+		// TF2 uses sequential random calls for each pellet
+		SDKUtils::RandomSeed(trySeed);
+
 		for (int bullet = 0; bullet < bulletsPerShot; bullet++)
 		{
-			const int bulletSeed = (trySeed + bullet) % 256;
-
 			Vec2 multiplier;
-			if (bulletSeed <= 255 && m_SpreadInit)
+			
+			// First pellet of perfect shot goes center
+			if (bullet == 0 && perfectShot)
 			{
-				multiplier = m_SpreadOffsets[bulletSeed];
+				multiplier = {0.0f, 0.0f};
 			}
 			else
 			{
-				SDKUtils::RandomSeed(bulletSeed);
+				// TF2 calls RandomFloat 4 times per pellet (x1, x2, y1, y2)
 				multiplier.x = SDKUtils::RandomFloat(-0.5f, 0.5f) + SDKUtils::RandomFloat(-0.5f, 0.5f);
 				multiplier.y = SDKUtils::RandomFloat(-0.5f, 0.5f) + SDKUtils::RandomFloat(-0.5f, 0.5f);
 			}
-
-			if (bullet == 0 && perfectShot)
-				multiplier = {0.0f, 0.0f};
 
 			Vec3 forward{}, right{}, up{};
 			Math::AngleVectors(cmd->viewangles, &forward, &right, &up);
@@ -378,7 +643,7 @@ void CSeedPred::AdjustAngles(CUserCmd* cmd)
 	if (bestSeedOffset != 0)
 		m_CachedSeed = (seed + bestSeedOffset + 256) % 256;
 
-	// Find the bullet closest to average - this maximizes damage potential
+	// Find the bullet closest to center - this maximizes damage potential
 	const auto bestBullet = std::ranges::min_element(bulletDirections,
 		[&](const Vec3& lhs, const Vec3& rhs)
 		{
@@ -396,7 +661,6 @@ void CSeedPred::AdjustAngles(CUserCmd* cmd)
 	Vec3 correctedAngles = cmd->viewangles + correction;
 	Math::ClampAngles(correctedAngles);
 
-	// Fix movement to match the new angles (important for silent aim)
 	H::AimUtils->FixMovement(cmd, correctedAngles);
 	cmd->viewangles = correctedAngles;
 	G::bSilentAngles = true;

@@ -29,6 +29,7 @@ namespace CFG
 	CFGVAR(Aimbot_Hitscan_FOV, 15.0f);
 	CFGVAR(Aimbot_Hitscan_Smoothing, 3.0f);
 	CFGVAR(Aimbot_Hitscan_Fake_Latency, 0.0f); // Fake latency in milliseconds (0-600ms)
+	CFGVAR(Aimbot_Hitscan_Hitchance, 0); // Hitchance percentage (0 = disabled, 1-100 = required hit %)
 	CFGVAR(Aimbot_Hitscan_Pellet_Visibility_Scale, 0.50f); // 0.30 - 0.80 recommended
 	CFGVAR(Aimbot_Hitscan_Scan_Head, true);
 	CFGVAR(Aimbot_Hitscan_Scan_Body, true);

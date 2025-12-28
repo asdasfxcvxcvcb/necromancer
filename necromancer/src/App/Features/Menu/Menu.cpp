@@ -2133,6 +2133,7 @@ void CMenu::MainWindow()
 				SliderFloat("FOV", CFG::Aimbot_Hitscan_FOV, 1.0f, 180.0f, 1.0f, "%.0f");
 				SliderFloat("Smoothing", CFG::Aimbot_Hitscan_Smoothing, 0.0f, 20.0f, 0.5f, "%.1f");
 				SliderFloat("Fake Latency", CFG::Aimbot_Hitscan_Fake_Latency, 0.0f, 600.0f, 10.0f, "%.0f ms");
+				SliderInt("Hitchance", CFG::Aimbot_Hitscan_Hitchance, 0, 100, 1);
 			}
 			GroupBoxEnd();
 

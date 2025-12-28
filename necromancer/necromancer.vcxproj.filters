@@ -157,6 +157,7 @@
     <ClCompile Include="src\App\Hooks\CTFPartyClient_RequestQueueForMatch.cpp" />
     <ClCompile Include="src\App\Hooks\ISteamNetworkingUtils_GetPingToDataCenter.cpp" />
     <ClCompile Include="src\App\Hooks\DataTable_Warning.cpp" />
+    <ClCompile Include="src\App\Features\Hitchance\Hitchance.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\App\Features\Aimbot\AimbotHitscan\AimbotHitscan.h" />
@@ -376,5 +377,6 @@
     <ClInclude Include="src\SDK\TF2\CTFGCClientSystem.h" />
     <ClInclude Include="src\Utils\CrashHandler\CrashHandler.h" />
     <ClInclude Include="src\SDK\Steam\ISteamNetworkingUtils.h" />
+    <ClInclude Include="src\App\Features\Hitchance\Hitchance.h" />
   </ItemGroup>
 </Project>

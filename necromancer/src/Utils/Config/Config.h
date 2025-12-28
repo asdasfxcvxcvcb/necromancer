@@ -1,6 +1,8 @@
 #pragma once
 #include <nlohmann/json.hpp>
 
+#include "../Color/Color.h"
+
 #include <vector>
 #include <typeinfo>
 #include <fstream>

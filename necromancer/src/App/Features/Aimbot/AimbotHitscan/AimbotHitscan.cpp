@@ -6,6 +6,7 @@
 #include "../../FakeLagFix/FakeLagFix.h"
 #include "../../Menu/Menu.h"
 #include "../../Crits/Crits.h"
+#include "../../Hitchance/Hitchance.h"
 #include <algorithm>
 
 // Check if weapon is a sniper rifle or ambassador (can headshot)
@@ -689,6 +690,51 @@ bool CAimbotHitscan::ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWe
 	if (!CFG::Aimbot_AutoShoot)
 		return false;
 
+	// Hitchance check - calculate if we meet the required hit probability
+	if (CFG::Aimbot_Hitscan_Hitchance > 0 && target.Entity)
+	{
+		// Get hitbox radius based on target type
+		float flHitboxRadius = 12.0f; // Default for players (head ~24 units diameter)
+		
+		if (target.Entity->GetClassId() == ETFClassIds::CTFPlayer)
+		{
+			const auto pPlayer = target.Entity->As<C_TFPlayer>();
+			if (pPlayer)
+			{
+				// Use different radius based on aimed hitbox
+				// Head is smaller (~12 radius), body is larger (~18 radius)
+				if (target.AimedHitbox == HITBOX_HEAD)
+					flHitboxRadius = 10.0f;
+				else
+					flHitboxRadius = 16.0f;
+			}
+		}
+		else if (target.Entity->GetClassId() == ETFClassIds::CObjectSentrygun ||
+				 target.Entity->GetClassId() == ETFClassIds::CObjectDispenser ||
+				 target.Entity->GetClassId() == ETFClassIds::CObjectTeleporter)
+		{
+			// Buildings are larger targets
+			flHitboxRadius = 24.0f;
+		}
+		else if (target.Entity->GetClassId() == ETFClassIds::CTFGrenadePipebombProjectile)
+		{
+			// Stickies are small
+			flHitboxRadius = 8.0f;
+		}
+
+		// Check if RapidFire/DoubleTap is active
+		const bool bRapidFireKey = CFG::Exploits_RapidFire_Key != 0 && H::Input->IsDown(CFG::Exploits_RapidFire_Key);
+		const int nStoredTicks = F::RapidFire->GetTicks(pWeapon);
+		const bool bRapidFireActive = bRapidFireKey && nStoredTicks >= CFG::Exploits_RapidFire_Ticks;
+		const int nRapidFireShots = bRapidFireActive ? 2 : 1; // DoubleTap fires 2 shots
+
+		const Vec3 vShootPos = pLocal->GetShootPos();
+		const float flHitchance = F::Hitchance->Calculate(pLocal, pWeapon, vShootPos, target.Position, flHitboxRadius, bRapidFireActive, nRapidFireShots);
+		
+		if (flHitchance < static_cast<float>(CFG::Aimbot_Hitscan_Hitchance))
+			return false;
+	}
+
 	// FakeLag Fix - wait for optimal timing against fakelagging targets
 	if (CFG::Aimbot_Hitscan_FakeLagFix && target.Entity && target.Entity->GetClassId() == ETFClassIds::CTFPlayer)
 	{
@@ -995,8 +1041,49 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 				pCmd->buttons |= IN_ATTACK2;
 			}
 
-			// During rapid fire shifting, skip ShouldFire checks and always fire
-			if (bRapidFireShifting || ShouldFire(pCmd, pLocal, pWeapon, target))
+			// During rapid fire shifting, still check hitchance but skip other ShouldFire checks
+			bool bShouldFire = false;
+			if (bRapidFireShifting)
+			{
+				// During rapid fire, only check hitchance (other checks were done in ShouldStart)
+				if (CFG::Aimbot_Hitscan_Hitchance > 0)
+				{
+					float flHitboxRadius = 12.0f;
+					if (target.Entity->GetClassId() == ETFClassIds::CTFPlayer)
+					{
+						if (target.AimedHitbox == HITBOX_HEAD)
+							flHitboxRadius = 10.0f;
+						else
+							flHitboxRadius = 16.0f;
+					}
+					else if (target.Entity->GetClassId() == ETFClassIds::CObjectSentrygun ||
+							 target.Entity->GetClassId() == ETFClassIds::CObjectDispenser ||
+							 target.Entity->GetClassId() == ETFClassIds::CObjectTeleporter)
+						flHitboxRadius = 24.0f;
+
+					const Vec3 vShootPos = pLocal->GetShootPos();
+					const float flHitchance = F::Hitchance->Calculate(pLocal, pWeapon, vShootPos, target.Position, flHitboxRadius, true, 2);
+					bShouldFire = (flHitchance >= static_cast<float>(CFG::Aimbot_Hitscan_Hitchance));
+					
+					PRINT("[Aimbot-RF] Hitchance: %.1f%% vs required %d%% -> %s\n", 
+						flHitchance, CFG::Aimbot_Hitscan_Hitchance, bShouldFire ? "FIRE" : "WAIT");
+				}
+				else
+				{
+					bShouldFire = true; // No hitchance requirement
+					PRINT("[Aimbot-RF] No hitchance requirement -> FIRE\n");
+				}
+			}
+			else
+			{
+				bShouldFire = ShouldFire(pCmd, pLocal, pWeapon, target);
+				if (CFG::Aimbot_Hitscan_Hitchance > 0)
+				{
+					PRINT("[Aimbot] ShouldFire -> %s\n", bShouldFire ? "FIRE" : "WAIT");
+				}
+			}
+
+			if (bShouldFire)
 			{
 				// FakeLag Fix - disable interp for fakelagging target during shot
 				if (CFG::Aimbot_Hitscan_FakeLagFix && target.Entity && target.Entity->GetClassId() == ETFClassIds::CTFPlayer)

@@ -374,6 +374,7 @@
     <ClCompile Include="src\App\Features\FakeAngle\FakeAngle.cpp" />
     <ClCompile Include="src\App\Features\FakeLagFix\FakeLagFix.cpp" />
     <ClCompile Include="src\App\Features\FakeLag\FakeLag.cpp" />
+    <ClCompile Include="src\App\Features\Hitchance\Hitchance.cpp" />
     <ClCompile Include="src\App\Features\ShotgunDamagePrediction\ShotgunDamagePrediction.cpp" />
     <ClCompile Include="src\App\Features\ShotgunDamagePrediction\SmartShotgunAimbot.cpp" />
     <ClCompile Include="src\App\Features\Triggerbot\AutoSapper\AutoSapper.cpp" />
@@ -536,6 +537,7 @@
     <ClInclude Include="src\App\Features\FakeAngle\FakeAngle.h" />
     <ClInclude Include="src\App\Features\FakeLagFix\FakeLagFix.h" />
     <ClInclude Include="src\App\Features\FakeLag\FakeLag.h" />
+    <ClInclude Include="src\App\Features\Hitchance\Hitchance.h" />
     <ClInclude Include="src\App\Features\Menu\AmalgamMenu\AmalgamMenu.h" />
     <ClInclude Include="src\App\Features\Menu\MenuAnimations.h" />
     <ClInclude Include="src\App\Features\ShotgunDamagePrediction\ShotgunDamagePrediction.h" />
