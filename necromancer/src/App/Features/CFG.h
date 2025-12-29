@@ -229,6 +229,7 @@ namespace CFG
 	CFGVAR(ESP_Players_Ignore_Enemies, false);
 	CFGVAR(ESP_Players_Ignore_Teammates, true);
 	CFGVAR(ESP_Players_Ignore_Invisible, false);
+	CFGVAR(ESP_Players_Ignore_Tagged, false); // When false, tagged players (Cheater/RetardLegit/Ignored) always show regardless of team
 	CFGVAR(ESP_Players_Show_Teammate_Medics, true);
 	CFGVAR(ESP_Players_Name, false);
 	CFGVAR(ESP_Players_Class, false);
@@ -323,6 +324,7 @@ namespace CFG
 	CFGVAR(Materials_Players_Ignore_Friends, false);
 	CFGVAR(Materials_Players_Ignore_Enemies, false);
 	CFGVAR(Materials_Players_Ignore_Teammates, true);
+	CFGVAR(Materials_Players_Ignore_Tagged, false); // When false, tagged players (Cheater/RetardLegit/Ignored) always show regardless of team
 	CFGVAR(Materials_Players_Ignore_LagRecords, false);
 	CFGVAR(Materials_Players_Show_Teammate_Medics, false);
 	CFGVAR(Materials_Players_LagRecords_Style, 1); //0 All 1 Last Only
@@ -379,6 +381,7 @@ namespace CFG
 	CFGVAR(Outlines_Players_Ignore_Friends, false);
 	CFGVAR(Outlines_Players_Ignore_Enemies, false);
 	CFGVAR(Outlines_Players_Ignore_Teammates, true);
+	CFGVAR(Outlines_Players_Ignore_Tagged, false); // When false, tagged players (Cheater/RetardLegit/Ignored) always show regardless of team
 	CFGVAR(Outlines_Players_Show_Teammate_Medics, true);
 
 	CFGVAR(Outlines_Buildings_Active, true);

@@ -283,7 +283,19 @@ void CESP::Run()
 				if (CFG::ESP_Players_Ignore_Friends && bIsFriend)
 					continue;
 
-				if (!bIsFriend)
+				// Check if player is tagged (Cheater/RetardLegit/Ignored)
+				bool bIsTagged = false;
+				if (!CFG::ESP_Players_Ignore_Tagged)
+				{
+					PlayerPriority playerPriority = {};
+					if (F::Players->GetInfo(pPlayer->entindex(), playerPriority))
+					{
+						bIsTagged = playerPriority.Cheater || playerPriority.RetardLegit || playerPriority.Ignored;
+					}
+				}
+
+				// Skip team/enemy filtering if player is tagged (and not ignoring tagged)
+				if (!bIsFriend && !bIsTagged)
 				{
 					const int nPlayerTeam = pPlayer->m_iTeamNum();
 					

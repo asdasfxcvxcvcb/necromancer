@@ -2456,7 +2456,8 @@ void CMenu::MainWindow()
 					{ "Friends", CFG::ESP_Players_Ignore_Friends },
 					{ "Enemies", CFG::ESP_Players_Ignore_Enemies },
 					{ "Teammates", CFG::ESP_Players_Ignore_Teammates },
-					{ "Invisible", CFG::ESP_Players_Ignore_Invisible }
+					{ "Invisible", CFG::ESP_Players_Ignore_Invisible },
+					{ "Tagged", CFG::ESP_Players_Ignore_Tagged }
 					});
 
 				multiselect("Draw", PlayerDraw, {
@@ -2664,7 +2665,8 @@ void CMenu::MainWindow()
 					{ "Local", CFG::Materials_Players_Ignore_Local },
 					{ "Friends", CFG::Materials_Players_Ignore_Friends },
 					{ "Enemies", CFG::Materials_Players_Ignore_Enemies },
-					{ "Teammates", CFG::Materials_Players_Ignore_Teammates }
+					{ "Teammates", CFG::Materials_Players_Ignore_Teammates },
+					{ "Tagged", CFG::Materials_Players_Ignore_Tagged }
 					});
 
 				CheckBox("Show Team Medics", CFG::Materials_Players_Show_Teammate_Medics);
@@ -2785,7 +2787,8 @@ void CMenu::MainWindow()
 					{ "Local", CFG::Outlines_Players_Ignore_Local },
 					{ "Friends", CFG::Outlines_Players_Ignore_Friends },
 					{ "Enemies", CFG::Outlines_Players_Ignore_Enemies },
-					{ "Teammates", CFG::Outlines_Players_Ignore_Teammates }
+					{ "Teammates", CFG::Outlines_Players_Ignore_Teammates },
+					{ "Tagged", CFG::Outlines_Players_Ignore_Tagged }
 					});
 
 				CheckBox("Show Team Medics", CFG::Outlines_Players_Show_Teammate_Medics);

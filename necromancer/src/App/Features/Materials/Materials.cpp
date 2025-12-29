@@ -5,6 +5,7 @@
 #include "../LagRecords/LagRecords.h"
 #include "../SpyCamera/SpyCamera.h"
 #include "../FakeAngle/FakeAngle.h"
+#include "../Players/Players.h"
 
 void SetModelStencilForOutlines(C_BaseEntity* pEntity)
 {
@@ -609,7 +610,19 @@ void CMaterials::Run()
 			if (CFG::Materials_Players_Ignore_Friends && bIsFriend)
 				continue;
 
-			if (!bIsLocal && !bIsFriend)
+			// Check if player is tagged (Cheater/RetardLegit/Ignored)
+			bool bIsTagged = false;
+			if (!CFG::Materials_Players_Ignore_Tagged)
+			{
+				PlayerPriority playerPriority = {};
+				if (F::Players->GetInfo(pPlayer->entindex(), playerPriority))
+				{
+					bIsTagged = playerPriority.Cheater || playerPriority.RetardLegit || playerPriority.Ignored;
+				}
+			}
+
+			// Skip team/enemy filtering if player is tagged (and not ignoring tagged)
+			if (!bIsLocal && !bIsFriend && !bIsTagged)
 			{
 				const int nPlayerTeam = pPlayer->m_iTeamNum();
 				
