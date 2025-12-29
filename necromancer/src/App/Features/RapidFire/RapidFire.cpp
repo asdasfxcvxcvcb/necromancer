@@ -2,7 +2,6 @@
 
 #include "../CFG.h"
 #include "../Crits/Crits.h"
-#include "../Hitchance/Hitchance.h"
 
 bool IsRapidFireWeapon(C_TFWeaponBase* pWeapon)
 {
@@ -50,39 +49,9 @@ bool CRapidFire::ShouldStart(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
 	if (!F::CritHack->ShouldAllowFire(pLocal, pWeapon, G::CurrentUserCmd))
 		return false;
 
-	// Hitchance check - don't start rapid fire if hitchance is too low
-	if (CFG::Aimbot_Hitscan_Hitchance > 0)
-	{
-		// Get target entity
-		auto pTarget = I::ClientEntityList->GetClientEntity(G::nTargetIndex);
-		if (pTarget)
-		{
-			// Determine hitbox radius based on target type
-			float flHitboxRadius = 12.0f;
-			if (pTarget->GetClassId() == ETFClassIds::CTFPlayer)
-				flHitboxRadius = 10.0f; // Head size for players
-			else if (pTarget->GetClassId() == ETFClassIds::CObjectSentrygun ||
-					 pTarget->GetClassId() == ETFClassIds::CObjectDispenser ||
-					 pTarget->GetClassId() == ETFClassIds::CObjectTeleporter)
-				flHitboxRadius = 24.0f; // Buildings
-
-			// Get target position (use center of entity)
-			Vec3 vTargetPos = pTarget->GetAbsOrigin();
-			if (pTarget->GetClassId() == ETFClassIds::CTFPlayer)
-			{
-				// Use eye position for players
-				const auto pPlayer = pTarget->As<C_TFPlayer>();
-				if (pPlayer)
-					vTargetPos = pPlayer->GetAbsOrigin() + Vec3(0, 0, 40); // Approximate body center
-			}
-
-			const Vec3 vShootPos = pLocal->GetShootPos();
-			const float flHitchance = F::Hitchance->Calculate(pLocal, pWeapon, vShootPos, vTargetPos, flHitboxRadius, true, 2);
-
-			if (flHitchance < static_cast<float>(CFG::Aimbot_Hitscan_Hitchance))
-				return false;
-		}
-	}
+	// NOTE: We don't check hitchance here anymore because G::bFiring already implies
+	// that ShouldFire() passed, which includes hitchance and smart shotgun checks.
+	// This ensures RapidFire only starts when the aimbot actually decided to fire.
 
 	return true;
 }

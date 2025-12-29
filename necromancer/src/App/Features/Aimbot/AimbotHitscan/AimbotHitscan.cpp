@@ -690,6 +690,54 @@ bool CAimbotHitscan::ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWe
 	if (!CFG::Aimbot_AutoShoot)
 		return false;
 
+	// Smart Shotgun Damage Prediction - CHECK FIRST before hitchance
+	// This ensures RapidFire won't start if smart shotgun would block the shot
+	if (CFG::Aimbot_Hitscan_Smart_Shotgun && target.Entity && target.Entity->GetClassId() == ETFClassIds::CTFPlayer)
+	{
+		const int wid = pWeapon->GetWeaponID();
+		const bool bIsShotgun = (
+			wid == TF_WEAPON_SCATTERGUN ||
+			wid == TF_WEAPON_SODA_POPPER ||
+			wid == TF_WEAPON_PEP_BRAWLER_BLASTER ||
+			wid == TF_WEAPON_SHOTGUN_PRIMARY ||
+			wid == TF_WEAPON_SHOTGUN_SOLDIER ||
+			wid == TF_WEAPON_SHOTGUN_HWG ||
+			wid == TF_WEAPON_SHOTGUN_PYRO
+		);
+
+		if (bIsShotgun)
+		{
+			// Check if double-tap is available
+			const bool bDoubleTapKeyHeld = CFG::Exploits_RapidFire_Key != 0 && H::Input->IsDown(CFG::Exploits_RapidFire_Key);
+			const int nStoredTicks = F::RapidFire->GetTicks(pWeapon);
+			const bool bCanDoubleTap = bDoubleTapKeyHeld && nStoredTicks >= CFG::Exploits_RapidFire_Ticks;
+
+			// Only apply smart shotgun logic when double-tap is ready
+			if (bCanDoubleTap)
+			{
+				const auto pPlayer = target.Entity->As<C_TFPlayer>();
+
+				// Build config for double-tap mode
+				SmartShotgunConfig config = {};
+				config.bDoubleTapEnabled = true;
+				config.nDoubleTapTicksRequired = CFG::Exploits_RapidFire_Ticks;
+				config.nDoubleTapTicksStored = nStoredTicks;
+				config.flDoubleTapMinPelletPercent = 0.50f;  // 50% for double tap
+				config.flNormalMinPelletPercent = 0.10f;
+				config.bCanCrit = pLocal->IsCritBoosted();
+				config.bHoldingCritKey = CFG::Exploits_Crits_Force_Crit_Key != 0 && H::Input->IsDown(CFG::Exploits_Crits_Force_Crit_Key);
+				config.bRapidFireReady = true;
+				
+				// Get smart shot decision
+				SmartShotDecision decision = g_SmartShotgun.ShouldShoot(pLocal, pWeapon, pPlayer, config);
+				
+				if (!decision.bShouldShoot)
+					return false;
+			}
+			// When not double-tapping, use normal aimbot logic (no additional checks)
+		}
+	}
+
 	// Hitchance check - calculate if we meet the required hit probability
 	if (CFG::Aimbot_Hitscan_Hitchance > 0 && target.Entity)
 	{
@@ -928,54 +976,6 @@ bool CAimbotHitscan::ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWe
 			{
 				return false;
 			}
-		}
-	}
-
-	// Smart Shotgun Damage Prediction - only applies when double-tap is available
-	// Normal aimbot logic is used when not able to double-tap
-	if (CFG::Aimbot_Hitscan_Smart_Shotgun && target.Entity && target.Entity->GetClassId() == ETFClassIds::CTFPlayer)
-	{
-		const int wid = pWeapon->GetWeaponID();
-		const bool bIsShotgun = (
-			wid == TF_WEAPON_SCATTERGUN ||
-			wid == TF_WEAPON_SODA_POPPER ||
-			wid == TF_WEAPON_PEP_BRAWLER_BLASTER ||
-			wid == TF_WEAPON_SHOTGUN_PRIMARY ||
-			wid == TF_WEAPON_SHOTGUN_SOLDIER ||
-			wid == TF_WEAPON_SHOTGUN_HWG ||
-			wid == TF_WEAPON_SHOTGUN_PYRO
-		);
-
-		if (bIsShotgun)
-		{
-			// Check if double-tap is available
-			const bool bDoubleTapKeyHeld = CFG::Exploits_RapidFire_Key != 0 && H::Input->IsDown(CFG::Exploits_RapidFire_Key);
-			const int nStoredTicks = F::RapidFire->GetTicks(pWeapon);
-			const bool bCanDoubleTap = bDoubleTapKeyHeld && nStoredTicks >= CFG::Exploits_RapidFire_Ticks;
-
-			// Only apply smart shotgun logic when double-tap is ready
-			if (bCanDoubleTap)
-			{
-				const auto pPlayer = target.Entity->As<C_TFPlayer>();
-
-				// Build config for double-tap mode
-				SmartShotgunConfig config = {};
-				config.bDoubleTapEnabled = true;
-				config.nDoubleTapTicksRequired = CFG::Exploits_RapidFire_Ticks;
-				config.nDoubleTapTicksStored = nStoredTicks;
-				config.flDoubleTapMinPelletPercent = 0.50f;  // 50% for double tap
-				config.flNormalMinPelletPercent = 0.10f;
-				config.bCanCrit = pLocal->IsCritBoosted();
-				config.bHoldingCritKey = CFG::Exploits_Crits_Force_Crit_Key != 0 && H::Input->IsDown(CFG::Exploits_Crits_Force_Crit_Key);
-				config.bRapidFireReady = true;
-				
-				// Get smart shot decision
-				SmartShotDecision decision = g_SmartShotgun.ShouldShoot(pLocal, pWeapon, pPlayer, config);
-				
-				if (!decision.bShouldShoot)
-					return false;
-			}
-			// When not double-tapping, use normal aimbot logic (no additional checks)
 		}
 	}
 
