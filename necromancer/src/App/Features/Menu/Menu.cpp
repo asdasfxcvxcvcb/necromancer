@@ -196,6 +196,7 @@ bool CMenu::CheckBox(const char *szLabel, bool &bVar)
 	if (bHovered && H::Input->IsPressed(VK_LBUTTON) && !m_bClickConsumed) {
 		bCallback = m_bClickConsumed = true;
 		bVar = !bVar;
+		MarkConfigChanged(); // Trigger autosave
 	}
 
 	Color_t clr = CFG::Menu_Accent_Primary;
@@ -284,6 +285,8 @@ bool CMenu::SliderFloat(const char *szLabel, float &flVar, float flMin, float fl
 					flVar -= flStep;
 
 				else flVar += flStep;
+				
+				MarkConfigChanged(); // Trigger autosave on right-click adjust
 			}
 		}
 
@@ -298,7 +301,11 @@ bool CMenu::SliderFloat(const char *szLabel, float &flVar, float flMin, float fl
 		else
 		{
 			if (!H::Input->IsHeld(VK_LBUTTON))
+			{
+				if (m_mapStates[&flVar])
+					MarkConfigChanged(); // Trigger autosave when slider is released
 				m_mapStates[&flVar] = false;
+			}
 		}
 	}
 
@@ -393,6 +400,8 @@ bool CMenu::SliderInt(const char *szLabel, int &nVar, int nMin, int nMax, int nS
 					nVar -= nStep;
 
 				else nVar += nStep;
+				
+				MarkConfigChanged(); // Trigger autosave on right-click adjust
 			}
 		}
 
@@ -407,7 +416,11 @@ bool CMenu::SliderInt(const char *szLabel, int &nVar, int nMin, int nMax, int nS
 		else
 		{
 			if (!H::Input->IsHeld(VK_LBUTTON))
+			{
+				if (m_mapStates[&nVar])
+					MarkConfigChanged(); // Trigger autosave when slider is released
 				m_mapStates[&nVar] = false;
+			}
 		}
 	}
 
@@ -541,6 +554,7 @@ bool CMenu::InputKey(const char *szLabel, int &nKeyOut)
 					else if (n == VK_ESCAPE) {
 						nKeyOut = 0x0;
 						m_mapStates[&nKeyOut] = false;
+						MarkConfigChanged(); // Trigger autosave when keybind is cleared
 						break;
 					}
 
@@ -556,6 +570,7 @@ bool CMenu::InputKey(const char *szLabel, int &nKeyOut)
 
 						nKeyOut = n;
 						m_mapStates[&nKeyOut] = false;
+						MarkConfigChanged(); // Trigger autosave when keybind is set
 					}
 
 					break;
@@ -1046,6 +1061,7 @@ bool CMenu::SelectSingle(const char *szLabel, int &nVar, const std::vector<std::
 				nVar = Select.second;
 				m_mapStates[&nVar] = false;
 				m_bClickConsumed = true;
+				MarkConfigChanged(); // Trigger autosave when selection changes
 				break;
 			}
 
@@ -1168,6 +1184,7 @@ bool CMenu::SelectMulti(const char *szLabel, std::vector<std::pair<const char *,
 			if (H::Input->IsPressed(VK_LBUTTON) && !m_bClickConsumed && bSelectHovered) {
 				Select.second = !Select.second;
 				m_bClickConsumed = true;
+				MarkConfigChanged(); // Trigger autosave when multi-select changes
 			}
 		}
 	}
@@ -1229,6 +1246,7 @@ bool CMenu::ColorPicker(const char *szLabel, Color_t &colVar)
 			int y_rel = (H::Input->GetMouseY() - y);
 
 			colVar = *reinterpret_cast<Color_t *>(m_pGradient.get() + (x_rel + y_rel * 200));
+			MarkConfigChanged(); // Trigger autosave when color changes
 		}
 
 		H::LateRender->Texture(m_nColorPickerTextureId, x, y, w, h);
@@ -4078,6 +4096,57 @@ void CMenu::MainWindow()
 			ShellExecuteW(NULL, L"open", U::Storage->GetConfigFolder().wstring().c_str(), NULL, NULL, SW_SHOWNORMAL);
 		}
 
+		// Autosave groupbox - positioned below the configs groupbox
+		m_nCursorY += CFG::Menu_Spacing_Y;
+		
+		GroupBoxStart("Autosave", 150);
+		{
+			m_nCursorY += CFG::Menu_Spacing_Y;
+			
+			// Load autosave on inject option (stored separately from config)
+			static bool bLoadOnInject = U::Storage->GetLoadAutosaveOnInject();
+			if (CheckBox("Load Latest on Inject", bLoadOnInject))
+			{
+				U::Storage->SetLoadAutosaveOnInject(bLoadOnInject);
+			}
+			
+			m_nCursorY += CFG::Menu_Spacing_Y;
+			
+			const auto& autosaveFolder = U::Storage->GetAutosaveFolder();
+			
+			// Display 5 autosave slots
+			for (int i = 1; i <= 5; i++)
+			{
+				std::string fileName = "autosave_" + std::to_string(i) + ".json";
+				auto path = autosaveFolder / fileName;
+				
+				std::string label;
+				if (i == 1)
+					label = "AUTOSAVE LATEST";
+				else
+					label = "AUTOSAVE " + std::to_string(i);
+				
+				// Check if file exists
+				bool bExists = std::filesystem::exists(path);
+				
+				if (bExists)
+				{
+					if (Button(label.c_str(), false, ((m_nLastGroupBoxW + 1) - (CFG::Menu_Spacing_X * 6))))
+					{
+						U::Storage->LoadAutosave(i);
+					}
+				}
+				else
+				{
+					// Draw disabled button (grayed out)
+					Color_t oldColor = CFG::Menu_Text_Inactive;
+					H::Draw->String(H::Fonts->Get(EFonts::Menu), m_nCursorX + CFG::Menu_Spacing_X, m_nCursorY, oldColor, POS_DEFAULT, "%s (empty)", label.c_str());
+					m_nCursorY += 20;
+				}
+			}
+		}
+		GroupBoxEnd();
+
 		// Unbind All button at bottom right
 		int savedX = m_nCursorX;
 		int savedY = m_nCursorY;
@@ -4627,6 +4696,12 @@ void CMenu::Indicators()
 
 void CMenu::Run()
 {
+	// Process delayed autosave load on inject
+	U::Storage->Update();
+	
+	// Process autosave (saves config after delay when changes are made)
+	ProcessAutosave();
+	
 	// Auto-check all players' sourcebans when connected (runs every frame but only checks new players)
 	CheckAllPlayersSourcebans();
 
@@ -4836,6 +4911,27 @@ void CMenu::Run()
 
 CMenu::CMenu()
 {
+}
+
+void CMenu::MarkConfigChanged()
+{
+	m_bConfigChanged = true;
+	m_flLastChangeTime = I::EngineClient->Time();
+}
+
+void CMenu::ProcessAutosave()
+{
+	if (!m_bConfigChanged)
+		return;
+	
+	float flCurrentTime = I::EngineClient->Time();
+	
+	// Wait for AUTOSAVE_DELAY seconds after last change before saving
+	if (flCurrentTime - m_flLastChangeTime >= AUTOSAVE_DELAY)
+	{
+		U::Storage->DoAutosave();
+		m_bConfigChanged = false;
+	}
 }
 
 // ============================================

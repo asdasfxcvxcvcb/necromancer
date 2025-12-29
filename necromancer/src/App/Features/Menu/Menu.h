@@ -43,6 +43,11 @@ private:
 	float m_flMenuOpenProgress = 0.0f;
 	bool m_bWasOpen = false;
 
+	// Autosave system
+	bool m_bConfigChanged = false;
+	float m_flLastChangeTime = 0.0f;
+	static constexpr float AUTOSAVE_DELAY = 2.0f; // Save 2 seconds after last change
+
 	// Draggable GroupBox system
 	std::map<std::string, DraggableGroupBox_t> m_mapGroupBoxes;
 	std::string m_strDraggingGroupBox;      // ID of currently dragged GroupBox
@@ -93,8 +98,12 @@ public:
 
 	bool m_bWantTextInput = false;
 	bool m_bInKeybind = false;
+	
+	// Mark config as changed (triggers autosave after delay)
+	void MarkConfigChanged();
 
 private:
+	void ProcessAutosave();
 	void MainWindow();
 	void Snow();
 	void Indicators();
