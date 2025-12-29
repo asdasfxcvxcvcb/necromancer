@@ -126,6 +126,12 @@ void CApp::Start()
 		r_drawtracers_firstperson->SetValue(1);
 	}
 
+	// Set mat_queue_mode to 2 for better performance
+	if (const auto mat_queue_mode = I::CVar->FindVar("mat_queue_mode"))
+	{
+		mat_queue_mode->SetValue(2);
+	}
+
 	// Suppress DataTable warnings from anti-aim exploit angles
 	// These warnings spam the console when using out-of-range pitch values
 	if (const auto developer = I::CVar->FindVar("developer"))
