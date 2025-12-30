@@ -240,7 +240,7 @@ void COutlines::RunModels()
 					continue;
 			}
 
-			const auto entColor = F::VisualUtils->GetEntityColor(pLocal, pPlayer);
+			const auto entColor = F::VisualUtils->GetEntityColorForOutlines(pLocal, pPlayer);
 
 			m_vecOutlineEntities.emplace_back(OutlineEntity_t{pPlayer, entColor, CFG::Outlines_Players_Alpha});
 

@@ -1194,7 +1194,70 @@ bool CMenu::SelectMulti(const char *szLabel, std::vector<std::pair<const char *,
 	return bCallback;
 }
 
-bool CMenu::ColorPicker(const char *szLabel, Color_t &colVar)
+struct ColorPickerState {
+	float hue = 0.8f;
+	float saturation = 1.0f;
+	float value = 1.0f;
+	int svTextureID = -1;
+	int hueTextureID = -1;
+	float lastHue = -1.0f;
+	float alpha = 1.0f;
+};
+
+std::unordered_map<Color_t*, ColorPickerState> m_mapColorStates;
+
+Color_t HSVtoRGB(float h, float s, float v) {
+	float r, g, b;
+
+	int i = int(h * 6);
+	float f = h * 6 - i;
+	float p = v * (1 - s);
+	float q = v * (1 - f * s);
+	float t = v * (1 - (1 - f) * s);
+
+	switch (i % 6) {
+	case 0: r = v, g = t, b = p; break;
+	case 1: r = q, g = v, b = p; break;
+	case 2: r = p, g = v, b = t; break;
+	case 3: r = p, g = q, b = v; break;
+	case 4: r = t, g = p, b = v; break;
+	case 5: r = v, g = p, b = q; break;
+	}
+
+	return Color_t(
+		static_cast<int>(r * 255),
+		static_cast<int>(g * 255),
+		static_cast<int>(b * 255),
+		255
+	);
+}
+
+void RGBtoHSV(const Color_t& rgb, float& h, float& s, float& v)
+{
+	float r = rgb.r / 255.0f;
+	float g = rgb.g / 255.0f;
+	float b = rgb.b / 255.0f;
+
+	float max = std::max({ r, g, b });
+	float min = std::min({ r, g, b });
+	float delta = max - min;
+
+	v = max;
+	s = (max > 0.0f) ? (delta / max) : 0.0f;
+
+	if (delta == 0.0f)
+		h = 0.0f;
+	else if (max == r)
+		h = (g - b) / delta + (g < b ? 6.0f : 0.0f);
+	else if (max == g)
+		h = (b - r) / delta + 2.0f;
+	else
+		h = (r - g) / delta + 4.0f;
+
+	h /= 6.0f;
+}
+
+bool CMenu::ColorPicker(const char* szLabel, Color_t& colVar)
 {
 	bool bCallback = false;
 
@@ -1207,17 +1270,42 @@ bool CMenu::ColorPicker(const char *szLabel, Color_t &colVar)
 		int w_out = 0, h_out = 0;
 		I::MatSystemSurface->GetTextSize(H::Fonts->Get(EFonts::Menu).m_dwFont, Utils::ConvertUtf8ToWide(szLabel).c_str(), w_out, h_out);
 		return w + w_out + 1;
-	}();
+		}();
 
 	bool bHovered = IsHovered(x, y, w_with_text, h, &colVar);
 
 	if (bHovered && H::Input->IsPressed(VK_LBUTTON) && !m_bClickConsumed) {
+		for (auto& pair : m_mapContextMenuStates)
+			pair.second = false;
+
 		m_mapStates[&colVar] = !m_mapStates[&colVar];
+
+		if (m_mapStates[&colVar]) {
+			ColorPickerState& state = m_mapColorStates[&colVar];
+			float h, s, v;
+			RGBtoHSV(colVar, h, s, v);
+			state.hue = h;
+			state.saturation = s;
+			state.value = v;
+			state.alpha = colVar.a / 255.0f;
+		}
+
 		m_bClickConsumed = true;
 	}
 
-	if (H::Input->IsPressed(VK_ESCAPE) || H::Input->IsPressed(VK_INSERT) || H::Input->IsPressed(VK_F3))
+	if (bHovered && H::Input->IsPressed(VK_RBUTTON) && !m_bClickConsumed) {
+		for (auto& pair : m_mapContextMenuStates)
+			pair.second = false;
+
+		m_mapContextMenuStates[&colVar] = true;
 		m_mapStates[&colVar] = false;
+		m_bClickConsumed = true;
+	}
+
+	if (H::Input->IsPressed(VK_ESCAPE) || H::Input->IsPressed(VK_INSERT) || H::Input->IsPressed(VK_F3)) {
+		m_mapStates[&colVar] = false;
+		m_mapContextMenuStates[&colVar] = false;
+	}
 
 	H::Draw->Rect(x, y, w, h, colVar);
 	H::Draw->OutlinedRect(x, y, w, h, CFG::Menu_Accent_Primary);
@@ -1229,28 +1317,189 @@ bool CMenu::ColorPicker(const char *szLabel, Color_t &colVar)
 		POS_CENTERY, szLabel
 	);
 
-	if (m_mapStates[&colVar])
+	if (m_mapContextMenuStates[&colVar])
 	{
-		int y = m_nCursorY + h + CFG::Menu_Spacing_Y;
-		int w = 200;
-		int h = 200;
+		int menuPadding = 4;
+		int buttonHeight = 18;
+		int buttonSpacing = 4;
+		int menuWidth = 80;
+		int menuHeight = menuPadding + buttonHeight + buttonSpacing + buttonHeight + menuPadding;
+		int menuX = x + w_with_text + 5;
+		int menuY = y;
 
-		bool bHovered = IsHovered(x, y, w, h, &colVar);
+		H::LateRender->Rect(menuX, menuY, menuWidth, menuHeight, CFG::Menu_Background);
+		H::LateRender->OutlinedRect(menuX, menuY, menuWidth, menuHeight, CFG::Menu_Accent_Primary);
 
-		if (H::Input->IsPressed(VK_LBUTTON) && !m_bClickConsumed && !bHovered)
-			m_mapStates[&colVar] = false;
+		int copyButtonX = menuX + menuPadding;
+		int copyButtonY = menuY + menuPadding;
+		int copyButtonW = menuWidth - menuPadding * 2;
 
-		if (H::Input->IsHeld(VK_LBUTTON) && bHovered)
+		int pasteButtonX = menuX + menuPadding;
+		int pasteButtonY = copyButtonY + buttonHeight + buttonSpacing;
+		int pasteButtonW = menuWidth - menuPadding * 2;
+
+		bool hoveredCopy = IsHovered(copyButtonX, copyButtonY, copyButtonW, buttonHeight, &colVar);
+		bool hoveredPaste = IsHovered(pasteButtonX, pasteButtonY, pasteButtonW, buttonHeight, &colVar);
+		bool hoveredMenu = IsHovered(menuX, menuY, menuWidth, menuHeight, &colVar);
+
+		if (H::Input->IsPressed(VK_LBUTTON) && !m_bClickConsumed && !hoveredMenu)
+			m_mapContextMenuStates[&colVar] = false;
+
+		if (H::Input->IsPressed(VK_LBUTTON) && hoveredCopy && !m_bClickConsumed)
 		{
-			int x_rel = (H::Input->GetMouseX() - x);
-			int y_rel = (H::Input->GetMouseY() - y);
-
-			colVar = *reinterpret_cast<Color_t *>(m_pGradient.get() + (x_rel + y_rel * 200));
-			MarkConfigChanged(); // Trigger autosave when color changes
+			m_copiedColor = colVar;
+			m_mapContextMenuStates[&colVar] = false;
+			m_bClickConsumed = true;
+		}
+		else if (H::Input->IsPressed(VK_LBUTTON) && hoveredPaste && !m_bClickConsumed)
+		{
+			colVar = m_copiedColor;
+			if (m_mapColorStates.count(&colVar))
+			{
+				ColorPickerState& state = m_mapColorStates[&colVar];
+				float h, s, v;
+				RGBtoHSV(colVar, h, s, v);
+				state.hue = h;
+				state.saturation = s;
+				state.value = v;
+				state.alpha = colVar.a / 255.0f;
+			}
+			m_mapContextMenuStates[&colVar] = false;
+			m_bClickConsumed = true;
 		}
 
-		H::LateRender->Texture(m_nColorPickerTextureId, x, y, w, h);
-		H::LateRender->OutlinedRect(x, y, w, h, CFG::Menu_Accent_Primary);
+		H::LateRender->Rect(copyButtonX, copyButtonY, copyButtonW, buttonHeight, hoveredCopy ? CFG::Menu_Accent_Primary : CFG::Menu_Background);
+		H::LateRender->OutlinedRect(copyButtonX, copyButtonY, copyButtonW, buttonHeight, CFG::Menu_Accent_Primary);
+		H::LateRender->String(
+			H::Fonts->Get(EFonts::Menu),
+			copyButtonX + copyButtonW / 2,
+			copyButtonY + buttonHeight / 2,
+			hoveredCopy ? CFG::Menu_Text_Active : CFG::Menu_Text_Inactive,
+			POS_CENTERXY,
+			"Copy",
+			ClipRegion_t{}
+		);
+
+		H::LateRender->Rect(pasteButtonX, pasteButtonY, pasteButtonW, buttonHeight, hoveredPaste ? CFG::Menu_Accent_Primary : CFG::Menu_Background);
+		H::LateRender->OutlinedRect(pasteButtonX, pasteButtonY, pasteButtonW, buttonHeight, CFG::Menu_Accent_Primary);
+		H::LateRender->String(
+			H::Fonts->Get(EFonts::Menu),
+			pasteButtonX + pasteButtonW / 2,
+			pasteButtonY + buttonHeight / 2,
+			hoveredPaste ? CFG::Menu_Text_Active : CFG::Menu_Text_Inactive,
+			POS_CENTERXY,
+			"Paste",
+			ClipRegion_t{}
+		);
+	}
+
+	if (m_mapStates[&colVar])
+	{
+		int pickerX = x;
+		int pickerY = m_nCursorY + h + CFG::Menu_Spacing_Y;
+		int pickerW = 200;
+		int pickerH = 200;
+		int hueBarWidth = 12;
+		int alphaBarWidth = 12;
+		int padding = 4;
+		int totalW = pickerW + padding + hueBarWidth + padding + alphaBarWidth + padding * 2;
+		int totalH = pickerH + padding * 2;
+
+		H::LateRender->Rect(pickerX - padding, pickerY - padding, totalW, totalH, CFG::Menu_Background);
+		H::LateRender->OutlinedRect(pickerX - padding, pickerY - padding, totalW, totalH, CFG::Menu_Accent_Primary);
+
+		ColorPickerState& state = m_mapColorStates[&colVar];
+
+		bool hoveredSV = IsHovered(pickerX, pickerY, pickerW, pickerH, &colVar);
+		bool hoveredHue = IsHovered(pickerX + pickerW + padding, pickerY, hueBarWidth, pickerH, &colVar);
+		bool hoveredAlpha = IsHovered(pickerX + pickerW + padding + hueBarWidth + padding, pickerY, alphaBarWidth, pickerH, &colVar);
+
+		bool anyHovered = hoveredSV || hoveredHue || hoveredAlpha;
+
+		if (H::Input->IsPressed(VK_LBUTTON) && !m_bClickConsumed && !anyHovered)
+			m_mapStates[&colVar] = false;
+
+		if (H::Input->IsHeld(VK_LBUTTON) && hoveredSV)
+		{
+			int mouseX = H::Input->GetMouseX();
+			int mouseY = H::Input->GetMouseY();
+			state.saturation = std::clamp((float)(mouseX - pickerX) / pickerW, 0.0f, 1.0f);
+			state.value = 1.0f - std::clamp((float)(mouseY - pickerY) / pickerH, 0.0f, 1.0f);
+			colVar = HSVtoRGB(state.hue, state.saturation, state.value);
+			colVar.a = (unsigned char)(state.alpha * 255.0f);
+			m_bClickConsumed = true;
+		}
+		else if (H::Input->IsHeld(VK_LBUTTON) && hoveredHue)
+		{
+			int mouseY = H::Input->GetMouseY();
+			state.hue = std::clamp((float)(mouseY - pickerY) / pickerH, 0.0f, 1.0f);
+			colVar = HSVtoRGB(state.hue, state.saturation, state.value);
+			colVar.a = (unsigned char)(state.alpha * 255.0f);
+			m_bClickConsumed = true;
+		}
+		else if (H::Input->IsHeld(VK_LBUTTON) && hoveredAlpha)
+		{
+			int mouseY = H::Input->GetMouseY();
+			state.alpha = std::clamp((float)(mouseY - pickerY) / pickerH, 0.0f, 1.0f);
+			colVar.a = (unsigned char)(state.alpha * 255.0f);
+			m_bClickConsumed = true;
+		}
+
+		int step = 2;
+		for (int j = 0; j < pickerH; j += step)
+		{
+			for (int i = 0; i < pickerW; i += step)
+			{
+				float s = (float)i / pickerW;
+				float v = 1.0f - ((float)j / pickerH);
+				Color_t col = HSVtoRGB(state.hue, s, v);
+				H::LateRender->Rect(pickerX + i, pickerY + j, step, step, col);
+			}
+		}
+
+		for (int j = 0; j < pickerH; j += step)
+		{
+			float h = (float)j / pickerH;
+			Color_t hueColor = HSVtoRGB(h, 1.0f, 1.0f);
+			H::LateRender->Rect(pickerX + pickerW + padding, pickerY + j, hueBarWidth, step, hueColor);
+		}
+
+		int checkerSize = 4;
+		for (int j = 0; j < pickerH; j += checkerSize)
+		{
+			for (int i = 0; i < alphaBarWidth; i += checkerSize)
+			{
+				bool isEven = ((i / checkerSize) + (j / checkerSize)) % 2 == 0;
+				Color_t checkerColor = isEven ? Color_t{ 200, 200, 200, 255 } : Color_t{ 150, 150, 150, 255 };
+				H::LateRender->Rect(pickerX + pickerW + padding + hueBarWidth + padding + i, pickerY + j, checkerSize, checkerSize, checkerColor);
+			}
+		}
+
+		Color_t baseColor = HSVtoRGB(state.hue, state.saturation, state.value);
+		for (int j = 0; j < pickerH; j += step)
+		{
+			float alpha = (float)j / pickerH;
+			Color_t alphaColor = baseColor;
+			alphaColor.a = (unsigned char)(alpha * 255.0f);
+			H::LateRender->Rect(pickerX + pickerW + padding + hueBarWidth + padding, pickerY + j, alphaBarWidth, step, alphaColor);
+		}
+
+		H::LateRender->OutlinedRect(pickerX, pickerY, pickerW, pickerH, CFG::Menu_Accent_Primary);
+		H::LateRender->OutlinedRect(pickerX + pickerW + padding, pickerY, hueBarWidth, pickerH, CFG::Menu_Accent_Primary);
+		H::LateRender->OutlinedRect(pickerX + pickerW + padding + hueBarWidth + padding, pickerY, alphaBarWidth, pickerH, CFG::Menu_Accent_Primary);
+
+		int cursorX = pickerX + (int)(state.saturation * pickerW);
+		int cursorY = pickerY + (int)((1.0f - state.value) * pickerH);
+		H::LateRender->OutlinedRect(cursorX - 3, cursorY - 3, 6, 6, { 0, 0, 0, 255 });
+		H::LateRender->OutlinedRect(cursorX - 2, cursorY - 2, 4, 4, { 255, 255, 255, 255 });
+
+		int hueCursorY = pickerY + (int)(state.hue * pickerH);
+		H::LateRender->Rect(pickerX + pickerW + padding, hueCursorY - 1, hueBarWidth, 3, { 0, 0, 0, 255 });
+		H::LateRender->Rect(pickerX + pickerW + padding + 1, hueCursorY, hueBarWidth - 2, 1, { 255, 255, 255, 255 });
+
+		int alphaCursorY = pickerY + (int)(state.alpha * pickerH);
+		H::LateRender->Rect(pickerX + pickerW + padding + hueBarWidth + padding, alphaCursorY - 1, alphaBarWidth, 3, { 0, 0, 0, 255 });
+		H::LateRender->Rect(pickerX + pickerW + padding + hueBarWidth + padding + 1, alphaCursorY, alphaBarWidth - 2, 1, { 255, 255, 255, 255 });
 	}
 
 	m_nCursorY += h + CFG::Menu_Spacing_Y;
@@ -3197,6 +3446,13 @@ void CMenu::MainWindow()
 			}
 			GroupBoxEnd();
 
+			GroupBoxStart("Misc Enemy", 150);
+			{
+				CheckBox("Outline Color by HP", CFG::Visuals_Enemy_Outline_HP_Based);
+				CheckBox("Materials Color by HP", CFG::Visuals_Enemy_Materials_HP_Based);
+			}
+			GroupBoxEnd();
+
 			m_nCursorX += m_nLastGroupBoxW + (CFG::Menu_Spacing_X * 2);
 			m_nCursorY = anchor_y;
 
@@ -3394,8 +3650,19 @@ void CMenu::MainWindow()
 			CheckBox("Crit Indicator", CFG::Visuals_Crit_Indicator);
 			if (CFG::Visuals_Crit_Indicator)
 			{
-				SliderInt("Bar Width", CFG::Visuals_Crit_Indicator_Width, 100, 300, 10);
-				SliderInt("Bar Height", CFG::Visuals_Crit_Indicator_Height, 8, 32, 2);
+				CheckBox("Text Mode", CFG::Visuals_Crit_Indicator_TextMode);
+				if (CFG::Visuals_Crit_Indicator_TextMode)
+				{
+					SelectSingle("Text Size", CFG::Visuals_Crit_Indicator_TextSize, {
+						{ "Small", 100 },
+						{ "Medium", 110 }
+					});
+				}
+				else
+				{
+					SliderInt("Bar Width", CFG::Visuals_Crit_Indicator_Width, 100, 300, 10);
+					SliderInt("Bar Height", CFG::Visuals_Crit_Indicator_Height, 8, 32, 2);
+				}
 				CheckBox("Indicator Debug", CFG::Visuals_Crit_Indicator_Debug);
 			}
 		};

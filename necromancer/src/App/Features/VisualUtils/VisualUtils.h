@@ -9,6 +9,8 @@ public:
 
 	Color_t GetAlphaColor(Color_t base, float alpha);
 	Color_t GetEntityColor(C_TFPlayer* pLocal, C_BaseEntity* pEntity);
+	Color_t GetEntityColorForOutlines(C_TFPlayer* pLocal, C_BaseEntity* pEntity);
+	Color_t GetEntityColorForMaterials(C_TFPlayer* pLocal, C_BaseEntity* pEntity);
 	Color_t GetHealthColor(int nHealth, int nMaxHealth);
 	Color_t GetHealthColorAlt(int nHealth, int nMaxHealth);
 

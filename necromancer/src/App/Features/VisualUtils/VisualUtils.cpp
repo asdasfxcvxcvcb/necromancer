@@ -96,6 +96,70 @@ Color_t CVisualUtils::GetEntityColor(C_TFPlayer* pLocal, C_BaseEntity* pEntity)
 	return { 255, 255, 255, 255 };
 }
 
+Color_t CVisualUtils::GetEntityColorForOutlines(C_TFPlayer* pLocal, C_BaseEntity* pEntity)
+{
+	if (!pLocal || !pEntity)
+		return { 255, 255, 255, 255 };
+
+	// Check if HP-based coloring is enabled for enemy outlines
+	if (CFG::Visuals_Enemy_Outline_HP_Based && pEntity->GetClassId() == ETFClassIds::CTFPlayer)
+	{
+		const auto pPlayer = pEntity->As<C_TFPlayer>();
+		
+		// Only apply HP-based color to enemies (not local, not friends, not teammates)
+		if (pPlayer != pLocal && 
+			!pPlayer->IsPlayerOnSteamFriendsList() && 
+			pPlayer->m_iTeamNum() != pLocal->m_iTeamNum() &&
+			!pPlayer->IsInvulnerable() &&
+			!pPlayer->IsInvisible())
+		{
+			// Check if not a tagged player (cheater/retardlegit)
+			PlayerPriority info{};
+			F::Players->GetInfo(pPlayer->entindex(), info);
+			
+			if (!info.Cheater && !info.RetardLegit)
+			{
+				return GetHealthColor(pPlayer->m_iHealth(), pPlayer->GetMaxHealth());
+			}
+		}
+	}
+
+	// Fall back to default entity color
+	return GetEntityColor(pLocal, pEntity);
+}
+
+Color_t CVisualUtils::GetEntityColorForMaterials(C_TFPlayer* pLocal, C_BaseEntity* pEntity)
+{
+	if (!pLocal || !pEntity)
+		return { 255, 255, 255, 255 };
+
+	// Check if HP-based coloring is enabled for enemy materials
+	if (CFG::Visuals_Enemy_Materials_HP_Based && pEntity->GetClassId() == ETFClassIds::CTFPlayer)
+	{
+		const auto pPlayer = pEntity->As<C_TFPlayer>();
+		
+		// Only apply HP-based color to enemies (not local, not friends, not teammates)
+		if (pPlayer != pLocal && 
+			!pPlayer->IsPlayerOnSteamFriendsList() && 
+			pPlayer->m_iTeamNum() != pLocal->m_iTeamNum() &&
+			!pPlayer->IsInvulnerable() &&
+			!pPlayer->IsInvisible())
+		{
+			// Check if not a tagged player (cheater/retardlegit)
+			PlayerPriority info{};
+			F::Players->GetInfo(pPlayer->entindex(), info);
+			
+			if (!info.Cheater && !info.RetardLegit)
+			{
+				return GetHealthColor(pPlayer->m_iHealth(), pPlayer->GetMaxHealth());
+			}
+		}
+	}
+
+	// Fall back to default entity color
+	return GetEntityColor(pLocal, pEntity);
+}
+
 Color_t CVisualUtils::GetHealthColor(int nHealth, int nMaxHealth)
 {
 	if (nHealth > nMaxHealth)

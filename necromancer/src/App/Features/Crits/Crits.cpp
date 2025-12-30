@@ -732,6 +732,100 @@ void CCritHack::Draw()
 	const int x = CFG::Visuals_Crit_Indicator_Pos_X;
 	const int y = CFG::Visuals_Crit_Indicator_Pos_Y;
 	
+	// Text Mode - simple text-based indicator
+	if (CFG::Visuals_Crit_Indicator_TextMode)
+	{
+		// Update the dynamic font size based on slider
+		H::Fonts->UpdateCritIndicatorFont(CFG::Visuals_Crit_Indicator_TextSize);
+		
+		const auto& font = H::Fonts->Get(EFonts::CritIndicator);
+		const int nBarW = 110 * CFG::Visuals_Crit_Indicator_TextSize / 100;
+		const int lineSpacing = font.m_nTall;
+		int yOffset = y + 2;
+		
+		Color_t textColor = CFG::Menu_Text;
+		float flTickBase = TICKS_TO_TIME(pLocal->m_nTickBase());
+		int iSlot = pWeapon->GetSlot();
+		bool bHoldingMelee = (iSlot == WEAPON_SLOT_MELEE);
+		bool bRapidFire = pWeapon->IsRapidFire();
+		
+		if (!WeaponCanCrit(pWeapon, false))
+		{
+			H::Draw->String(font, x + (nBarW / 2), y + 2, Color_t(255, 150, 150, 255), POS_CENTERXY, "Random crits disabled");
+			return;
+		}
+		
+		// Show calculating if we don't have data yet
+		if (m_iAvailableCrits == 0 && m_iPotentialCrits == 0 && !m_bCritBanned)
+		{
+			H::Draw->String(font, x + (nBarW / 2), yOffset, { 255, 255, 0, 255 }, POS_CENTERXY, "Calculating...");
+			return;
+		}
+		
+		if (!m_bCritBanned || !bHoldingMelee)
+		{
+			H::Draw->String(font, x + (nBarW / 2), yOffset, textColor, POS_CENTERXY, "%d%s / %d crits", 
+				m_iAvailableCrits, m_iAvailableCrits >= BUCKET_ATTEMPTS ? "+" : "", m_iPotentialCrits);
+			yOffset += lineSpacing;
+		}
+		
+		if (bHoldingMelee)
+		{
+			H::Draw->String(font, x + (nBarW / 2), yOffset, Color_t(100, 255, 100, 255), POS_CENTERXY, "Crits Always Available");
+			yOffset += lineSpacing;
+			if (pLocal->IsCritBoosted())
+			{
+				H::Draw->String(font, x + (nBarW / 2), yOffset, Color_t(100, 255, 255, 255), POS_CENTERXY, "Crit Boosted");
+				yOffset += lineSpacing;
+			}
+			return;
+		}
+		
+		if (m_bCritBanned)
+		{
+			H::Draw->String(font, x + (nBarW / 2), yOffset, Color_t(255, 100, 100, 255), POS_CENTERXY, "Crit Banned");
+			yOffset += lineSpacing;
+			H::Draw->String(font, x + (nBarW / 2), yOffset, Color_t(255, 150, 150, 255), POS_CENTERXY, "%.0f damage required", m_flDamageTilFlip);
+			yOffset += lineSpacing;
+		}
+		else
+		{
+			if (pLocal->IsCritBoosted())
+			{
+				H::Draw->String(font, x + (nBarW / 2), yOffset, Color_t(100, 255, 255, 255), POS_CENTERXY, "Crit Boosted");
+				yOffset += lineSpacing;
+			}
+			else if (pWeapon->m_flCritTime() > flTickBase)
+			{
+				float flTime = pWeapon->m_flCritTime() - flTickBase;
+				H::Draw->String(font, x + (nBarW / 2), yOffset, Color_t(100, 255, 255, 255), POS_CENTERXY, "Streaming Crits %.1fs", flTime);
+				yOffset += lineSpacing;
+			}
+			else if (m_iAvailableCrits > 0)
+			{
+				if (bRapidFire && flTickBase < pWeapon->m_flLastRapidFireCritCheckTime() + 1.f)
+				{
+					float flTime = pWeapon->m_flLastRapidFireCritCheckTime() + 1.f - flTickBase;
+					H::Draw->String(font, x + (nBarW / 2), yOffset, Color_t(255, 255, 255, 255), POS_CENTERXY, "Wait %.1fs", flTime);
+				}
+				else
+				{
+					H::Draw->String(font, x + (nBarW / 2), yOffset, Color_t(100, 255, 100, 255), POS_CENTERXY, "Crits Available");
+				}
+				yOffset += lineSpacing;
+			}
+			else
+			{
+				int iShots = m_iNextCrit;
+				H::Draw->String(font, x + (nBarW / 2), yOffset, Color_t(255, 150, 150, 255), POS_CENTERXY, "Crit in %d%s Shot%s", 
+					iShots, iShots >= BUCKET_ATTEMPTS ? "+" : "", iShots == 1 ? "" : "s");
+				yOffset += lineSpacing;
+			}
+		}
+		return;
+	}
+	
+	// Bar Mode - original dashboard style indicator
 	// Layout dimensions - configurable via sliders
 	const int nWidth = CFG::Visuals_Crit_Indicator_Width;
 	const int nBarHeight = CFG::Visuals_Crit_Indicator_Height;

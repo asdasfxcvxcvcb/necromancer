@@ -5,7 +5,8 @@
 enum class EFonts
 {
 	Menu,
-	ESP, ESP_CONDS, ESP_SMALL
+	ESP, ESP_CONDS, ESP_SMALL,
+	CritIndicator // Dynamic font for crit indicator text mode
 };
 
 class CFont
@@ -23,6 +24,7 @@ private:
 
 public:
 	void Reload();
+	void UpdateCritIndicatorFont(int nSizePercent);
 	const CFont &Get(EFonts eFont);
 };
 

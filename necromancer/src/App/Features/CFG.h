@@ -401,6 +401,10 @@ namespace CFG
 	CFGVAR(Outlines_World_Ignore_Halloween_Gift, false);
 	CFGVAR(Outlines_World_Ignore_MVM_Money, false);
 
+	// Misc Enemy - HP-based coloring
+	CFGVAR(Visuals_Enemy_Outline_HP_Based, false); // Color enemy outlines based on HP
+	CFGVAR(Visuals_Enemy_Materials_HP_Based, false); // Color enemy materials based on HP
+
 #pragma endregion
 
 #pragma region OtherVisuals
@@ -417,6 +421,8 @@ namespace CFG
 	CFGVAR(Visuals_Crit_Indicator_Pos_Y, 652);
 	CFGVAR(Visuals_Crit_Indicator_Width, 140);
 	CFGVAR(Visuals_Crit_Indicator_Height, 16);
+	CFGVAR(Visuals_Crit_Indicator_TextMode, false);
+	CFGVAR(Visuals_Crit_Indicator_TextSize, 100); // Percentage: 100-200
 	CFGVAR(Visuals_Crit_Indicator_Debug, false);
 	CFGVAR(Visuals_Draw_Movement_Path_Style, 1); //0 Off 1 Line 2 Separators 3 Spaced 4 Arrows 5 Boxes (Amalgam-style)
 	

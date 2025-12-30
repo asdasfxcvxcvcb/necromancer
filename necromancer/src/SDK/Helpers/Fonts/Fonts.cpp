@@ -6,6 +6,7 @@ void CFontManager::Reload()
 	m_mapFonts[EFonts::ESP] = { "Verdana", 12, FONTFLAG_OUTLINE, 0 };
 	m_mapFonts[EFonts::ESP_CONDS] = { "Small Fonts", 9, FONTFLAG_OUTLINE, 0 };
 	m_mapFonts[EFonts::ESP_SMALL] = { "Small Fonts", 11, FONTFLAG_OUTLINE, 0 };
+	m_mapFonts[EFonts::CritIndicator] = { "Small Fonts", 11, FONTFLAG_OUTLINE, 0 }; // Default size, will be updated dynamically
 
 	for (auto &v : m_mapFonts)
 	{
@@ -18,6 +19,28 @@ void CFontManager::Reload()
 			0,					//blur
 			0,					//scanlines
 			v.second.m_nFlags	//flags
+		);
+	}
+}
+
+void CFontManager::UpdateCritIndicatorFont(int nSizePercent)
+{
+	// Calculate font size: 11 at 100%, up to 22 at 200%
+	int nTall = 11 * nSizePercent / 100;
+	
+	auto& font = m_mapFonts[EFonts::CritIndicator];
+	if (font.m_nTall != nTall)
+	{
+		font.m_nTall = nTall;
+		I::MatSystemSurface->SetFontGlyphSet
+		(
+			font.m_dwFont,
+			font.m_szName,
+			font.m_nTall,
+			font.m_nWeight,
+			0,
+			0,
+			font.m_nFlags
 		);
 	}
 }

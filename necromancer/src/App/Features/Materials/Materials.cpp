@@ -636,7 +636,7 @@ void CMaterials::Run()
 					continue;
 			}
 
-			const auto entColor = F::VisualUtils->GetEntityColor(pLocal, pPlayer);
+			const auto entColor = F::VisualUtils->GetEntityColorForMaterials(pLocal, pPlayer);
 
 			if (pMaterial && pMaterial != m_pGlow)
 				I::RenderView->SetColorModulation(entColor);
