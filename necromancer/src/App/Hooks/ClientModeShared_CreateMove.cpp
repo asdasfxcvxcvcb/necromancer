@@ -115,8 +115,7 @@ MAKE_HOOK(ClientModeShared_CreateMove, Memory::GetVFunc(I::ClientModeShared, 21)
 	// Run AutoVaccinator early if Always On
 	if (CFG::Triggerbot_AutoVaccinator_Always_On)
 	{
-		if (pLocal && !pLocal->deadflag() && pWeapon)
-			F::AutoVaccinator->Run(pLocalVacc, pWeaponVacc, pCmd);
+		F::AutoVaccinator->Run(pLocalVacc, pWeaponVacc, pCmd);
 	}
 
 	// RapidFire early exit
