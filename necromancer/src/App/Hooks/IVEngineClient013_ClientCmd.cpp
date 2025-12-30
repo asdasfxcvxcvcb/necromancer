@@ -43,7 +43,6 @@ void ProcessTauntDelay()
 			CFG::Exploits_AntiAim_Enabled = TauntState::bWasAntiAimEnabled;
 			TauntState::bDisabledForTaunt = false;
 			TauntState::bTauntExecuted = false;
-			I::CVar->ConsoleColorPrintf({ 0, 255, 0, 255 }, "[TAUNT] Taunt ended, re-enabled AA\n");
 		}
 		return;
 	}
@@ -58,7 +57,6 @@ void ProcessTauntDelay()
 	// Delay complete, execute the taunt
 	if (!TauntState::sPendingTauntCmd.empty())
 	{
-		I::CVar->ConsoleColorPrintf({ 0, 255, 0, 255 }, "[TAUNT] Executing taunt after delay: %s\n", TauntState::sPendingTauntCmd.c_str());
 		I::EngineClient->ClientCmd_Unrestricted(TauntState::sPendingTauntCmd.c_str());
 		TauntState::sPendingTauntCmd = "";
 		TauntState::bTauntExecuted = true;  // Now wait for taunt to end
@@ -306,7 +304,7 @@ MAKE_HOOK(IVEngineClient013_ClientCmd, Memory::GetVFunc(I::EngineClient, 7), voi
 			// If AA is enabled and we're not already processing a taunt, block and delay
 			if ((CFG::Exploits_AntiAim_Enabled || CFG::Exploits_LegitAA_Enabled) && !TauntState::bDisabledForTaunt)
 			{
-				I::CVar->ConsoleColorPrintf({ 255, 255, 0, 255 }, "[TAUNT] Blocking taunt, disabling AA, waiting 3 ticks\n");
+		
 				
 				// Store the taunt command to execute later
 				TauntState::sPendingTauntCmd = szCmdString;
