@@ -94,7 +94,7 @@ MAKE_HOOK(ClientModeShared_CreateMove, Memory::GetVFunc(I::ClientModeShared, 21)
 	if (!pCmd || !pCmd->command_number)
 		return CALL_ORIGINAL(ecx, flInputSampleTime, pCmd);
 
-	CUserCmd* pBufferCmd = I::Input->GetUserCmd(pCmd->command_number);
+	CUserCmd* pBufferCmd = I::Input->GetUserCmd(pCmd->command_number); //what is this for?
 	if (!pBufferCmd)
 		pBufferCmd = pCmd;
 
@@ -107,36 +107,35 @@ MAKE_HOOK(ClientModeShared_CreateMove, Memory::GetVFunc(I::ClientModeShared, 21)
 
 	F::AutoVaccinator->PreventReload(pCmd);
 
+	auto pLocal = H::Entities->GetLocal();
+	auto pWeapon = H::Entities->GetWeapon();
+
+	if (pLocal && pWeapon && !pLocal->deadflag())
+	{
 	// Run AutoVaccinator early if Always On
 	if (CFG::Triggerbot_AutoVaccinator_Always_On)
 	{
-		auto pLocalVacc = H::Entities->GetLocal();
-		auto pWeaponVacc = H::Entities->GetWeapon();
-		if (pLocalVacc && !pLocalVacc->deadflag() && pWeaponVacc)
+		if (pLocal && !pLocal->deadflag() && pWeapon)
 			F::AutoVaccinator->Run(pLocalVacc, pWeaponVacc, pCmd);
 	}
 
 	// RapidFire early exit
 	if (F::RapidFire->ShouldExitCreateMove(pCmd))
 	{
-		auto pLocal = H::Entities->GetLocal();
-		auto pWeapon = H::Entities->GetWeapon();
-		if (pLocal && pWeapon && !pLocal->deadflag())
+		CUserCmd* pBufferCmd = I::Input->GetUserCmd(pCmd->command_number); //this too
+		if (!pBufferCmd)
+			pBufferCmd = pCmd;
+			
+		F::CritHack->Run(pLocal, pWeapon, pBufferCmd);
+			
+		if (pBufferCmd != pCmd) //and this
 		{
-			CUserCmd* pBufferCmd = I::Input->GetUserCmd(pCmd->command_number);
-			if (!pBufferCmd)
-				pBufferCmd = pCmd;
-			
-			F::CritHack->Run(pLocal, pWeapon, pBufferCmd);
-			
-			if (pBufferCmd != pCmd)
-			{
-				pCmd->command_number = pBufferCmd->command_number;
-				pCmd->random_seed = pBufferCmd->random_seed;
-			}
+			pCmd->command_number = pBufferCmd->command_number;
+			pCmd->random_seed = pBufferCmd->random_seed;
 		}
 		
 		return F::RapidFire->GetShiftSilentAngles() ? false : CALL_ORIGINAL(ecx, flInputSampleTime, pCmd);
+	}
 	}
 
 	if (Shifting::bRecharging)
@@ -152,9 +151,6 @@ MAKE_HOOK(ClientModeShared_CreateMove, Memory::GetVFunc(I::ClientModeShared, 21)
 	const Vec3 vOldAngles = pCmd->viewangles;
 	const float flOldSide = pCmd->sidemove;
 	const float flOldForward = pCmd->forwardmove;
-
-	auto pLocal = H::Entities->GetLocal();
-	auto pWeapon = H::Entities->GetWeapon();
 
 	// Early check: Temporarily disable Legit AA when engineer tries to pick up a building
 	// This must run BEFORE anti-aim so the pickup works on the first try
@@ -197,7 +193,7 @@ MAKE_HOOK(ClientModeShared_CreateMove, Memory::GetVFunc(I::ClientModeShared, 21)
 					{
 						auto pBuilding = trace.m_pEnt->As<C_BaseObject>();
 						// Check if it's our building
-						if (pBuilding && pBuilding->m_hBuilder() == pLocal)
+						if (pBuilding->m_hBuilder() == pLocal)
 						{
 							CFG::Exploits_LegitAA_Enabled = false;
 							bDisabledForBuildingPickup = true;
@@ -219,7 +215,7 @@ MAKE_HOOK(ClientModeShared_CreateMove, Memory::GetVFunc(I::ClientModeShared, 21)
 	G::bCanSecondaryAttack = false;
 	G::bReloading = false;
 	
-	if (pLocal && pWeapon)
+	if (pLocal && pWeapon && !pLocal->deadflag())
 	{
 		G::bCanHeadshot = pWeapon->CanHeadShot(pLocal);
 		
@@ -247,14 +243,13 @@ MAKE_HOOK(ClientModeShared_CreateMove, Memory::GetVFunc(I::ClientModeShared, 21)
 		if (pWeapon->GetSlot() != WEAPON_SLOT_MELEE)
 		{
 			bool bAmmo = pWeapon->HasPrimaryAmmoForShot();
-			bool bReload = pWeapon->IsInReload();
-			
 			if (!bAmmo)
 			{
 				G::bCanPrimaryAttack = false;
 				G::bCanSecondaryAttack = false;
 			}
-			
+
+			bool bReload = pWeapon->IsInReload();
 			if (bReload && bAmmo && !G::bCanPrimaryAttack)
 				G::bReloading = true;
 		}
@@ -294,16 +289,15 @@ MAKE_HOOK(ClientModeShared_CreateMove, Memory::GetVFunc(I::ClientModeShared, 21)
 	// RUN PROJECTILE AIMBOT FIRST (before any other feature can interfere)
 	// ============================================
 	{
-		auto pWeaponEarly = H::Entities->GetWeapon();
-		if (pLocal && pWeaponEarly && !pLocal->deadflag() && CFG::Aimbot_Active && CFG::Aimbot_Amalgam_Projectile_Active)
+		if (pLocal && pWeapon && !pLocal->deadflag() && CFG::Aimbot_Active && CFG::Aimbot_Amalgam_Projectile_Active)
 		{
-			if (H::AimUtils->GetWeaponType(pWeaponEarly) == EWeaponType::PROJECTILE)
+			if (H::AimUtils->GetWeaponType(pWeapon) == EWeaponType::PROJECTILE)
 			{
 				// Run projectile aimbot early, before misc features
-				if (CAimbotProjectileArc::IsArcWeapon(pWeaponEarly))
-					F::AimbotProjectileArc->Run(pCmd, pLocal, pWeaponEarly);
+				if (CAimbotProjectileArc::IsArcWeapon(pWeapon))
+					F::AimbotProjectileArc->Run(pCmd, pLocal, pWeapon);
 				else
-					F::AimbotProjectile->Run(pLocal, pWeaponEarly, pCmd);
+					F::AimbotProjectile->Run(pLocal, pWeapon, pCmd);
 			}
 		}
 	}
@@ -333,9 +327,9 @@ MAKE_HOOK(ClientModeShared_CreateMove, Memory::GetVFunc(I::ClientModeShared, 21)
 	F::EnginePrediction->Start(pLocal, pCmd);
 	{
 		// Choke on bhop
-		if (CFG::Misc_Choke_On_Bhop && CFG::Misc_Bunnyhop)
+		if (CFG::Misc_Choke_On_Bhop && CFG::Misc_Bunnyhop) //move this to fakelag
 		{
-			if ((pLocal->m_fFlags() & FL_ONGROUND) && !(F::EnginePrediction->flags & FL_ONGROUND))
+			if (!pLocal->deadflag() && (pLocal->m_fFlags() & FL_ONGROUND) && !(F::EnginePrediction->flags & FL_ONGROUND))
 				*pSendPacket = false;
 		}
 
@@ -380,7 +374,7 @@ MAKE_HOOK(ClientModeShared_CreateMove, Memory::GetVFunc(I::ClientModeShared, 21)
 	}
 
 	// Taunt Slide
-	if (CFG::Misc_Taunt_Slide && pLocal)
+	if (CFG::Misc_Taunt_Slide && pLocal && !pLocal->deadflag())
 	{
 		if (pLocal->InCond(TF_COND_TAUNTING) && pLocal->m_bAllowMoveDuringTaunt())
 		{
@@ -409,32 +403,20 @@ MAKE_HOOK(ClientModeShared_CreateMove, Memory::GetVFunc(I::ClientModeShared, 21)
 	}
 
 	// Warp exploit
-	if (CFG::Exploits_Warp_Exploit && CFG::Exploits_Warp_Mode == 1 && Shifting::bShiftingWarp && pLocal)
+	if (CFG::Exploits_Warp_Exploit && CFG::Exploits_Warp_Mode == 1 && Shifting::bShiftingWarp && pLocal && !pLocal->deadflag())
 	{
-		if (CFG::Exploits_Warp_Exploit == 1)
-		{
-			if (Shifting::nAvailableTicks <= (MAX_COMMANDS - 1))
-			{
-				Vec3 vAngle = {};
-				Math::VectorAngles(pLocal->m_vecVelocity(), vAngle);
-				pCmd->viewangles.x = 90.0f;
-				pCmd->viewangles.y = vAngle.y;
-				G::bSilentAngles = true;
-				pCmd->sidemove = pCmd->forwardmove = 0;
-			}
-		}
-
+		int Commands = (MAX_COMMANDS - 1);
 		if (CFG::Exploits_Warp_Exploit == 2)
+			Commands = 1;
+			
+		if (Shifting::nAvailableTicks <= Commands)
 		{
-			if (Shifting::nAvailableTicks <= 1)
-			{
-				Vec3 vAngle = {};
-				Math::VectorAngles(pLocal->m_vecVelocity(), vAngle);
-				pCmd->viewangles.x = 90.0f;
-				pCmd->viewangles.y = vAngle.y;
-				G::bSilentAngles = true;
-				pCmd->sidemove = pCmd->forwardmove = 0;
-			}
+			Vec3 vAngle = {};
+			Math::VectorAngles(pLocal->m_vecVelocity(), vAngle);
+			pCmd->viewangles.x = 90.0f;
+			pCmd->viewangles.y = vAngle.y;
+			G::bSilentAngles = true;
+			pCmd->sidemove = pCmd->forwardmove = 0;
 		}
 	}
 
@@ -469,6 +451,7 @@ MAKE_HOOK(ClientModeShared_CreateMove, Memory::GetVFunc(I::ClientModeShared, 21)
 	F::EnginePrediction->End(pLocal, pCmd);
 
 	// pSilent handling
+	// are you sure?
 	{
 		static bool bWasSet = false;
 		if (G::bPSilentAngles)
