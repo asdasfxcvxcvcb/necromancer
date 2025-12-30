@@ -19,13 +19,19 @@
 #include "../Features/amalgam_port/Ticks/Ticks.h"
 #include "../Features/amalgam_port/AmalgamCompat.h"
 
+MAKE_SIGNATURE(ValidateUserCmd_, "client.dll", "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 20 48 8B F9 41 8B D8", 0, 0);
+MAKE_HOOK(ValidateUserCmd, Signatures::ValidateUserCmd_.Get(), void, __fastcall, void* rcx, CUserCmd* cmd,
+	int sequence_number) {
+	return;
+}
+
 // Local animations - Amalgam style
 // This updates the local player's animation state based on the REAL angles (not fake)
 // The fake model uses separate bones set up in SetupFakeModel
 static inline void LocalAnimations(C_TFPlayer* pLocal, CUserCmd* pCmd, bool bSendPacket)
 {
 	static std::vector<Vec3> vAngles = {};
-	
+
 	// Use the REAL angles from FakeAngle, not the cmd angles (which may be fake on send tick)
 	// This ensures your actual model shows the real pitch, not the fake pitch
 	Vec3 vRealAngles;
@@ -39,9 +45,9 @@ static inline void LocalAnimations(C_TFPlayer* pLocal, CUserCmd* pCmd, bool bSen
 		vRealAngles = pCmd->viewangles;
 		vRealAngles.x = std::clamp(vRealAngles.x, -89.0f, 89.0f);
 	}
-	
+
 	vAngles.push_back(vRealAngles);
-	
+
 	auto pAnimState = pLocal->GetAnimState();
 	if (bSendPacket && pAnimState)
 	{
@@ -49,7 +55,7 @@ static inline void LocalAnimations(C_TFPlayer* pLocal, CUserCmd* pCmd, bool bSen
 		float flOldCurtime = I::GlobalVars->curtime;
 		I::GlobalVars->frametime = TICK_INTERVAL;
 		I::GlobalVars->curtime = TICKS_TO_TIME(pLocal->m_nTickBase());
-		
+
 		for (auto& vAngle : vAngles)
 		{
 			if (pLocal->InCond(TF_COND_TAUNTING) && pLocal->m_bAllowMoveDuringTaunt())
@@ -58,11 +64,11 @@ static inline void LocalAnimations(C_TFPlayer* pLocal, CUserCmd* pCmd, bool bSen
 			pAnimState->Update(vAngle.y, vAngle.x);
 			pLocal->FrameAdvance(TICK_INTERVAL);
 		}
-		
+
 		I::GlobalVars->frametime = flOldFrametime;
 		I::GlobalVars->curtime = flOldCurtime;
 		vAngles.clear();
-		
+
 		// Setup fake model bones AFTER animation update (like Amalgam)
 		F::FakeAngle->SetupFakeModel(pLocal);
 	}
@@ -72,13 +78,13 @@ static inline void LocalAnimations(C_TFPlayer* pLocal, CUserCmd* pCmd, bool bSen
 // Only choke for anti-aim if we're not attacking
 static inline bool AntiAimCheck(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd)
 {
-	return F::FakeAngle->YawOn() 
-		&& F::FakeAngle->ShouldRun(pLocal, pWeapon, pCmd) 
+	return F::FakeAngle->YawOn()
+		&& F::FakeAngle->ShouldRun(pLocal, pWeapon, pCmd)
 		&& !Shifting::bRecharging
 		&& I::ClientState->chokedcommands < F::FakeAngle->AntiAimTicks();
 }
 
-MAKE_HOOK(ClientModeShared_CreateMove, Memory::GetVFunc(I::ClientModeShared, 21), bool, __fastcall,
+MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool, __fastcall,
 	CClientModeShared* ecx, float flInputSampleTime, CUserCmd* pCmd)
 {
 	// Reset per-frame state
@@ -126,16 +132,16 @@ MAKE_HOOK(ClientModeShared_CreateMove, Memory::GetVFunc(I::ClientModeShared, 21)
 			CUserCmd* pBufferCmd = I::Input->GetUserCmd(pCmd->command_number);
 			if (!pBufferCmd)
 				pBufferCmd = pCmd;
-			
+
 			F::CritHack->Run(pLocal, pWeapon, pBufferCmd);
-			
+
 			if (pBufferCmd != pCmd)
 			{
 				pCmd->command_number = pBufferCmd->command_number;
 				pCmd->random_seed = pBufferCmd->random_seed;
 			}
 		}
-		
+
 		return F::RapidFire->GetShiftSilentAngles() ? false : CALL_ORIGINAL(ecx, flInputSampleTime, pCmd);
 	}
 
@@ -160,19 +166,19 @@ MAKE_HOOK(ClientModeShared_CreateMove, Memory::GetVFunc(I::ClientModeShared, 21)
 	// This must run BEFORE anti-aim so the pickup works on the first try
 	{
 		static bool bDisabledForBuildingPickup = false;
-		
+
 		if (pLocal && pLocal->m_iClass() == TF_CLASS_ENGINEER)
 		{
 			// Check if we're currently carrying a building
 			const bool bCarryingBuilding = pLocal->m_bCarryingObject();
-			
+
 			// Re-enable Legit AA once we've picked up the building
 			if (bDisabledForBuildingPickup && bCarryingBuilding)
 			{
 				CFG::Exploits_LegitAA_Enabled = true;
 				bDisabledForBuildingPickup = false;
 			}
-			
+
 			// Disable Legit AA when trying to pick up a building (attack2 while looking at own building)
 			if (CFG::Exploits_LegitAA_Enabled && !bCarryingBuilding && (pCmd->buttons & IN_ATTACK2))
 			{
@@ -218,11 +224,11 @@ MAKE_HOOK(ClientModeShared_CreateMove, Memory::GetVFunc(I::ClientModeShared, 21)
 	G::bCanPrimaryAttack = false;
 	G::bCanSecondaryAttack = false;
 	G::bReloading = false;
-	
+
 	if (pLocal && pWeapon)
 	{
 		G::bCanHeadshot = pWeapon->CanHeadShot(pLocal);
-		
+
 		// Amalgam's CheckReload trick
 		if (pWeapon->GetMaxClip1() != -1 && !pWeapon->m_bReloadsSingly())
 		{
@@ -231,10 +237,10 @@ MAKE_HOOK(ClientModeShared_CreateMove, Memory::GetVFunc(I::ClientModeShared, 21)
 			pWeapon->CheckReload();
 			I::GlobalVars->curtime = flOldCurtime;
 		}
-		
+
 		G::bCanPrimaryAttack = pWeapon->CanPrimaryAttack(pLocal);
 		G::bCanSecondaryAttack = pWeapon->CanSecondaryAttack(pLocal);
-		
+
 		// Minigun special handling
 		if (pWeapon->GetWeaponID() == TF_WEAPON_MINIGUN)
 		{
@@ -242,23 +248,23 @@ MAKE_HOOK(ClientModeShared_CreateMove, Memory::GetVFunc(I::ClientModeShared, 21)
 			if ((iState != AC_STATE_FIRING && iState != AC_STATE_SPINNING) || !pWeapon->HasPrimaryAmmoForShot())
 				G::bCanPrimaryAttack = false;
 		}
-		
+
 		// Non-melee weapon reload state
 		if (pWeapon->GetSlot() != WEAPON_SLOT_MELEE)
 		{
 			bool bAmmo = pWeapon->HasPrimaryAmmoForShot();
 			bool bReload = pWeapon->IsInReload();
-			
+
 			if (!bAmmo)
 			{
 				G::bCanPrimaryAttack = false;
 				G::bCanSecondaryAttack = false;
 			}
-			
+
 			if (bReload && bAmmo && !G::bCanPrimaryAttack)
 				G::bReloading = true;
 		}
-		
+
 		G::Attacking = SDK::IsAttacking(pLocal, pWeapon, pCmd, false);
 	}
 	else
@@ -323,7 +329,7 @@ MAKE_HOOK(ClientModeShared_CreateMove, Memory::GetVFunc(I::ClientModeShared, 21)
 	F::Misc->MovementLock(pCmd);
 	F::Misc->MvmInstaRespawn();
 	F::Misc->AntiAFK(pCmd);
-	
+
 	// Projectile Dodge
 	F::ProjectileDodge->Run(pLocal, pCmd);
 
@@ -342,12 +348,12 @@ MAKE_HOOK(ClientModeShared_CreateMove, Memory::GetVFunc(I::ClientModeShared, 21)
 		F::Misc->AutoMedigun(pCmd);
 		F::Aimbot->Run(pCmd);
 		F::Misc->CrouchWhileAirborne(pCmd);
-		
+
 		// IMPORTANT: Update G::Attacking AFTER aimbot runs
 		// Aimbot may have added IN_ATTACK, so we need to re-check
 		// This is how Amalgam does it - G::Attacking = SDK::IsAttacking(pLocal, pWeapon, pCmd, true)
 		G::Attacking = SDK::IsAttacking(pLocal, pWeapon, pCmd, true);
-		
+
 		// CritHack after aimbot
 		F::CritHack->Run(pLocal, pWeapon, pBufferCmd);
 		if (pBufferCmd != pCmd)
@@ -355,7 +361,7 @@ MAKE_HOOK(ClientModeShared_CreateMove, Memory::GetVFunc(I::ClientModeShared, 21)
 			pCmd->command_number = pBufferCmd->command_number;
 			pCmd->random_seed = pBufferCmd->random_seed;
 		}
-		
+
 		F::Triggerbot->Run(pCmd);
 	}
 	// NOTE: EnginePrediction.End is called AFTER anti-aim (like Amalgam)
@@ -444,7 +450,7 @@ MAKE_HOOK(ClientModeShared_CreateMove, Memory::GetVFunc(I::ClientModeShared, 21)
 	*pSendPacket = true;
 	F::FakeLag->Run(pLocal, pWeapon, pCmd, pSendPacket);
 	F::FakeLag->UpdateDrawChams(); // Update fake model visibility based on actual fakelag state
-	
+
 	// Anti-aim choking - ShouldRun already checks G::Attacking == 1
 	if (AntiAimCheck(pLocal, pWeapon, pCmd))
 		*pSendPacket = false;
