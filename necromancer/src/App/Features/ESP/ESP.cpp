@@ -390,28 +390,71 @@ void CESP::Run()
 
 			if (CFG::ESP_Players_Name)
 			{
+				int a = 10;
 				player_info_t PlayerInfo = {};
 
 				if (I::EngineClient->GetPlayerInfo(pPlayer->entindex(), &PlayerInfo))
 				{
-					// Check for player tags and use appropriate color
-					Color_t nameColor = textColor;
-					PlayerPriority playerPriority = {};
-					if (F::Players->GetInfo(pPlayer->entindex(), playerPriority))
+					int nameY = (y - (H::Fonts->Get(EFonts::ESP).m_nTall - 1)) - SPACING_Y;
+
+					if (pPlayer->IsPlayerOnSteamFriendsList())
 					{
-						if (playerPriority.Cheater)
-							nameColor = CFG::Color_Cheater;
-						else if (playerPriority.RetardLegit)
-							nameColor = CFG::Color_RetardLegit;
-						else if (playerPriority.Ignored)
-							nameColor = CFG::Color_Friend;
+						H::Draw->String(
+							H::Fonts->Get(EFonts::ESP),
+							x + (w / 2),
+							(y - (H::Fonts->Get(EFonts::ESP).m_nTall - 1)) - SPACING_Y - a,
+							CFG::Color_Friend,
+							POS_CENTERX,
+							"Friend"
+						);
+						a += 10;
 					}
-					
+					if (I::EngineClient->GetPlayerInfo(pPlayer->entindex(), &PlayerInfo))
+					{
+						PlayerPriority custom_info{};
+						if (F::Players->GetInfo(pPlayer->entindex(), custom_info))
+						{
+							if (custom_info.Cheater) {
+								H::Draw->String(
+									H::Fonts->Get(EFonts::ESP),
+									x + (w / 2),
+									(y - (H::Fonts->Get(EFonts::ESP).m_nTall - 1)) - SPACING_Y - a,
+									CFG::Color_Cheater,
+									POS_CENTERX,
+									"Cheater"
+								);
+								a += 10;
+							}
+							if (custom_info.Ignored) {
+								H::Draw->String(
+									H::Fonts->Get(EFonts::ESP),
+									x + (w / 2),
+									(y - (H::Fonts->Get(EFonts::ESP).m_nTall - 1)) - SPACING_Y - a,
+									CFG::Color_RetardLegit,
+									POS_CENTERX,
+									"Ignored"
+								);
+								a += 10;
+							}
+						}
+						if (custom_info.RetardLegit) {
+							H::Draw->String(
+								H::Fonts->Get(EFonts::ESP),
+								x + (w / 2),
+								(y - (H::Fonts->Get(EFonts::ESP).m_nTall - 1)) - SPACING_Y - a,
+								CFG::Color_RetardLegit,
+								POS_CENTERX,
+								"Retard Legit"
+							);
+							a += 10;
+						}
+					}
+
 					H::Draw->String(
-						H::Fonts->Get(EFonts::ESP_SMALL),
+						H::Fonts->Get(EFonts::ESP),
 						x + (w / 2),
-						(y - (H::Fonts->Get(EFonts::ESP_SMALL).m_nTall - 1)) - SPACING_Y,
-						nameColor,
+						nameY,
+						textColor,
 						POS_CENTERX,
 						Utils::ConvertUtf8ToWide(PlayerInfo.name).c_str()
 					);
