@@ -98,7 +98,7 @@ bool CFakeLag::IsAllowed(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* 
 	// Only fakelag when moving (if option enabled)
 	if (CFG::Exploits_FakeLag_Only_Moving)
 	{
-		if (pLocal->m_vecVelocity().Length2D() <= 10.0f)
+		if (pLocal->m_vecVelocity().Length2DSqr() <= 100.f)
 			return false;
 	}
 	
@@ -180,7 +180,7 @@ EFakeLagThreatType CFakeLag::CheckSniperThreat(C_TFPlayer* pLocal, int& outMinTi
 			continue;
 
 		const auto pEnemy = pEntity->As<C_TFPlayer>();
-		if (!pEnemy || pEnemy->deadflag())
+		if (pEnemy->deadflag())
 			continue;
 
 		// Only check snipers
@@ -188,27 +188,25 @@ EFakeLagThreatType CFakeLag::CheckSniperThreat(C_TFPlayer* pLocal, int& outMinTi
 			continue;
 
 		const auto pWeapon = pEnemy->m_hActiveWeapon().Get()->As<C_TFWeaponBase>();
-		if (!pWeapon || pWeapon->GetSlot() != WEAPON_SLOT_PRIMARY || pWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW)
+		if (!pWeapon)
 			continue;
+
+		// Check if enemy is scoped (required for all threat types)
+		bool bZoomed = pEnemy->InCond(TF_COND_ZOOMED);
+		if (pWeapon->GetWeaponID() == TF_WEAPON_SNIPERRIFLE_CLASSIC) {
+			bZoomed = pWeapon->As<C_TFSniperRifleClassic>()->m_bCharging();
+		}
+
+		if (!bZoomed) continue;
 
 		// Get player tag info
 		PlayerPriority pInfo{};
 		const bool bHasTag = F::Players->GetInfo(pEnemy->entindex(), pInfo);
 
-		// Check if enemy is scoped (required for all threat types)
-		bool bZoomed = pEnemy->InCond(TF_COND_ZOOMED);
-		if (pWeapon->GetWeaponID() == TF_WEAPON_SNIPERRIFLE_CLASSIC)
-		{
-			bZoomed = pWeapon->As<C_TFSniperRifleClassic>()->m_bCharging();
-		}
-
 		// Determine threat type based on tag
-		if (bHasTag && pInfo.Cheater)
+		if (pInfo.Cheater)
 		{
 			// CHEATER TAG: 19-24 ticks, no sightline distance check needed, just needs to be scoped
-			if (!bZoomed)
-				continue;
-			
 			// Cheater is highest priority threat
 			if (eHighestThreat != EFakeLagThreatType::Cheater)
 			{
@@ -219,32 +217,31 @@ EFakeLagThreatType CFakeLag::CheckSniperThreat(C_TFPlayer* pLocal, int& outMinTi
 			continue;
 		}
 
-		if (bHasTag && pInfo.RetardLegit)
+		// Use 2x the base sightline distance for retard legit
+		auto vMins = pLocal->m_vecMins();
+		auto vMaxs = pLocal->m_vecMaxs();
+
+		const float mult = pInfo.RetardLegit ? 2.f : 1.f;
+
+		vMins.x *= flBaseDistMultX * mult;
+		vMins.y *= flBaseDistMultY * mult;
+		vMins.z *= flBaseDistMultZ * mult;
+
+		vMaxs.x *= flBaseDistMultX * mult;
+		vMaxs.y *= flBaseDistMultY * mult;
+		vMaxs.z *= flBaseDistMultZ * mult;
+
+		Vec3 vForward{};
+		Math::AngleVectors(pEnemy->GetEyeAngles(), &vForward);
+
+		if (!Math::RayToOBB(pEnemy->GetShootPos(), vForward, pLocal->m_vecOrigin(), vMins, vMaxs, pLocal->RenderableToWorldTransform()))
+			continue;
+
+		if (pInfo.RetardLegit)
 		{
 			// RETARD LEGIT TAG: 6-12 ticks, 2x sightline distance
-			if (!bZoomed)
-				continue;
-			
-			// Use 2x the base sightline distance for retard legit
-			auto vMins = pLocal->m_vecMins();
-			auto vMaxs = pLocal->m_vecMaxs();
-
-			vMins.x *= flBaseDistMultX * 2.0f;
-			vMins.y *= flBaseDistMultY * 2.0f;
-			vMins.z *= flBaseDistMultZ * 2.0f;
-
-			vMaxs.x *= flBaseDistMultX * 2.0f;
-			vMaxs.y *= flBaseDistMultY * 2.0f;
-			vMaxs.z *= flBaseDistMultZ * 2.0f;
-
-			Vec3 vForward{};
-			Math::AngleVectors(pEnemy->GetEyeAngles(), &vForward);
-
-			if (!Math::RayToOBB(pEnemy->GetShootPos(), vForward, pLocal->m_vecOrigin(), vMins, vMaxs, pLocal->RenderableToWorldTransform()))
-				continue;
-			
 			// Retard legit is second priority (only upgrade if not already cheater)
-			if (eHighestThreat != EFakeLagThreatType::Cheater)
+			if (eHighestThreat != EFakeLagThreatType::RetardLegit)
 			{
 				eHighestThreat = EFakeLagThreatType::RetardLegit;
 				nHighestMinTicks = 6;
@@ -254,27 +251,6 @@ EFakeLagThreatType CFakeLag::CheckSniperThreat(C_TFPlayer* pLocal, int& outMinTi
 		}
 
 		// NO TAG: 4-7 ticks, base sightline distance, must be scoped
-		if (!bZoomed)
-			continue;
-
-		// Use base sightline distance for no tag
-		auto vMins = pLocal->m_vecMins();
-		auto vMaxs = pLocal->m_vecMaxs();
-
-		vMins.x *= flBaseDistMultX;
-		vMins.y *= flBaseDistMultY;
-		vMins.z *= flBaseDistMultZ;
-
-		vMaxs.x *= flBaseDistMultX;
-		vMaxs.y *= flBaseDistMultY;
-		vMaxs.z *= flBaseDistMultZ;
-
-		Vec3 vForward{};
-		Math::AngleVectors(pEnemy->GetEyeAngles(), &vForward);
-
-		if (!Math::RayToOBB(pEnemy->GetShootPos(), vForward, pLocal->m_vecOrigin(), vMins, vMaxs, pLocal->RenderableToWorldTransform()))
-			continue;
-
 		// No tag is lowest priority (only set if no higher threat)
 		if (eHighestThreat == EFakeLagThreatType::None)
 		{
