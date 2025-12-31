@@ -36,10 +36,6 @@ enum class EShotgunType
     // Engineer
     FrontierJustice,        // 6 damage per pellet, 10 pellets = 60 base
     Widowmaker,             // 6 damage per pellet, 10 pellets = 60 base
-    RescueRanger,           // Not a shotgun (projectile)
-    
-    // Soldier specific
-    ReserveShooterSoldier,  // Same as ReserveShooter
 };
 
 // Shotgun stats structure
@@ -110,19 +106,7 @@ public:
     // Check if weapon can mini-crit airborne targets
     bool CanMiniCritAirborne(C_TFWeaponBase* pWeapon);
 
-    // Estimate pellet hit probability based on spread and distance
-    float EstimatePelletHitProbability(
-        C_TFPlayer* pLocal,
-        C_TFPlayer* pTarget,
-        float flDistance,
-        float flSpread
-    );
 
-    // Get no-spread pellet positions (fixed spread pattern)
-    void GetFixedSpreadPelletPositions(
-        int nPelletCount,
-        std::vector<Vec3>& outPositions
-    );
 
 private:
     CShotgunDamagePrediction() = default;

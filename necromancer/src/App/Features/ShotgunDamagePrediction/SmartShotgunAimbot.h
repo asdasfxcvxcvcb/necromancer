@@ -81,14 +81,6 @@ public:
         const std::vector<Vec3>& pelletEndPositions
     );
 
-    // Calculate minimum pellets needed based on mode
-    int GetMinPelletsRequired(
-        C_TFPlayer* pTarget,
-        float flDamagePerPellet,
-        bool bDoubleTap,
-        const SmartShotgunConfig& config
-    );
-
 private:
     CSmartShotgunAimbot() = default;
     ~CSmartShotgunAimbot() = default;

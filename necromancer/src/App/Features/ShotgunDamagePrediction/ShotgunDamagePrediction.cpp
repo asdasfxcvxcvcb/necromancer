@@ -1,7 +1,7 @@
 #include "ShotgunDamagePrediction.h"
 #include "../../../SDK/Impl/TraceFilters/TraceFilters.h"
 
-// Fixed spread pellet patterns from Source SDK (tf_fx_shared.cpp)
+// Fixed spread pellet pattern from Source SDK (tf_fx_shared.cpp)
 // 10 pellets - Square pattern
 static const Vec3 g_vecFixedWpnSpreadPellets[] = 
 {
@@ -184,7 +184,6 @@ ShotgunStats CShotgunDamagePrediction::GetShotgunStats(EShotgunType type)
         break;
         
     case EShotgunType::ReserveShooter:
-    case EShotgunType::ReserveShooterSoldier:
         stats.flBaseDamagePerPellet = 6.0f;
         stats.nPelletCount = 10;
         stats.flSpread = 0.0675f;
@@ -307,10 +306,8 @@ ShotgunDamageResult CShotgunDamagePrediction::PredictDamage(
     // Estimate kill probability based on pellet hit chance
     if (result.nPelletsRequired <= stats.nPelletCount)
     {
-        float flHitProb = EstimatePelletHitProbability(pLocal, pTarget, flDistance, stats.flSpread);
-        // Binomial probability of hitting at least nPelletsRequired pellets
-        // Simplified: assume each pellet has same hit probability
-        result.flKillProbability = flHitProb;  // Simplified for now
+        result.flKillProbability = static_cast<float>(nPelletsHit) / static_cast<float>(result.nPelletsRequired);
+        result.flKillProbability = std::min(1.0f, result.flKillProbability);
     }
     else
     {
@@ -335,52 +332,4 @@ int CShotgunDamagePrediction::GetPelletsRequiredToKill(
     int nPelletsNeeded = static_cast<int>(ceilf(static_cast<float>(nTargetHealth) / flDamagePerPellet));
     
     return nPelletsNeeded;
-}
-
-float CShotgunDamagePrediction::EstimatePelletHitProbability(
-    C_TFPlayer* pLocal,
-    C_TFPlayer* pTarget,
-    float flDistance,
-    float flSpread)
-{
-    if (!pLocal || !pTarget)
-        return 0.0f;
-    
-    // Get target hitbox size (approximate)
-    Vec3 vMins = pTarget->m_vecMins();
-    Vec3 vMaxs = pTarget->m_vecMaxs();
-    
-    // Calculate target cross-section area (simplified as rectangle)
-    float flTargetWidth = vMaxs.x - vMins.x;
-    float flTargetHeight = vMaxs.z - vMins.z;
-    float flTargetArea = flTargetWidth * flTargetHeight;
-    
-    // Calculate spread cone area at distance
-    // Spread is in radians, cone radius = distance * tan(spread)
-    float flConeRadius = flDistance * tanf(flSpread);
-    float flConeArea = 3.14159f * flConeRadius * flConeRadius;
-    
-    // Probability is ratio of target area to cone area (clamped to 1.0)
-    if (flConeArea <= 0.0f)
-        return 1.0f;
-    
-    float flProbability = std::min(1.0f, flTargetArea / flConeArea);
-    
-    return flProbability;
-}
-
-void CShotgunDamagePrediction::GetFixedSpreadPelletPositions(
-    int nPelletCount,
-    std::vector<Vec3>& outPositions)
-{
-    outPositions.clear();
-    
-    // Use the fixed spread pattern from Source SDK
-    int nPatternSize = sizeof(g_vecFixedWpnSpreadPellets) / sizeof(g_vecFixedWpnSpreadPellets[0]);
-    
-    for (int i = 0; i < nPelletCount; i++)
-    {
-        int nIndex = i % nPatternSize;
-        outPositions.push_back(g_vecFixedWpnSpreadPellets[nIndex]);
-    }
 }

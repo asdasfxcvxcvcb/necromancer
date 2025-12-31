@@ -69,20 +69,6 @@ void CSmartShotgunAimbot::GetNoSpreadPelletPositions(
     static ConVar* tf_use_fixed_weaponspreads = I::CVar->FindVar("tf_use_fixed_weaponspreads");
     const bool bFixedSpread = tf_use_fixed_weaponspreads && tf_use_fixed_weaponspreads->GetBool();
     
-    // Fixed spread pellet pattern from Source SDK
-    static const Vec3 g_vecFixedSpread[] = {
-        Vec3(0, 0, 0),
-        Vec3(1, 0, 0),
-        Vec3(-1, 0, 0),
-        Vec3(0, -1, 0),
-        Vec3(0, 1, 0),
-        Vec3(0.85f, -0.85f, 0),
-        Vec3(0.85f, 0.85f, 0),
-        Vec3(-0.85f, -0.85f, 0),
-        Vec3(-0.85f, 0.85f, 0),
-        Vec3(0, 0, 0)
-    };
-    
     // Get seed from SeedPred if active
     int nSeed = F::SeedPred->GetSeed();
     
@@ -95,10 +81,14 @@ void CSmartShotgunAimbot::GetNoSpreadPelletPositions(
         if (bFixedSpread)
         {
             // Use fixed spread pattern (deterministic)
-            int iSpread = iBullet % 10;
+            // Pattern: center, right, left, down, up, corners, center
+            static const Vec3 fixedPattern[] = {
+                Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(-1, 0, 0), Vec3(0, -1, 0), Vec3(0, 1, 0),
+                Vec3(0.85f, -0.85f, 0), Vec3(0.85f, 0.85f, 0), Vec3(-0.85f, -0.85f, 0), Vec3(-0.85f, 0.85f, 0), Vec3(0, 0, 0)
+            };
             const float flScalar = 0.5f;
-            x = g_vecFixedSpread[iSpread].x * flScalar;
-            y = g_vecFixedSpread[iSpread].y * flScalar;
+            x = fixedPattern[iBullet % 10].x * flScalar;
+            y = fixedPattern[iBullet % 10].y * flScalar;
         }
         else
         {
@@ -206,31 +196,6 @@ int CSmartShotgunAimbot::CountPelletsHittingTarget(
     }
     
     return nHitCount;
-}
-
-int CSmartShotgunAimbot::GetMinPelletsRequired(
-    C_TFPlayer* pTarget,
-    float flDamagePerPellet,
-    bool bDoubleTap,
-    const SmartShotgunConfig& config)
-{
-    if (!pTarget || flDamagePerPellet <= 0.0f)
-        return 999;
-    
-    int nTargetHealth = pTarget->m_iHealth();
-    
-    // Calculate pellets needed to kill
-    int nPelletsToKill = static_cast<int>(ceilf(static_cast<float>(nTargetHealth) / flDamagePerPellet));
-    
-    // Get shotgun pellet count (assume 10 for standard shotguns)
-    const int nTotalPellets = 10;
-    
-    // Calculate minimum pellets based on mode
-    float flMinPercent = bDoubleTap ? config.flDoubleTapMinPelletPercent : config.flNormalMinPelletPercent;
-    int nMinPellets = static_cast<int>(ceilf(static_cast<float>(nTotalPellets) * flMinPercent));
-    
-    // Return the higher of: pellets to kill OR minimum pellet threshold
-    return std::max(nPelletsToKill, nMinPellets);
 }
 
 SmartShotDecision CSmartShotgunAimbot::ShouldShoot(
