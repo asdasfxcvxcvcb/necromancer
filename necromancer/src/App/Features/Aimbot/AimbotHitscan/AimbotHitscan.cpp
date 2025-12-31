@@ -679,7 +679,9 @@ bool CAimbotHitscan::ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWe
 	}
 
 	// Hitchance check - calculate if we meet the required hit probability
-	if (CFG::Aimbot_Hitscan_Hitchance > 0 && target.Entity)
+	// NOTE: Minigun uses tapfire delay system instead of hitchance blocking
+	// The tapfire delay is checked later and scales with distance + hitchance slider
+	if (CFG::Aimbot_Hitscan_Hitchance > 0 && target.Entity && pWeapon->GetWeaponID() != TF_WEAPON_MINIGUN)
 	{
 		// Get hitbox radius based on target type
 		float flHitboxRadius = 12.0f; // Default for players (head ~24 units diameter)
@@ -721,25 +723,7 @@ bool CAimbotHitscan::ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWe
 		
 		if (flHitchance < static_cast<float>(CFG::Aimbot_Hitscan_Hitchance))
 		{
-			// Minigun: use tapfire delay based on distance and hitchance slider
-			if (pWeapon->GetWeaponID() == TF_WEAPON_MINIGUN)
-			{
-				const float flDistance = vShootPos.DistTo(target.Position);
-				const float flRequiredDelay = F::Hitchance->GetMinigunOptimalTapfireDelay(pWeapon, pLocal, flDistance, flHitboxRadius);
-				
-				if (flRequiredDelay > 0.0f)
-				{
-					const float flTimeSinceFire = (pLocal->m_nTickBase() * TICK_INTERVAL) - pWeapon->m_flLastFireTime();
-					if (flTimeSinceFire <= flRequiredDelay)
-						return false;
-					// Waited long enough, allow the shot
-				}
-				// If no delay required (close range), allow the shot
-			}
-			else
-			{
-				return false;
-			}
+			return false;
 		}
 	}
 
@@ -812,26 +796,27 @@ bool CAimbotHitscan::ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWe
 		}
 	}
 
-	if (CFG::Aimbot_Hitscan_Minigun_TapFire)
+	// Minigun tapfire - uses hitchance slider to control delay based on distance
+	// This replaces the hitchance check for minigun (minigun is excluded from hitchance above)
+	// Returns false if tapfire delay not met - the Run function will handle removing IN_ATTACK
+	if (pWeapon->GetWeaponID() == TF_WEAPON_MINIGUN && CFG::Aimbot_Hitscan_Hitchance > 0)
 	{
-		if (pWeapon->GetWeaponID() == TF_WEAPON_MINIGUN)
+		const float flDistance = pLocal->GetAbsOrigin().DistTo(target.Position);
+		
+		// Get hitbox radius for the calculation
+		float flHitboxRadius = 16.0f; // Default body
+		if (target.Entity->GetClassId() == ETFClassIds::CTFPlayer)
+			flHitboxRadius = (target.AimedHitbox == HITBOX_HEAD) ? 10.0f : 16.0f;
+		
+		// Get optimal delay from hitchance system (uses hitchance slider for max delay)
+		// Close range = no delay, far range = up to 0.3s delay at 100% hitchance
+		const float flRequiredDelay = F::Hitchance->GetMinigunOptimalTapfireDelay(pWeapon, pLocal, flDistance, flHitboxRadius);
+		
+		if (flRequiredDelay > 0.0f)
 		{
-			const float flDistance = pLocal->GetAbsOrigin().DistTo(target.Position);
-			
-			// Get hitbox radius for the calculation
-			float flHitboxRadius = 16.0f; // Default body
-			if (target.Entity->GetClassId() == ETFClassIds::CTFPlayer)
-				flHitboxRadius = (target.AimedHitbox == HITBOX_HEAD) ? 10.0f : 16.0f;
-			
-			// Get optimal delay from hitchance system (uses hitchance slider for max delay)
-			const float flRequiredDelay = F::Hitchance->GetMinigunOptimalTapfireDelay(pWeapon, pLocal, flDistance, flHitboxRadius);
-			
-			if (flRequiredDelay > 0.0f)
-			{
-				const float flTimeSinceFire = (pLocal->m_nTickBase() * TICK_INTERVAL) - pWeapon->m_flLastFireTime();
-				if (flTimeSinceFire <= flRequiredDelay)
-					return false;
-			}
+			const float flTimeSinceFire = (pLocal->m_nTickBase() * TICK_INTERVAL) - pWeapon->m_flLastFireTime();
+			if (flTimeSinceFire < flRequiredDelay)
+				return false;
 		}
 	}
 
@@ -1008,7 +993,17 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 				if (nState == AC_STATE_IDLE || nState == AC_STATE_STARTFIRING)
 					G::bCanPrimaryAttack = false; // TODO: hack
 
+				// Always spin up (IN_ATTACK2) when targeting
 				pCmd->buttons |= IN_ATTACK2;
+				
+				// For minigun, add IN_ATTACK when in firing/spinning state
+				// The tapfire check in ShouldFire will remove it if needed based on distance
+				// This also ensures G::LastUserCmd has IN_ATTACK for the crithack
+				if (nState == AC_STATE_FIRING || nState == AC_STATE_SPINNING)
+				{
+					if (pWeapon->HasPrimaryAmmoForShot())
+						pCmd->buttons |= IN_ATTACK;
+				}
 			}
 
 			// During rapid fire shifting, still check hitchance but skip other ShouldFire checks
@@ -1049,6 +1044,13 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 			{
 				if (!bRapidFireShifting)
 					HandleFire(pCmd, pWeapon);
+			}
+			else
+			{
+				// If ShouldFire returned false for minigun, remove IN_ATTACK but keep revved
+				// This ensures the minigun stays spun up while waiting for tapfire delay
+				if (pWeapon->GetWeaponID() == TF_WEAPON_MINIGUN)
+					pCmd->buttons &= ~IN_ATTACK;
 			}
 
 			const bool bIsFiring = bRapidFireShifting ? true : IsFiring(pCmd, pWeapon);

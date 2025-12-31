@@ -264,30 +264,37 @@ float CHitchance::GetWeaponSpreadMult(C_TFWeaponBase* pWeapon, C_TFPlayer* pLoca
 }
 
 // Calculate optimal minigun tapfire delay based on distance and hitchance setting
-// Max wait time is 0.35s, scaled by hitchance slider (0-100%)
-// Distance scaling: close = 0s, far = max delay
+// Max wait time is 0.3s at 100% hitchance, scaled by hitchance slider
+// Distance scaling: close = 0s, medium = scaled, far = max delay
 float CHitchance::GetMinigunOptimalTapfireDelay(C_TFWeaponBase* pWeapon, C_TFPlayer* pLocal, float flDistance, float flHitboxRadius)
 {
 	if (!pWeapon || !pLocal || pWeapon->GetWeaponID() != TF_WEAPON_MINIGUN)
 		return 0.0f;
 
-	// Max wait time is 0.35s, scaled by hitchance slider (0-100%)
-	// 100% hitchance = 0.35s max delay (most accurate)
-	// 50% hitchance = 0.175s max delay
-	// 0% hitchance = 0s max delay (no tapfire)
-	const float flMaxDelay = 0.35f * (static_cast<float>(CFG::Aimbot_Hitscan_Hitchance) / 100.0f);
+	// Max wait time is 0.3s, scaled by hitchance slider (0-100%)
+	// 100% hitchance = 0.3s max delay
+	// 50% hitchance = 0.15s max delay
+	// 0% hitchance = 0s max delay (no tapfire, spam)
+	const float flMaxDelay = 0.3f * (static_cast<float>(CFG::Aimbot_Hitscan_Hitchance) / 100.0f);
 	
 	if (flMaxDelay <= 0.0f)
 		return 0.0f;
 	
-	// Scale delay based on distance:
-	// 0-500 units: 0s delay (close range, spam)
-	// 500-1500 units: 0s to flMaxDelay (scales linearly)
-	// 1500+ units: flMaxDelay (max)
-	if (flDistance <= 500.0f)
+	// Distance thresholds:
+	// Close range: 0-512 units = 0s delay (spam freely)
+	// Medium range: 512-1024 units = 0s to flMaxDelay (scales linearly)
+	// Far range: 1024+ units = flMaxDelay (full wait)
+	constexpr float flCloseRange = 512.0f;
+	constexpr float flFarRange = 1024.0f;
+	
+	if (flDistance <= flCloseRange)
 		return 0.0f;
 	
-	return Math::RemapValClamped(flDistance, 500.0f, 1500.0f, 0.0f, flMaxDelay);
+	if (flDistance >= flFarRange)
+		return flMaxDelay;
+	
+	// Medium range - scale linearly between close and far
+	return Math::RemapValClamped(flDistance, flCloseRange, flFarRange, 0.0f, flMaxDelay);
 }
 
 

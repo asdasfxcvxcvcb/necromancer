@@ -10,7 +10,8 @@ bool IsRapidFireWeapon(C_TFWeaponBase* pWeapon)
 
 	switch (pWeapon->GetWeaponID())
 	{
-	case TF_WEAPON_MINIGUN:
+	// NOTE: Minigun is NOT included here because it should respect the tick cooldown
+	// like other weapons. Minigun doubletap should wait for ticks to recharge.
 	case TF_WEAPON_PISTOL:
 	case TF_WEAPON_PISTOL_SCOUT:
 	case TF_WEAPON_SMG: return true;

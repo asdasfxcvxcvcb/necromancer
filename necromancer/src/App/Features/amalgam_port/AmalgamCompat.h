@@ -1024,6 +1024,20 @@ namespace SDK
             return (!(pCmd->buttons & IN_ATTACK) && flAmount > 0.f) || flAmount >= 1.f;
         }
         
+        case TF_WEAPON_MINIGUN:
+        {
+            // Minigun: only attacking when in FIRING or SPINNING state with ammo
+            // This is EXACTLY how Amalgam does it
+            switch (pWeapon->As<C_TFMinigun>()->m_iWeaponState())
+            {
+            case AC_STATE_FIRING:
+            case AC_STATE_SPINNING:
+                if (pWeapon->HasPrimaryAmmoForShot())
+                    return G::bCanPrimaryAttack && (pCmd->buttons & IN_ATTACK) ? 1 : (G::bReloading && (pCmd->buttons & IN_ATTACK) ? 2 : 0);
+            }
+            return 0;
+        }
+        
         default:
             // Regular weapons - fire when pressing attack and can attack
             // Return 2 if reloading (queued attack)
