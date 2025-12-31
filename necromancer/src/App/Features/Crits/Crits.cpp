@@ -324,10 +324,9 @@ int CCritHack::GetCritRequest(CUserCmd* pCmd, C_TFWeaponBase* pWeapon)
 // Main run function - called from CreateMove
 void CCritHack::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd)
 {
-	// During shifting (doubletap), don't reset forced state - keep using the same forced command
-	// This ensures all shifted ticks use the same crit seed
-	// bRapidFireWantShift is set on the first tick before shifting starts
-	// bShiftingRapidFire is set during the actual shifted ticks
+	// Reset forced state at the start of each tick
+	// Unlike doubletap where we need to maintain state, for normal attacks we find a new command each time
+	// This matches Amalgam's approach which is simpler and more reliable
 	if (!Shifting::bShiftingRapidFire && !Shifting::bRapidFireWantShift)
 	{
 		m_bForcingCrit = false;
@@ -364,7 +363,8 @@ void CCritHack::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd)
 		}
 		else if (pWeapon->GetWeaponID() == TF_WEAPON_MINIGUN)
 		{
-			// Minigun: check current command for IN_ATTACK (aimbot may have added it)
+			// Minigun: check current command for IN_ATTACK
+			// The minigun fires when IN_ATTACK is pressed and it's spun up
 			bAttacking = (pCmd->buttons & IN_ATTACK);
 		}
 		else if (pWeapon->GetWeaponID() == TF_WEAPON_FLAMETHROWER)
@@ -432,23 +432,25 @@ void CCritHack::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd)
 	}
 	else
 	{
-		// During shifting, reuse the already-found forced command for all ticks
-		// This ensures all doubletap shots use the same crit seed
+		// Normal mode: find a command number that will produce crit/non-crit
+		// This matches Amalgam's approach - find a new command each time
+		// During doubletap, reuse the stored command to ensure all shifted ticks use the same seed
 		if (bDoubletap && m_iForcedCommandNumber != 0)
 		{
+			// Reuse the previously found command number for doubletap
 			pCmd->command_number = m_iForcedCommandNumber;
 			pCmd->random_seed = MD5_PseudoRandom(m_iForcedCommandNumber) & std::numeric_limits<int>::max();
 		}
 		else
 		{
-			// Normal mode: find a command number that will produce crit/non-crit
+			// Find a command number that produces the desired crit/non-crit result
 			int iCommand = GetCritCommand(pWeapon, pCmd->command_number, iRequest == CritRequest_Crit);
 			if (iCommand)
 			{
 				pCmd->command_number = iCommand;
 				pCmd->random_seed = MD5_PseudoRandom(iCommand) & std::numeric_limits<int>::max();
 				
-				// Store forced state so CalcIsAttackCritical hook can use it
+				// Store forced state for doubletap and CalcIsAttackCritical hook
 				m_iForcedCommandNumber = iCommand;
 				m_iForcedSeed = CommandToSeed(iCommand);
 				m_bForcingCrit = (iRequest == CritRequest_Crit);
