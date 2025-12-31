@@ -42,8 +42,7 @@ namespace CFG
 	CFGVAR(Aimbot_Hitscan_Wait_For_Charge, false);
 	CFGVAR(Aimbot_Hitscan_Minigun_TapFire, false);
 	CFGVAR(Aimbot_Hitscan_Smart_Shotgun, false); // Smart shotgun damage prediction - waits for pellet visibility
-	CFGVAR(Aimbot_Hitscan_FakeLagFix, true); // Detect fakelag and wait for optimal shot timing
-	CFGVAR(Aimbot_Hitscan_FakeLagFix_Indicator, false); // Show fakelag detection indicator
+	CFGVAR(Aimbot_Hitscan_FakeLagFix, true); // Shoot on unchoke - when enemy sends update, their position is accurate
 
 	CFGVAR(Aimbot_Projectile_Active, true);
 	CFGVAR(Aimbot_Projectile_Aim_Type, 1); //0 Normal 1 Silent

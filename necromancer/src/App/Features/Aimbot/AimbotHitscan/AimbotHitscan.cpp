@@ -271,9 +271,6 @@ bool CAimbotHitscan::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, Hits
 				int nRecords = 0;
 				bool bHasValidLagRecords = false;
 
-				// FakeLag Fix: Check if this player is fakelagging
-				const bool bTargetFakeLagging = CFG::Aimbot_Hitscan_FakeLagFix && F::FakeLagFix->IsPlayerFakeLagging(pPlayer);
-
 				if (F::LagRecords->HasRecords(pPlayer, &nRecords))
 				{
 					// Determine backtrack range based on weapon and fake latency
@@ -294,61 +291,6 @@ bool CAimbotHitscan::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, Hits
 					if (bDoubletap && nEndRecord > 1)
 					{
 						nEndRecord--;
-					}
-
-					// FakeLag Fix: For fakelagging targets, use ALL available records
-					// High fakelag (13+ ticks) means records expire fast, so use everything we have
-					if (bTargetFakeLagging)
-					{
-						bool bAddedFakeLagTarget = false;
-						
-						// Get predicted choke to know how far back to look
-						const int nPredictedChoke = F::FakeLagFix->GetPredictedChoke(pPlayer);
-						
-						// Use all available records for fakelaggers
-						// Start from oldest (highest index) to newest
-						if (nRecords > 0)
-						{
-							// For high fakelag, we need to target across ALL records
-							// The server will accept any record within sv_maxunlag window
-							for (int n = nRecords - 1; n >= 0; n--)
-							{
-								const auto pRecord = F::LagRecords->GetRecord(pPlayer, n, true);
-								if (!pRecord)
-									continue;
-
-								bHasValidLagRecords = true;
-								bAddedFakeLagTarget = true;
-								Vec3 vPos = SDKUtils::GetHitboxPosFromMatrix(pPlayer, nAimHitbox, const_cast<matrix3x4_t*>(pRecord->BoneMatrix));
-								Vec3 vAngleTo = Math::CalcAngle(vLocalPos, vPos);
-								const float flFOVTo = CFG::Aimbot_Hitscan_Sort == 0 ? Math::CalcFov(vLocalAngles, vAngleTo) : 0.0f;
-								const float flDistTo = vLocalPos.DistTo(vPos);
-
-								if (CFG::Aimbot_Hitscan_Sort == 0 && flFOVTo > CFG::Aimbot_Hitscan_FOV)
-									continue;
-
-								m_vecTargets.emplace_back(AimTarget_t{
-									pPlayer, vPos, vAngleTo, flFOVTo, flDistTo
-								}, nAimHitbox, pRecord->SimulationTime, pRecord);
-							}
-						}
-						
-						// Also add current position as fallback - with interp disabled this is accurate
-						{
-							Vec3 vPos = pPlayer->GetHitboxPos(nAimHitbox);
-							Vec3 vAngleTo = Math::CalcAngle(vLocalPos, vPos);
-							const float flFOVTo = CFG::Aimbot_Hitscan_Sort == 0 ? Math::CalcFov(vLocalAngles, vAngleTo) : 0.0f;
-							const float flDistTo = vLocalPos.DistTo(vPos);
-
-							if (CFG::Aimbot_Hitscan_Sort == 0 && flFOVTo <= CFG::Aimbot_Hitscan_FOV)
-							{
-								m_vecTargets.emplace_back(AimTarget_t{ pPlayer, vPos, vAngleTo, flFOVTo, flDistTo }, nAimHitbox, pPlayer->m_flSimulationTime());
-								bAddedFakeLagTarget = true;
-							}
-						}
-						
-						// Skip normal targeting for fakelaggers
-						goto next_player;
 					}
 					
 					// When fake latency is 0 and using sniper rifle: add original model as valid target alongside backtrack
@@ -458,8 +400,6 @@ bool CAimbotHitscan::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, Hits
 
 				m_vecTargets.emplace_back(AimTarget_t { pPlayer, vPos, vAngleTo, flFOVTo, flDistTo}, nAimHitbox, pPlayer->m_flSimulationTime());
 			}
-			
-			next_player:;
 		}
 	}
 
@@ -803,11 +743,11 @@ bool CAimbotHitscan::ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWe
 		}
 	}
 
-	// FakeLag Fix - wait for optimal timing against fakelagging targets
+	// FakeLag Fix - only shoot when target unchokes (their position is accurate)
 	if (CFG::Aimbot_Hitscan_FakeLagFix && target.Entity && target.Entity->GetClassId() == ETFClassIds::CTFPlayer)
 	{
 		const auto pTarget = target.Entity->As<C_TFPlayer>();
-		if (pTarget && !F::FakeLagFix->IsOptimalShotTiming(pTarget))
+		if (pTarget && !F::FakeLagFix->ShouldShoot(pTarget))
 			return false;
 	}
 
@@ -1107,24 +1047,12 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 
 			if (bShouldFire)
 			{
-				// FakeLag Fix - disable interp for fakelagging target during shot
-				if (CFG::Aimbot_Hitscan_FakeLagFix && target.Entity && target.Entity->GetClassId() == ETFClassIds::CTFPlayer)
-				{
-					const auto pTarget = target.Entity->As<C_TFPlayer>();
-					if (pTarget)
-						F::FakeLagFix->OnPreShot(pTarget);
-				}
-
 				if (!bRapidFireShifting)
 					HandleFire(pCmd, pWeapon);
 			}
 
 			const bool bIsFiring = bRapidFireShifting ? true : IsFiring(pCmd, pWeapon);
 			G::bFiring = bIsFiring;
-
-			// FakeLag Fix - restore interp after shot
-			if (CFG::Aimbot_Hitscan_FakeLagFix)
-				F::FakeLagFix->OnPostShot();
 
 			// Are we ready to aim? During rapid fire shifting, always aim
 			if (bRapidFireShifting || ShouldAim(pCmd, pLocal, pWeapon) || bIsFiring)

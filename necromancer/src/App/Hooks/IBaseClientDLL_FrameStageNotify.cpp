@@ -3,7 +3,6 @@
 #include "../Features/CFG.h"
 #include "../Features/WorldModulation/WorldModulation.h"
 #include "../Features/LagRecords/LagRecords.h"
-#include "../Features/FakeLagFix/FakeLagFix.h"
 #include "../Features/MiscVisuals/MiscVisuals.h"
 #include "../Features/Crits/Crits.h"
 #include "../Features/Weather/Weather.h"
@@ -93,7 +92,6 @@ MAKE_HOOK(IBaseClientDLL_FrameStageNotify, Memory::GetVFunc(I::BaseClientDLL, 35
 
 			F::LagRecords->UpdateDatagram();
 			F::LagRecords->UpdateRecords();
-			F::FakeLagFix->Update();
 
 			if (G::mapVelFixRecords.size() > 64)
 			{

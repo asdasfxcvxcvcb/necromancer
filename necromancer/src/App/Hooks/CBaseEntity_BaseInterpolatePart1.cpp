@@ -1,7 +1,6 @@
 #include "../../SDK/SDK.h"
 
 #include "../Features/CFG.h"
-#include "../Features/FakeLagFix/FakeLagFix.h"
 
 MAKE_SIGNATURE(CBaseEntity_BaseInterpolatePart1, "client.dll", "48 89 5C 24 ? 56 57 41 55 41 56 41 57 48 83 EC ? 4C 8B BC 24", 0x0);
 
@@ -21,10 +20,6 @@ MAKE_HOOK(CBaseEntity_BaseInterpolatePart1, Signatures::CBaseEntity_BaseInterpol
 		// Local player during recharge
 		if (pEntity == pLocal)
 			return Shifting::bRecharging;
-
-		// FakeLag Fix - disable interp for fakelagging target during shot
-		if (F::FakeLagFix->ShouldDisableInterp(pEntity))
-			return true;
 
 		// If Disable Interp is off, don't disable for others
 		if (!CFG::Visuals_Disable_Interp)

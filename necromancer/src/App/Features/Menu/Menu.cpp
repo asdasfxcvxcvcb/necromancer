@@ -2365,8 +2365,6 @@ void CMenu::MainWindow()
 				CheckBox("Minigun Tapfire", CFG::Aimbot_Hitscan_Minigun_TapFire);
 				CheckBox("Smart Shotgun (Beta)", CFG::Aimbot_Hitscan_Smart_Shotgun);
 				CheckBox("FakeLag Fix", CFG::Aimbot_Hitscan_FakeLagFix);
-				if (CFG::Aimbot_Hitscan_FakeLagFix)
-					CheckBox("FakeLag Fix Indicator", CFG::Aimbot_Hitscan_FakeLagFix_Indicator);
 
 				SelectSingle("Aim Type", CFG::Aimbot_Hitscan_Aim_Type, {
 					{ "Normal", 0 },
