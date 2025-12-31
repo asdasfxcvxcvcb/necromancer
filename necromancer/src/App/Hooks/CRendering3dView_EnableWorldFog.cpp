@@ -10,8 +10,9 @@ MAKE_HOOK(CRendering3dView_EnableWorldFog, Signatures::CRendering3dView_EnableWo
 	if (CFG::Misc_Clean_Screenshot && I::EngineClient->IsTakingScreenshot())
 		return CALL_ORIGINAL(ecx);
 
-	if (CFG::Visuals_Remove_Fog)
+/*	if (CFG::Visuals_Remove_Fog)
 		return;
+*/
 
 	CALL_ORIGINAL(ecx);
 }
