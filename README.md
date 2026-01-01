@@ -2,7 +2,7 @@
 
 <div align="center">
 
-**DEBUG / DEVELOPMENT BUILD, LESS STABLE BUILD**  
+**DEBUG / DEVELOPMENT BUILD**  
 </div>
 
 # necromancer
