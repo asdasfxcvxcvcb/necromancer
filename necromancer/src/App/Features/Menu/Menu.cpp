@@ -3538,14 +3538,6 @@ void CMenu::MainWindow()
 			InputKey("Recharge Key", CFG::Exploits_Shifting_Recharge_Key);
 			InputKey("Double Tap Key", CFG::Exploits_RapidFire_Key);
 
-			// DT ticks slider: 2-22 normal, 23 = MAX (which is 24 without AA, 22 with AA)
-			const int nMaxSlider = CFG::Misc_AntiCheat_Enabled ? 8 : 23;
-			const bool bIsMax = (CFG::Exploits_RapidFire_Ticks >= 23);
-			std::string sTicksLabel = CFG::Misc_AntiCheat_Enabled ? "Safe Double Tap Ticks" : "Double Tap Ticks";
-			if (bIsMax && !CFG::Misc_AntiCheat_Enabled)
-				sTicksLabel += " (MAX)";
-			SliderInt(sTicksLabel.c_str(), CFG::Exploits_RapidFire_Ticks, 2, nMaxSlider, 1);
-
 			SliderInt("Double Tap Delay Ticks", CFG::Exploits_RapidFire_Min_Ticks_Target_Same, 0, 5, 1);
 			CheckBox("Double Tap Antiwarp", CFG::Exploits_RapidFire_Antiwarp);
 			InputKey("Warp Key", CFG::Exploits_Warp_Key);
@@ -3560,9 +3552,6 @@ void CMenu::MainWindow()
 
 		m_mapGroupBoxes["Exploits_FakeLag"].m_fnRenderContent = [this]() {
 			CheckBox("Enabled (Adaptive)", CFG::Exploits_FakeLag_Enabled);
-			const int nMaxFakeLagTicks = CFG::Misc_AntiCheat_Enabled ? 8 : 21;
-			SliderInt(CFG::Misc_AntiCheat_Enabled ? "Safe Max Ticks" : "Max Ticks",
-				CFG::Exploits_FakeLag_Max_Ticks, 1, nMaxFakeLagTicks, 1);
 			CheckBox("Only When Moving", CFG::Exploits_FakeLag_Only_Moving);
 			CheckBox("Activate on Sightline", CFG::Exploits_FakeLag_Activate_On_Sightline);
 			};
@@ -3842,46 +3831,6 @@ void CMenu::MainWindow()
 			CheckBox("Prediction Error Jitter Fix", CFG::Misc_Pred_Error_Jitter_Fix);
 			CheckBox("ComputeLightingOrigin Fix", CFG::Misc_ComputeLightingOrigin_Fix);
 			CheckBox("SetupBones Optimization", CFG::Misc_SetupBones_Optimization);
-
-			// Anti-Cheat toggle with save/restore of fakelag and doubletap values
-			{
-				static bool s_bWasAntiCheatEnabled = CFG::Misc_AntiCheat_Enabled;
-				static int s_nSavedRapidFireTicks = 0;
-				static int s_nSavedFakeLagTicks = 0;
-
-				const bool bOldValue = CFG::Misc_AntiCheat_Enabled;
-				CheckBox("Anti-Cheat Compatibility", CFG::Misc_AntiCheat_Enabled);
-
-				// Detect toggle
-				if (CFG::Misc_AntiCheat_Enabled != bOldValue)
-				{
-					if (CFG::Misc_AntiCheat_Enabled)
-					{
-						// Turning ON - save current values and clamp
-						s_nSavedRapidFireTicks = CFG::Exploits_RapidFire_Ticks;
-						s_nSavedFakeLagTicks = CFG::Exploits_FakeLag_Max_Ticks;
-
-						// Clamp to safe values
-						if (CFG::Exploits_RapidFire_Ticks > 8)
-							CFG::Exploits_RapidFire_Ticks = 8;
-						if (CFG::Exploits_FakeLag_Max_Ticks > 8)
-							CFG::Exploits_FakeLag_Max_Ticks = 8;
-					}
-					else
-					{
-						// Turning OFF - restore saved values
-						if (s_nSavedRapidFireTicks > 0)
-							CFG::Exploits_RapidFire_Ticks = s_nSavedRapidFireTicks;
-						if (s_nSavedFakeLagTicks > 0)
-							CFG::Exploits_FakeLag_Max_Ticks = s_nSavedFakeLagTicks;
-					}
-				}
-
-				s_bWasAntiCheatEnabled = CFG::Misc_AntiCheat_Enabled;
-			}
-
-			if (CFG::Misc_AntiCheat_Enabled)
-				CheckBox("Skip Crit Detection", CFG::Misc_AntiCheat_SkipCritDetection);
 			if (Button("Fix Invisible Players"))
 			{
 				// Record and stop demo to refresh client-side state

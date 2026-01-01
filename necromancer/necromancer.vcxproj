@@ -383,7 +383,6 @@
     <ClCompile Include="src\App\Features\Menu\LateRenderer\LateRenderer.cpp" />
     <ClCompile Include="src\App\Features\Menu\Menu.cpp" />
     <ClCompile Include="src\App\Features\MiscVisuals\MiscVisuals.cpp" />
-    <ClCompile Include="src\App\Features\Misc\AntiCheatCompat\AntiCheatCompat.cpp" />
     <ClCompile Include="src\App\Features\Misc\Misc.cpp" />
     <ClCompile Include="src\App\Features\MovementSimulation\MovementSimulation.cpp" />
     <ClCompile Include="src\App\Features\NetworkFix\NetworkFix.cpp" />
@@ -548,7 +547,6 @@
     <ClInclude Include="src\App\Features\Menu\Menu.h" />
     <ClInclude Include="src\App\Features\Menu\MenuAnimations.h" />
     <ClInclude Include="src\App\Features\MiscVisuals\MiscVisuals.h" />
-    <ClInclude Include="src\App\Features\Misc\AntiCheatCompat\AntiCheatCompat.h" />
     <ClInclude Include="src\App\Features\Misc\Misc.h" />
     <ClInclude Include="src\App\Features\MovementSimulation\MovementSimulation.h" />
     <ClInclude Include="src\App\Features\NetworkFix\NetworkFix.h" />

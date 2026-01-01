@@ -38,8 +38,6 @@ MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 	if (bAntiAimActive && !s_bWasAntiAimActive)
 	{
 		int nMaxWithAntiAim = MAX_SHIFT_TICKS - ANTIAIM_TICKS;
-		if (CFG::Misc_AntiCheat_Enabled)
-			nMaxWithAntiAim = std::min(nMaxWithAntiAim, 8 - ANTIAIM_TICKS);
 		
 		// If we have more ticks than allowed with anti-aim, consume the excess
 		if (Shifting::nAvailableTicks > nMaxWithAntiAim)
@@ -53,8 +51,6 @@ MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 	// When anti-aim is OFF: can store up to 24 ticks
 	// When anti-aim is ON: can store up to 22 ticks (24 - 2 for anti-aim)
 	int nMaxTicks = std::min(nServerMaxTicks, MAX_SHIFT_TICKS);
-	if (CFG::Misc_AntiCheat_Enabled)
-		nMaxTicks = std::min(nMaxTicks, 8);
 	
 	// Reserve ticks for anti-aim when it's enabled
 	int nMaxRechargeTicks = bAntiAimActive ? (nMaxTicks - ANTIAIM_TICKS) : nMaxTicks;
@@ -86,12 +82,7 @@ MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 
 			if (Shifting::bRecharging)
 			{
-				// Limit recharging based on anti-cheat and anti-aim
-				if (CFG::Misc_AntiCheat_Enabled && Shifting::nAvailableTicks >= 8)
-				{
-					Shifting::bRecharging = false;
-				}
-				else if (Shifting::nAvailableTicks >= nMaxRechargeTicks)
+				if (Shifting::nAvailableTicks >= nMaxRechargeTicks)
 				{
 					Shifting::bRecharging = false;
 				}

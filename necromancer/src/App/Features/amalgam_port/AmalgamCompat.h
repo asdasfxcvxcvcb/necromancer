@@ -1297,7 +1297,6 @@ namespace Vars
     namespace Misc
     {
         namespace Movement { struct { bool Value = CFG::Misc_Bunnyhop; } inline Bunnyhop; }
-        namespace Game { struct { bool Value = CFG::Misc_AntiCheat_Enabled; } inline AntiCheatCompatibility; }
     }
     
     namespace Visuals

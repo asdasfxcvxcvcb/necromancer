@@ -547,9 +547,6 @@ namespace CFG
 	CFGVAR(Misc_MVM_Instant_Respawn_Key, 0);
 	CFGVAR(Misc_MVM_Instant_Revive, false);
 
-	CFGVAR(Misc_AntiCheat_Enabled, false);
-	CFGVAR(Misc_AntiCheat_SkipCritDetection, false);
-
 	CFGVAR(Exploits_Shifting_Recharge_Key, 0);
 
 	CFGVAR(Exploits_RapidFire_Key, 0);
