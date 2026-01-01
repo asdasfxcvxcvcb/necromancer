@@ -2729,6 +2729,7 @@ void CMenu::MainWindow()
 
 				multiselect("Draw", PlayerDraw, {
 					{ "Name", CFG::ESP_Players_Name },
+					{ "Weapon Name", CFG::ESP_Players_Weapon_Name },
 					{ "Tags", CFG::ESP_Players_Tags },
 					{ "Class", CFG::ESP_Players_Class },
 					{ "Class Icon", CFG::ESP_Players_Class_Icon },

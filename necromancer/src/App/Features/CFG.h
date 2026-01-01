@@ -231,6 +231,7 @@ namespace CFG
 	CFGVAR(ESP_Players_Ignore_Tagged, false); // When false, tagged players (Cheater/RetardLegit/Ignored) always show regardless of team
 	CFGVAR(ESP_Players_Show_Teammate_Medics, true);
 	CFGVAR(ESP_Players_Name, false);
+	CFGVAR(ESP_Players_Weapon_Name, false);
 	CFGVAR(ESP_Players_Tags, false); // Show Friend/Cheater/RetardLegit/Ignored tags above player
 	CFGVAR(ESP_Players_Class, false);
 	CFGVAR(ESP_Players_Class_Icon, false);
