@@ -1,5 +1,10 @@
 <div align="center">
 
+<div align="center">
+
+**DEBUG / DEVELOPMENT BUILD, LESS STABLE BUILD**  
+</div>
+
 # necromancer
 
 [![Discord](https://img.shields.io/discord/1448765295224291330?style=for-the-badge&logo=discord&label=Discord&color=bdb6fc)](https://discord.gg/zxQ97SYYwJ)
