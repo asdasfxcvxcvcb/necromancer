@@ -137,17 +137,7 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 		auto pWeapon = H::Entities->GetWeapon();
 		if (pLocal && pWeapon && !pLocal->deadflag())
 		{
-			CUserCmd* pBufferCmd = I::Input->GetUserCmd(pCmd->command_number);
-			if (!pBufferCmd)
-				pBufferCmd = pCmd;
-
-			F::CritHack->Run(pLocal, pWeapon, pBufferCmd);
-
-			if (pBufferCmd != pCmd)
-			{
-				pCmd->command_number = pBufferCmd->command_number;
-				pCmd->random_seed = pBufferCmd->random_seed;
-			}
+			F::CritHack->Run(pLocal, pWeapon, pCmd);
 		}
 
 		return F::RapidFire->GetShiftSilentAngles() ? false : CALL_ORIGINAL(ecx, flInputSampleTime, pCmd);
@@ -362,13 +352,8 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 		// This is how Amalgam does it - G::Attacking = SDK::IsAttacking(pLocal, pWeapon, pCmd, true)
 		G::Attacking = SDK::IsAttacking(pLocal, pWeapon, pCmd, true);
 
-		// CritHack after aimbot
-		F::CritHack->Run(pLocal, pWeapon, pBufferCmd);
-		if (pBufferCmd != pCmd)
-		{
-			pCmd->command_number = pBufferCmd->command_number;
-			pCmd->random_seed = pBufferCmd->random_seed;
-		}
+		// CritHack after aimbot - pass pCmd directly so it sees the aimbot's changes
+		F::CritHack->Run(pLocal, pWeapon, pCmd);
 
 		F::Triggerbot->Run(pCmd);
 	}
