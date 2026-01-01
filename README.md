@@ -13,5 +13,5 @@
 <sub>AVX2 is recommended for newer-generation CPUs due to improved performance.</sub><br>
 <sub>All issues and bugs should be reported in the Discord server.</sub>
 </div>
-<sub>Using the loader is recommended for simple injection and always downloading the latest version of necromancer.</sub>
+                                               <sub>Using the loader is recommended for simple injection and always downloading the latest version of necromancer.</sub>
 
