@@ -13,27 +13,7 @@ void CAntiCheatCompat::ProcessCommand(CUserCmd* pCmd, bool* pSendPacket)
 {
 	// Handle feature disabling when anti-cheat is enabled
 	if (CFG::Misc_AntiCheat_Enabled)
-	{
-		// Save original values once
-		if (!g_bSavedOriginals)
-		{
-			g_bOriginalNeckbreaker = CFG::Aimbot_Projectile_Neckbreaker;
-			g_bSavedOriginals = true;
-		}
-		
-		// Force disable neckbreaker - doesn't work well with anti-cheat
-		CFG::Aimbot_Projectile_Neckbreaker = false;
-	}
-	else
-	{
-		// Restore original values when anti-cheat is disabled
-		if (g_bSavedOriginals)
-		{
-			CFG::Aimbot_Projectile_Neckbreaker = g_bOriginalNeckbreaker;
-			g_bSavedOriginals = false;
-		}
 		return;
-	}
 
 	// Skip anti-cheat processing during rocket jump - we need exact angles for rocket jumping
 	if (F::Misc->IsAutoRocketJumpRunning())

@@ -388,67 +388,23 @@ void CESP::Run()
 				DrawBones(pPlayer, CFG::ESP_Players_Bones_Color == 0 ? entColor : WHITE);
 			}
 
-			if (CFG::ESP_Players_Weapon_Name)
-			{
-				const auto& font = H::Fonts->Get(EFonts::ESP_CONDS);
-
-				Color_t weaponColor = textColor;
-
-				if (CFG::Misc_Enemy_Custom_Name_Color)
-				{
-					weaponColor = CFG::Color_Custom_Name;
-				}
-				else
-				{
-					PlayerPriority playerPriority = {};
-					if (F::Players->GetInfo(pPlayer->entindex(), playerPriority))
-					{
-						if (playerPriority.Cheater)
-							weaponColor = CFG::Color_Cheater;
-						else if (playerPriority.RetardLegit)
-							weaponColor = CFG::Color_RetardLegit;
-						else if (playerPriority.Ignored)
-							weaponColor = CFG::Color_Friend;
-					}
-				}
-
-				H::Draw->String(
-					font,
-					x + (w / 2),
-					y + h + font.m_nTall,
-					weaponColor,
-					POS_CENTERXY,
-					Utils::ConvertUtf8ToWide(pPlayer->GetWeaponName()).c_str()
-				);
-			}
-
 			if (CFG::ESP_Players_Name)
 			{
 				player_info_t PlayerInfo = {};
 
 				if (I::EngineClient->GetPlayerInfo(pPlayer->entindex(), &PlayerInfo))
 				{
-					// Determine name color
+					// Check for player tags and use appropriate color
 					Color_t nameColor = textColor;
-					
-					// If custom name color is enabled, use it for all players
-					if (CFG::Misc_Enemy_Custom_Name_Color)
+					PlayerPriority playerPriority = {};
+					if (F::Players->GetInfo(pPlayer->entindex(), playerPriority))
 					{
-						nameColor = CFG::Color_Custom_Name;
-					}
-					else
-					{
-						// Check for player tags and use appropriate color
-						PlayerPriority playerPriority = {};
-						if (F::Players->GetInfo(pPlayer->entindex(), playerPriority))
-						{
-							if (playerPriority.Cheater)
-								nameColor = CFG::Color_Cheater;
-							else if (playerPriority.RetardLegit)
-								nameColor = CFG::Color_RetardLegit;
-							else if (playerPriority.Ignored)
-								nameColor = CFG::Color_Friend;
-						}
+						if (playerPriority.Cheater)
+							nameColor = CFG::Color_Cheater;
+						else if (playerPriority.RetardLegit)
+							nameColor = CFG::Color_RetardLegit;
+						else if (playerPriority.Ignored)
+							nameColor = CFG::Color_Friend;
 					}
 
 					H::Draw->String(

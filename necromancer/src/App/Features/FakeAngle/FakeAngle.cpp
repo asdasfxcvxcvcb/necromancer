@@ -465,10 +465,6 @@ void CFakeAngle::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon
 	// Apply angles to cmd
 	Vec3 vCmdAngles = { vAngles.x, vAngles.y, 0.0f };
 	
-	// Only clamp cmd angles when anti-cheat compatibility is enabled (like Amalgam)
-	if (CFG::Misc_AntiCheat_Enabled)
-		Math::ClampAngles(vCmdAngles);
-	
 	// Fix movement using the angles we're applying
 	// Use clamped pitch for movement fix to avoid issues
 	Vec3 vClampedForMovement = { std::clamp(vAngles.x, -89.0f, 89.0f), vAngles.y, 0.0f };

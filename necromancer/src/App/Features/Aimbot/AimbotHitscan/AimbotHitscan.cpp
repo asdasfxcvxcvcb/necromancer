@@ -1067,17 +1067,8 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 
 				// Set tick_count for lag compensation
 				if (bIsFiring && target.Entity->GetClassId() == ETFClassIds::CTFPlayer)
-				{
-					if (CFG::Misc_AntiCheat_Enabled)
-					{
-						// Anti-cheat compatibility: match Amalgam's behavior
-						// In Amalgam, CreateMove() returns early when anti-cheat is enabled,
-						// which means tick_count is NOT adjusted for fake interp.
-						// We still need to set tick_count for the backtrack record though.
-						// Use just the lerp value, don't add fake interp (matching Amalgam's skip)
-						pCmd->tick_count = TIME_TO_TICKS(target.SimulationTime + SDKUtils::GetLerp());
-					}
-					else if (CFG::Misc_Accuracy_Improvements)
+				{	
+					if (CFG::Misc_Accuracy_Improvements)
 					{
 						pCmd->tick_count = TIME_TO_TICKS(target.SimulationTime + SDKUtils::GetLerp());
 					}

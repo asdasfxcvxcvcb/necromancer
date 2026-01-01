@@ -393,27 +393,6 @@ void CCritHack::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd)
 	if (iRequest == CritRequest_Any)
 		return;
 
-	// Anti-cheat compatibility mode (skip if crit detection bypass is enabled)
-	if (CFG::Misc_AntiCheat_Enabled && !CFG::Misc_AntiCheat_SkipCritDetection)
-	{
-		// Safe mode: only fire when current command matches our request
-		if (!IsCritCommand(pCmd->command_number, pWeapon, iRequest == CritRequest_Crit, false))
-		{
-			// Block the attack - but preserve minigun rev state
-			pCmd->buttons &= ~IN_ATTACK;
-			
-			// For minigun: restore IN_ATTACK2 so it stays revved while waiting
-			if (pWeapon->GetWeaponID() == TF_WEAPON_MINIGUN)
-			{
-				if (G::OriginalCmd.buttons & IN_ATTACK2)
-					pCmd->buttons |= IN_ATTACK2;
-			}
-			
-			G::bPSilentAngles = false;
-			return;
-		}
-	}
-	else
 	{
 		// During shifting, reuse the already-found forced command for all ticks
 		// This ensures all doubletap shots use the same crit seed
@@ -449,11 +428,7 @@ void CCritHack::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd)
 // Check if aimbot should fire - returns false if safe mode would block the shot
 // Aimbots should call this BEFORE adding IN_ATTACK
 bool CCritHack::ShouldAllowFire(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd)
-{
-	// If safe mode is not enabled, always allow
-	if (!CFG::Misc_AntiCheat_Enabled || CFG::Misc_AntiCheat_SkipCritDetection)
-		return true;
-	
+{	
 	// If no weapon or player, allow (let other code handle it)
 	if (!pWeapon || !pLocal || pLocal->deadflag())
 		return true;
@@ -489,8 +464,7 @@ int CCritHack::PredictCmdNum(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserC
 {
 	auto getCmdNum = [&](int iCommandNumber)
 	{
-		if (!pWeapon || !pLocal || pLocal->deadflag() || !I::EngineClient->IsInGame() || CFG::Misc_AntiCheat_Enabled
-			|| pLocal->IsCritBoosted() || pWeapon->m_flCritTime() > I::GlobalVars->curtime || !WeaponCanCrit(pWeapon))
+		if (!pWeapon || !pLocal || pLocal->deadflag() || !I::EngineClient->IsInGame() || pLocal->IsCritBoosted() || pWeapon->m_flCritTime() > I::GlobalVars->curtime || !WeaponCanCrit(pWeapon))
 			return iCommandNumber;
 
 		UpdateInfo(pLocal, pWeapon);
@@ -867,13 +841,6 @@ void CCritHack::Draw()
 	int nBarEndX = nBoxX + nWidth - nPadding;  // Right edge of the bar
 	int nTextRightX = nBarEndX - 20;  // Offset for right-aligned text (text center point)
 	int nDrawY = nBoxY;
-	
-	// === ROW 0: SAFE MODE (centered, only when anticheat is on and skip crit detection is off) ===
-	if (CFG::Misc_AntiCheat_Enabled && !CFG::Misc_AntiCheat_SkipCritDetection)
-	{
-		H::Draw->String(font, nBoxX + nWidth / 2, nDrawY, clrTextYellow, POS_CENTERX, "SAFE MODE");
-		nDrawY += nRowHeight;
-	}
 	
 	// === ROW 1: CRITS (left) and STATUS (right-aligned to bar end) ===
 	int iCrits = m_iAvailableCrits;

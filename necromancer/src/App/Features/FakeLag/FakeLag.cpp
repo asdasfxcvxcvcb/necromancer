@@ -50,8 +50,6 @@ bool CFakeLag::IsAllowed(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* 
 	// Calculate max allowed fakelag ticks
 	static auto sv_maxusrcmdprocessticks = I::CVar->FindVar("sv_maxusrcmdprocessticks");
 	int nMaxTicks = sv_maxusrcmdprocessticks ? sv_maxusrcmdprocessticks->GetInt() : 24;
-	if (CFG::Misc_AntiCheat_Enabled)
-		nMaxTicks = std::min(nMaxTicks, 8);
 	
 	// Reserve ticks for anti-aim if it's active
 	int nAntiAimTicks = (F::FakeAngle->YawOn() && F::FakeAngle->ShouldRun(pLocal, pWeapon, pCmd)) ? F::FakeAngle->AntiAimTicks() : 0;
@@ -125,10 +123,6 @@ int CFakeLag::CalculateMaxAllowedTicks(C_TFPlayer* pLocal, C_TFWeaponBase* pWeap
 	// Get server max ticks
 	static auto sv_maxusrcmdprocessticks = I::CVar->FindVar("sv_maxusrcmdprocessticks");
 	int nMaxTicks = sv_maxusrcmdprocessticks ? sv_maxusrcmdprocessticks->GetInt() : 24;
-	
-	// Anti-cheat compatibility limits to 8 ticks
-	if (CFG::Misc_AntiCheat_Enabled)
-		nMaxTicks = std::min(nMaxTicks, 8);
 	
 	// Reserve ticks for anti-aim if active (max 22 ticks when anti-aiming)
 	int nAntiAimTicks = 0;

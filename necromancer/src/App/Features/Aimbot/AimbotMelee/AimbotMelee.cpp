@@ -1,7 +1,6 @@
 #include "AimbotMelee.h"
 
 #include "../../CFG.h"
-#include "../../amalgam_port/Simulation/MovementSimulation/AmalgamMoveSim.h"
 #include "../../Crits/Crits.h"
 
 int CAimbotMelee::GetSwingTime(C_TFWeaponBase* pWeapon)
@@ -640,10 +639,6 @@ void CAimbotMelee::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeap
 				{
 					Aim(pCmd, pLocal, pWeapon, target.AngleTo);
 				}
-
-				// Anti-cheat compatibility: skip tick count manipulation
-				if (CFG::Misc_AntiCheat_Enabled)
-					return;
 
 				// Set tick_count for backtrack when the melee smack happens (bIsFiring)
 				// Melee has a swing delay - the hit detection happens AFTER you press attack

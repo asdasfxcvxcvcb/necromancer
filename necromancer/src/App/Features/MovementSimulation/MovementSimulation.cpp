@@ -124,7 +124,7 @@ void CMovementSimulation::SetupMoveData(C_TFPlayer* pPlayer, CMoveData* pMoveDat
 
 	pMoveData->m_flClientMaxSpeed = pMoveData->m_flMaxSpeed;
 
-	pMoveData->m_vecViewAngles = {0.0f, Math::VelocityToAngles(pMoveData->m_vecVelocity).y, 0.0f};
+	pMoveData->m_vecViewAngles = { 0.0f, Math::VelocityToAngles(pMoveData->m_vecVelocity).y, 0.0f };
 
 	if (CFG::Aimbot_Projectile_Aim_Prediction_Method == 0)
 	{
@@ -160,7 +160,7 @@ void CMovementSimulation::SetupMoveData(C_TFPlayer* pPlayer, CMoveData* pMoveDat
 
 	m_flYawTurnRate = 0.0f;
 
-	if (CFG::Aimbot_Projectile_Strafe_Prediction_Ground && (m_PlayerDataBackup.m_fFlags & FL_ONGROUND) && F::LagRecords->HasRecords(pPlayer))
+	if (CFG::Aimbot_Projectile_Ground_Strafe_Prediction && (m_PlayerDataBackup.m_fFlags & FL_ONGROUND) && F::LagRecords->HasRecords(pPlayer))
 	{
 		if (m_MoveData.m_vecVelocity.Length2D() < (m_MoveData.m_flMaxSpeed * 0.85f))
 		{
@@ -181,8 +181,8 @@ void CMovementSimulation::SetupMoveData(C_TFPlayer* pPlayer, CMoveData* pMoveDat
 			const float flYaw3 = Math::VelocityToAngles(pRecord3->Velocity).y;
 			const float flYaw4 = Math::VelocityToAngles(pRecord4->Velocity).y;
 
-			const auto inc{flYaw4 > flYaw3 && flYaw3 > flYaw2 && flYaw2 > flYaw1 && flYaw1 > flYaw0};
-			const auto dec{flYaw4 < flYaw3 && flYaw3 < flYaw2 && flYaw2 < flYaw1 && flYaw1 < flYaw0};
+			const auto inc{ flYaw4 > flYaw3 && flYaw3 > flYaw2 && flYaw2 > flYaw1 && flYaw1 > flYaw0 };
+			const auto dec{ flYaw4 < flYaw3 && flYaw3 < flYaw2 && flYaw2 < flYaw1 && flYaw1 < flYaw0 };
 
 			if (!inc && !dec)
 			{
@@ -200,31 +200,31 @@ void CMovementSimulation::SetupMoveData(C_TFPlayer* pPlayer, CMoveData* pMoveDat
 		}
 	}
 
-	if (CFG::Aimbot_Projectile_Strafe_Prediction_Air && !(m_PlayerDataBackup.m_fFlags & FL_ONGROUND) && F::LagRecords->HasRecords(pPlayer))
+	if (CFG::Aimbot_Projectile_Air_Strafe_Prediction && !(m_PlayerDataBackup.m_fFlags & FL_ONGROUND) && F::LagRecords->HasRecords(pPlayer))
 	{
-		const LagRecord_t* rec0{F::LagRecords->GetRecord(pPlayer, 0)};
-		const LagRecord_t* rec1{F::LagRecords->GetRecord(pPlayer, 1)};
-		const LagRecord_t* rec2{F::LagRecords->GetRecord(pPlayer, 2)};
-		const LagRecord_t* rec3{F::LagRecords->GetRecord(pPlayer, 3)};
+		const LagRecord_t* rec0{ F::LagRecords->GetRecord(pPlayer, 0) };
+		const LagRecord_t* rec1{ F::LagRecords->GetRecord(pPlayer, 1) };
+		const LagRecord_t* rec2{ F::LagRecords->GetRecord(pPlayer, 2) };
+		const LagRecord_t* rec3{ F::LagRecords->GetRecord(pPlayer, 3) };
 		//const LagRecord_t* rec4{F::LagRecords->GetRecord(pPlayer, 4)};
 
 		if (rec0 && rec1 && rec2 && rec3 /*&& rec4*/)
 		{
-			const float yaw0{Math::VelocityToAngles(rec0->Velocity).y};
-			const float yaw1{Math::VelocityToAngles(rec1->Velocity).y};
-			const float yaw2{Math::VelocityToAngles(rec2->Velocity).y};
-			const float yaw3{Math::VelocityToAngles(rec3->Velocity).y};
+			const float yaw0{ Math::VelocityToAngles(rec0->Velocity).y };
+			const float yaw1{ Math::VelocityToAngles(rec1->Velocity).y };
+			const float yaw2{ Math::VelocityToAngles(rec2->Velocity).y };
+			const float yaw3{ Math::VelocityToAngles(rec3->Velocity).y };
 			//float yaw4{Math::VelocityToAngles(rec4->m_vVelocity).y};
 
-			const bool inc{/*yaw4 > yaw3 &&*/ yaw3 > yaw2 && yaw2 > yaw1 && yaw1 > yaw0};
-			const bool dec{/*yaw4 < yaw3 &&*/ yaw3 < yaw2 && yaw2 < yaw1 && yaw1 < yaw0};
+			const bool inc{/*yaw4 > yaw3 &&*/ yaw3 > yaw2 && yaw2 > yaw1 && yaw1 > yaw0 };
+			const bool dec{/*yaw4 < yaw3 &&*/ yaw3 < yaw2 && yaw2 < yaw1 && yaw1 < yaw0 };
 
 			if (!inc && !dec)
 			{
 				return;
 			}
 
-			const float delta{(((yaw0 - yaw1) + (yaw2 - yaw3) /*+ (yaw3 - yaw4)*/) / 2)};
+			const float delta{ (((yaw0 - yaw1) + (yaw2 - yaw3) /*+ (yaw3 - yaw4)*/) / 2) };
 
 			m_flYawTurnRate = delta;
 
@@ -343,12 +343,12 @@ void CMovementSimulation::RunTick(float flTimeToTarget)
 		return;
 	}
 
-	if (CFG::Aimbot_Projectile_Strafe_Prediction_Ground && (m_PlayerDataBackup.m_fFlags & FL_ONGROUND) && (m_pPlayer->m_fFlags() & FL_ONGROUND))
+	if (CFG::Aimbot_Projectile_Ground_Strafe_Prediction && (m_PlayerDataBackup.m_fFlags & FL_ONGROUND) && (m_pPlayer->m_fFlags() & FL_ONGROUND))
 	{
 		m_MoveData.m_vecViewAngles.y += m_flYawTurnRate * Math::RemapValClamped(flTimeToTarget, 0.0f, 1.0f, 1.0f, 0.5f);
 	}
 
-	if (CFG::Aimbot_Projectile_Strafe_Prediction_Air && !(m_PlayerDataBackup.m_fFlags & FL_ONGROUND) && !(m_pPlayer->m_fFlags() & FL_ONGROUND))
+	if (CFG::Aimbot_Projectile_Air_Strafe_Prediction && !(m_PlayerDataBackup.m_fFlags & FL_ONGROUND) && !(m_pPlayer->m_fFlags() & FL_ONGROUND))
 	{
 		m_MoveData.m_vecViewAngles.y += m_flYawTurnRate;
 	}

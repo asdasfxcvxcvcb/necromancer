@@ -45,81 +45,20 @@ namespace CFG
 	CFGVAR(Aimbot_Hitscan_FakeLagFix, true); // Shoot on unchoke - when enemy sends update, their position is accurate
 
 	CFGVAR(Aimbot_Projectile_Active, true);
+	CFGVAR(Aimbot_Projectile_NoSpread, true);
+	CFGVAR(Aimbot_Projectile_Auto_Double_Donk, true);
+	CFGVAR(Aimbot_Projectile_Advanced_Head_Aim, true);
+	CFGVAR(Aimbot_Projectile_Ground_Strafe_Prediction, true);
+	CFGVAR(Aimbot_Projectile_Air_Strafe_Prediction, true);
+	CFGVAR(Aimbot_Projectile_BBOX_Multipoint, true);
+	CFGVAR(Aimbot_Projectile_Rocket_Splash, 2); //0 Disabled 1 Enabled 2 Preferred
 	CFGVAR(Aimbot_Projectile_Aim_Type, 1); //0 Normal 1 Silent
 	CFGVAR(Aimbot_Projectile_Sort, 0); //0 FOV 1 Distance
 	CFGVAR(Aimbot_Projectile_Aim_Position, 3); //0 Feet 1 Body 2 Head 3 Auto
-	CFGVAR(Aimbot_Projectile_FOV, 30.0f);
-	CFGVAR(Aimbot_Projectile_Max_Simulation_Time, 4.0f); // Max simulation time in seconds
-	CFGVAR(Aimbot_Projectile_Max_Targets, 2); // Max targets to simulate (1-5)
-	CFGVAR(Aimbot_Projectile_Auto_Charge, true); // Auto charge sticky/bow for aimbot (hidden, always on)
-	CFGVAR(Aimbot_Projectile_Charge_Ticks, 1); // Minimum ticks to charge before firing (hidden, default 1)
-	// Prediction_Method removed - always uses Movement Simulation now
-	CFGVAR(Aimbot_Projectile_Strafe_Prediction_Ground, true);
-	CFGVAR(Aimbot_Projectile_Strafe_Prediction_Air, true);
-	CFGVAR(Aimbot_Projectile_Aim_Prediction_Method, 1); // 0 = Simple forward, 1 = Calculate from velocity
-	CFGVAR(Aimbot_Projectile_Latency_Compensation, true); // Account for network latency in prediction
-	
-	// Strafe prediction tuning (Amalgam-style)
-	CFGVAR(Aimbot_Projectile_Ground_Samples, 12);
-	CFGVAR(Aimbot_Projectile_Air_Samples, 16);
-	CFGVAR(Aimbot_Projectile_Ground_Straight_Fuzzy, 1000.f);
-	CFGVAR(Aimbot_Projectile_Air_Straight_Fuzzy, 500.f);
-	CFGVAR(Aimbot_Projectile_Ground_Max_Changes, 1);
-	CFGVAR(Aimbot_Projectile_Air_Max_Changes, 0);
-	CFGVAR(Aimbot_Projectile_Ground_Max_Change_Time, 8);
-	CFGVAR(Aimbot_Projectile_Air_Max_Change_Time, 4);
-	
-	// Distance-based minimum samples (Amalgam-style)
-	CFGVAR(Aimbot_Projectile_Ground_Low_Min_Distance, 500.f);
-	CFGVAR(Aimbot_Projectile_Ground_Low_Min_Samples, 4.f);
-	CFGVAR(Aimbot_Projectile_Ground_High_Min_Distance, 2000.f);
-	CFGVAR(Aimbot_Projectile_Ground_High_Min_Samples, 12.f);
-	CFGVAR(Aimbot_Projectile_Air_Low_Min_Distance, 500.f);
-	CFGVAR(Aimbot_Projectile_Air_Low_Min_Samples, 4.f);
-	CFGVAR(Aimbot_Projectile_Air_High_Min_Distance, 2000.f);
-	CFGVAR(Aimbot_Projectile_Air_High_Min_Samples, 12.f);
-	
-	// Delta prediction (Amalgam-style)
-	CFGVAR(Aimbot_Projectile_Delta_Count, 16);
-	CFGVAR(Aimbot_Projectile_Delta_Mode, 0); // 0 = Average, 1 = Max
-	
-	// Friction flags (Amalgam-style) - bitfield: 1 = CalculateIncrease, 2 = RunReduce
-	CFGVAR(Aimbot_Projectile_Friction_Flags, 3);
-
-	// Neckbreaker - iterate roll angles to bypass obstructions
-	CFGVAR(Aimbot_Projectile_Neckbreaker, false);
-	CFGVAR(Aimbot_Projectile_NeckbreakerStep, 90);
-
-	// Crusader's Crossbow Healing Settings
-	CFGVAR(Aimbot_Crossbow_Heal_Teammates, true); // Auto-aim at teammates who need healing
-	CFGVAR(Aimbot_Crossbow_Heal_Priority, 0); // 0 = Lowest HP first, 1 = Closest first, 2 = FOV first
-
-	// Amalgam Projectile Aimbot Settings
-	CFGVAR(Aimbot_Amalgam_Projectile_Active, false); // Enable Amalgam projectile aimbot
-	CFGVAR(Aimbot_Amalgam_Projectile_Splash, 1); // 0=Off, 1=Include, 2=Prefer, 3=Only (default Include)
-	// Hitbox options (individual bools for multiselect)
-	CFGVAR(Aimbot_Amalgam_Projectile_Hitbox_Auto, true);
-	CFGVAR(Aimbot_Amalgam_Projectile_Hitbox_Head, true);
-	CFGVAR(Aimbot_Amalgam_Projectile_Hitbox_Body, true);
-	CFGVAR(Aimbot_Amalgam_Projectile_Hitbox_Feet, true);
-	CFGVAR(Aimbot_Amalgam_Projectile_Hitbox_BodyaimLethal, false);
-	CFGVAR(Aimbot_Amalgam_Projectile_Hitbox_PrioritizeFeet, true); // Prioritize feet for grounded targets
-	// Modifier options
-	CFGVAR(Aimbot_Amalgam_Projectile_Mod_PrimeTime, true); // Use prime time for projectile timing
-	CFGVAR(Aimbot_Amalgam_Projectile_Mod_ChargeWeapon, true); // Auto-charge sticky/huntsman while aiming
-	CFGVAR(Aimbot_Amalgam_Projectile_HitChance, 0); // 0 - 100% (hidden, always 0)
-	CFGVAR(Aimbot_Amalgam_Projectile_SplashRadius, 100); // 0 - 100% (hidden, always 100)
-	CFGVAR(Aimbot_Amalgam_Projectile_RocketSplashMode, 0); // 0=Regular, 1=SpecialLight, 2=SpecialHeavy
-	CFGVAR(Aimbot_Amalgam_Projectile_SplashPoints, 75); // 50 - 400
-	
-	// Midpoint Aim - aims at the midpoint of target's predicted path for better hit chance
-	CFGVAR(Aimbot_Projectile_Midpoint_Aim, false); // Enable midpoint aim
-	CFGVAR(Aimbot_Projectile_Midpoint_Max_Distance, 9.5f); // Max path distance in feet (1 foot = 16 units)
-
-	// Timed Double Donk - times Loose Cannon shots to explode ~0.5s after impact for mini-crit bonus
-	CFGVAR(Aimbot_Projectile_Timed_Double_Donk, false); // Enable timed double donk for Loose Cannon
-	CFGVAR(Aimbot_Projectile_Double_Donk_Delay, 0.01f); // Fuse expire delay after impact (-0.1 to 0.4 seconds)
-	CFGVAR(Aimbot_Projectile_Cannon_Cancel_Charge, true); // Cancel Loose Cannon charge if target is lost
+	CFGVAR(Aimbot_Projectile_Aim_Prediction_Method, 0); //0 Full Acceleration 1 Current Velocity
+	CFGVAR(Aimbot_Projectile_FOV, 45.0f);
+	CFGVAR(Aimbot_Projectile_Max_Simulation_Time, 1.5f);
+	CFGVAR(Aimbot_Projectile_Max_Processing_Targets, 1);
 
 	CFGVAR(Aimbot_Melee_Active, false);
 	CFGVAR(Aimbot_Melee_Always_Active, false);
@@ -231,7 +170,6 @@ namespace CFG
 	CFGVAR(ESP_Players_Ignore_Tagged, false); // When false, tagged players (Cheater/RetardLegit/Ignored) always show regardless of team
 	CFGVAR(ESP_Players_Show_Teammate_Medics, true);
 	CFGVAR(ESP_Players_Name, false);
-	CFGVAR(ESP_Players_Weapon_Name, false);
 	CFGVAR(ESP_Players_Tags, false); // Show Friend/Cheater/RetardLegit/Ignored tags above player
 	CFGVAR(ESP_Players_Class, false);
 	CFGVAR(ESP_Players_Class_Icon, false);
@@ -405,7 +343,6 @@ namespace CFG
 	// Misc Enemy - HP-based coloring
 	CFGVAR(Visuals_Enemy_Outline_HP_Based, false); // Color enemy outlines based on HP
 	CFGVAR(Visuals_Enemy_Materials_HP_Based, false); // Color enemy materials based on HP
-	CFGVAR(Misc_Enemy_Custom_Name_Color, false); // Use custom color for all player names
 
 #pragma endregion
 
@@ -610,9 +547,6 @@ namespace CFG
 	CFGVAR(Misc_MVM_Instant_Respawn_Key, 0);
 	CFGVAR(Misc_MVM_Instant_Revive, false);
 
-	CFGVAR(Misc_AntiCheat_Enabled, false);
-	CFGVAR(Misc_AntiCheat_SkipCritDetection, false);
-
 	CFGVAR(Exploits_Shifting_Recharge_Key, 0);
 
 	CFGVAR(Exploits_RapidFire_Key, 0);
@@ -735,7 +669,6 @@ namespace CFG
 	CFGVAR(Color_Cheater, Color_t({ 248, 253, 8, 255 }));
 	CFGVAR(Color_RetardLegit, Color_t({ 253, 3, 11, 255 }));
 	CFGVAR(Color_F2P, Color_t({ 200, 200, 200, 255 })); // F2P player tag color
-	CFGVAR(Color_Custom_Name, Color_t({ 255, 255, 255, 255 })); // Custom name color for all players
 	CFGVAR(Color_FakeModel, Color_t({ 0, 204, 204, 255 })); // Cyan for fake model
 	CFGVAR(Color_LagRecord, Color_t({ 255, 255, 255, 255 })); // White for lag records
 	// Party colors (12 unique colors for different parties)

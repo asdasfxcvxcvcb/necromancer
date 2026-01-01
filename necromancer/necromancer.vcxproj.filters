@@ -9,16 +9,9 @@
     <ClCompile Include="src\App\CheaterDatabase\CheaterDatabase.cpp" />
     <ClCompile Include="src\App\Features\Aimbot\AimbotHitscan\AimbotHitscan.cpp" />
     <ClCompile Include="src\App\Features\Aimbot\AimbotMelee\AimbotMelee.cpp" />
-    <ClCompile Include="src\App\Features\Aimbot\AimbotProjectileArc\AimbotProjectileArc.cpp" />
-    <ClCompile Include="src\App\Features\Aimbot\AimbotWrangler\AimbotWrangler.cpp" />
     <ClCompile Include="src\App\Features\Aimbot\Aimbot.cpp" />
-    <ClCompile Include="src\App\Features\amalgam_port\AimbotGlobal\AimbotGlobal.cpp" />
-    <ClCompile Include="src\App\Features\amalgam_port\AimbotProjectile\AimbotProjectile.cpp" />
     <ClCompile Include="src\App\Features\amalgam_port\EnginePrediction\AmalgamEnginePred.cpp" />
-    <ClCompile Include="src\App\Features\amalgam_port\Simulation\MovementSimulation\AmalgamMoveSim.cpp" />
-    <ClCompile Include="src\App\Features\amalgam_port\Simulation\ProjectileSimulation\ProjectileSimulation.cpp" />
     <ClCompile Include="src\App\Features\amalgam_port\Ticks\Ticks.cpp" />
-    <ClCompile Include="src\App\Features\amalgam_port\TrajectoryPreview\TrajectoryPreview.cpp" />
     <ClCompile Include="src\App\Features\AutoQueue\AutoQueue.cpp" />
     <ClCompile Include="src\App\Features\Chat\Chat.cpp" />
     <ClCompile Include="src\App\Features\Crits\Crits.cpp" />
@@ -32,10 +25,8 @@
     <ClCompile Include="src\App\Features\Materials\Materials.cpp" />
     <ClCompile Include="src\App\Features\Menu\LateRenderer\LateRenderer.cpp" />
     <ClCompile Include="src\App\Features\Menu\Menu.cpp" />
-    <ClCompile Include="src\App\Features\Misc\AntiCheatCompat\AntiCheatCompat.cpp" />
     <ClCompile Include="src\App\Features\Misc\Misc.cpp" />
     <ClCompile Include="src\App\Features\MiscVisuals\MiscVisuals.cpp" />
-    <ClCompile Include="src\App\Features\MovementSimulation\MovementSimulation.cpp" />
     <ClCompile Include="src\App\Features\NetworkFix\NetworkFix.cpp" />
     <ClCompile Include="src\App\Features\Outlines\Outlines.cpp" />
     <ClCompile Include="src\App\Features\Paint\Paint.cpp" />
@@ -73,7 +64,7 @@
     <ClCompile Include="src\App\Hooks\CClientState_ProcessFixAngle.cpp" />
     <ClCompile Include="src\App\Hooks\CEconItemSchema_GetItemDefinition.cpp" />
     <ClCompile Include="src\App\Hooks\CGameEventManager_FireEventIntern.cpp" />
-    <ClCompile Include="src\App\Hooks\CHLClient_CreateMove.cpp" />
+    <ClCompile Include="src\App\Hooks\ClientModeShared_CreateMove.cpp" />
     <ClCompile Include="src\App\Hooks\CHudTFCrosshair_ShouldDraw.cpp" />
     <ClCompile Include="src\App\Hooks\CL_CheckForPureServerWhitelist.cpp" />
     <ClCompile Include="src\App\Hooks\CL_Move.cpp" />
@@ -158,6 +149,9 @@
     <ClCompile Include="src\Utils\SignatureManager\SignatureManager.cpp" />
     <ClCompile Include="src\Utils\Storage\Storage.cpp" />
     <ClCompile Include="src\DllMain.cpp" />
+    <ClCompile Include="src\App\Features\Aimbot\AimbotProjectile\AimbotProjectile.cpp" />
+    <ClCompile Include="src\App\Features\ProjectileSim\ProjectileSim.cpp" />
+    <ClCompile Include="src\App\Features\MovementSimulation\MovementSimulation.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\nlohmann\json_fwd.hpp" />
@@ -175,16 +169,10 @@
     <ClInclude Include="src\App\Features\Aimbot\AimbotCommon\AimbotCommon.h" />
     <ClInclude Include="src\App\Features\Aimbot\AimbotHitscan\AimbotHitscan.h" />
     <ClInclude Include="src\App\Features\Aimbot\AimbotMelee\AimbotMelee.h" />
-    <ClInclude Include="src\App\Features\Aimbot\AimbotProjectileArc\AimbotProjectileArc.h" />
-    <ClInclude Include="src\App\Features\Aimbot\AimbotWrangler\AimbotWrangler.h" />
     <ClInclude Include="src\App\Features\Aimbot\Aimbot.h" />
     <ClInclude Include="src\App\Features\amalgam_port\AimbotGlobal\AimbotGlobal.h" />
-    <ClInclude Include="src\App\Features\amalgam_port\AimbotProjectile\AimbotProjectile.h" />
     <ClInclude Include="src\App\Features\amalgam_port\EnginePrediction\AmalgamEnginePred.h" />
-    <ClInclude Include="src\App\Features\amalgam_port\Simulation\MovementSimulation\AmalgamMoveSim.h" />
-    <ClInclude Include="src\App\Features\amalgam_port\Simulation\ProjectileSimulation\ProjectileSimulation.h" />
     <ClInclude Include="src\App\Features\amalgam_port\Ticks\Ticks.h" />
-    <ClInclude Include="src\App\Features\amalgam_port\TrajectoryPreview\TrajectoryPreview.h" />
     <ClInclude Include="src\App\Features\amalgam_port\AmalgamCompat.h" />
     <ClInclude Include="src\App\Features\AutoQueue\AutoQueue.h" />
     <ClInclude Include="src\App\Features\Chat\Chat.h" />
@@ -200,10 +188,8 @@
     <ClInclude Include="src\App\Features\Menu\LateRenderer\LateRenderer.h" />
     <ClInclude Include="src\App\Features\Menu\Menu.h" />
     <ClInclude Include="src\App\Features\Menu\MenuAnimations.h" />
-    <ClInclude Include="src\App\Features\Misc\AntiCheatCompat\AntiCheatCompat.h" />
     <ClInclude Include="src\App\Features\Misc\Misc.h" />
     <ClInclude Include="src\App\Features\MiscVisuals\MiscVisuals.h" />
-    <ClInclude Include="src\App\Features\MovementSimulation\MovementSimulation.h" />
     <ClInclude Include="src\App\Features\NetworkFix\NetworkFix.h" />
     <ClInclude Include="src\App\Features\Outlines\Outlines.h" />
     <ClInclude Include="src\App\Features\Paint\Paint.h" />
@@ -377,5 +363,8 @@
     <ClInclude Include="src\Utils\Storage\Storage.h" />
     <ClInclude Include="src\Utils\Vector\Vector.h" />
     <ClInclude Include="src\Utils\Utils.h" />
+    <ClInclude Include="src\App\Features\Aimbot\AimbotProjectile\AimbotProjectile.h" />
+    <ClInclude Include="src\App\Features\ProjectileSim\ProjectileSim.h" />
+    <ClInclude Include="src\App\Features\MovementSimulation\MovementSimulation.h" />
   </ItemGroup>
 </Project>
