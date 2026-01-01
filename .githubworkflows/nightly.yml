@@ -1,0 +1,38 @@
+name: Nightly Build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    strategy:
+      matrix:
+        configuration: [Release, ReleaseAVX2]
+        platform: [x64]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build
+        run: msbuild necromancer.sln /p:Configuration=${{ matrix.configuration }} /p:Platform=${{ matrix.platform }} /m
+
+      - name: Rename AVX2 DLL
+        if: matrix.configuration == 'ReleaseAVX2'
+        run: Rename-Item -Path "bin/${{ matrix.configuration }}/necromancer.dll" -NewName "necromancer_AVX2.dll"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: necromancer-${{ matrix.configuration }}-${{ matrix.platform }}
+          path: bin/${{ matrix.configuration }}/necromancer${{ matrix.configuration == 'ReleaseAVX2' && '_AVX2' || '' }}.dll
+          if-no-files-found: error
