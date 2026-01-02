@@ -1,4 +1,4 @@
-﻿#include "AimbotProjectile.h"
+#include "AimbotProjectile.h"
 
 #include "../../CFG.h"
 #include "../../MovementSimulation/MovementSimulation.h"
@@ -792,7 +792,7 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 
 						if (isSticky)
 						{
-							radius = 146.0f;
+							radius = 130.0f; // 146/142 is unstable
 						}
 
 						std::vector<Vec3> potential{};
@@ -834,13 +834,13 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 							CTraceFilterWorldCustom grateFilter{};
 							H::AimUtils->Trace(trace.endpos, point, CONTENTS_GRATE, &grateFilter, &grateTrace);
 
-							Vec3 hull_min = { -4.0f, -4.0f, -4.0f };
-							Vec3 hull_max = { 4.0f,  4.0f,  4.0f };
+							Vec3 hull_min = { -2.0f, -2.0f, -2.0f };
+							Vec3 hull_max = { 2.0f,  2.0f,  2.0f };
 
 							if (pWeapon && isSticky)
 							{
-								hull_min = { -6.0f, -6.0f, -6.0f };
-								hull_max = { 6.0f,  6.0f,  6.0f };
+								hull_min = { -8.0f, -8.0f, -8.0f };
+								hull_max = { 8.0f,  8.0f,  8.0f };
 							}
 
 							H::AimUtils->TraceHull
@@ -1015,13 +1015,13 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 					CTraceFilterWorldCustom grateFilter{};
 					H::AimUtils->Trace(trace.endpos, point, CONTENTS_GRATE, &grateFilter, &grateTrace);
 
-					Vec3 hull_min = { -4.0f, -4.0f, -4.0f };
-					Vec3 hull_max = { 4.0f,  4.0f,  4.0f };
+					Vec3 hull_min = { -1.0f, -1.0f, -1.0f };
+					Vec3 hull_max = { 1.0f,  1.0f,  1.0f };
 
 					if (pWeapon && isSticky)
 					{
-						hull_min = { -6.0f, -6.0f, -6.0f };
-						hull_max = { 6.0f,  6.0f,  6.0f };
+						hull_min = { -8.0f, -8.0f, -8.0f };
+						hull_max = { 8.0f,  8.0f,  8.0f };
 					}
 
 					H::AimUtils->TraceHull
