@@ -251,7 +251,7 @@ void CESP::Run()
 
     const auto Font_Cond = H::Fonts->Get(EFonts::ESP_CONDS);
     const auto Font_Cond_Tall = Font_Cond.m_nTall;
-    cosnt auto Font_Small = H::Fonts->Get(EFonts::ESP_SMALL);
+    const auto Font_Small = H::Fonts->Get(EFonts::ESP_SMALL);
     const auto Font_Small_Tall = Font_Small.m_nTall;
 
 	float flOriginalAlpha = I::MatSystemSurface->DrawGetAlphaMultiplier();
