@@ -326,6 +326,10 @@ namespace G
 	inline CUserCmd* CurrentUserCmd = nullptr;
 	inline CUserCmd* LastUserCmd = nullptr;  // Amalgam: previous tick's user cmd
 	inline CUserCmd OriginalCmd = {};  // Amalgam: unmodified user cmd for this tick
+	
+	// Smooth aimbot view angles - used to restore view when AA is active
+	inline Vec3 vSmoothAimAngles = {};
+	inline bool bUseSmoothAimAngles = false;
 
 	struct VelFixRecord_t
 	{

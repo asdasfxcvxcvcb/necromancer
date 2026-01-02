@@ -94,8 +94,8 @@ MAKE_HOOK(CGameEventManager_FireEventIntern, Signatures::CGameEventManager_FireE
 									uint64_t victimSteamID = static_cast<uint64_t>(victimInfo.friendsID) + 0x0110000100000000ULL;
 									F::Players->RecordKill(victimSteamID);
 									
-									// Killsay
-									OnKill(victimInfo.name);
+									// Killsay - pass victim entity index for tagged check
+									OnKill(victimInfo.name, j);
 									break;
 								}
 							}

@@ -7,12 +7,13 @@
 #include "../Players/Players.h"
 #include "../Materials/Materials.h"
 #include "../Outlines/Outlines.h"
+#include "../Chat/Chat.h"
 #include "../../CheaterDatabase/CheaterDatabase.h"
 
 #define multiselect(label, unique, ...) static std::vector<std::pair<const char *, bool &>> unique##multiselect = __VA_ARGS__; \
 SelectMulti(label, unique##multiselect)
 
-void CMenu::Drag(int& x, int& y, int w, int h, int offset_y)
+void CMenu::Drag(int &x, int &y, int w, int h, int offset_y)
 {
 	static POINT delta = {};
 	static bool drag = false;
@@ -52,7 +53,7 @@ void CMenu::Drag(int& x, int& y, int w, int h, int offset_y)
 	}
 }
 
-bool CMenu::IsHovered(int x, int y, int w, int h, void* pVar, bool bStrict)
+bool CMenu::IsHovered(int x, int y, int w, int h, void *pVar, bool bStrict)
 {
 	//this is pretty ok to use but like.. it can have annoying visual bugs with clicks..
 	/*if (H::Input->IsHeld(VK_LBUTTON))
@@ -60,7 +61,7 @@ bool CMenu::IsHovered(int x, int y, int w, int h, void* pVar, bool bStrict)
 
 	if (pVar == nullptr)
 	{
-		for (const auto& State : m_mapStates)
+		for (const auto &State : m_mapStates)
 		{
 			if (State.second)
 				return false;
@@ -69,7 +70,7 @@ bool CMenu::IsHovered(int x, int y, int w, int h, void* pVar, bool bStrict)
 
 	else
 	{
-		for (const auto& State : m_mapStates)
+		for (const auto &State : m_mapStates)
 		{
 			if (State.second && State.first != pVar)
 				return false;
@@ -113,7 +114,7 @@ bool CMenu::IsHoveredSimple(int x, int y, int w, int h)
 	return bLeft && bRight && bTop && bBottom;
 }
 
-void CMenu::GroupBoxStart(const char* szLabel, int nWidth)
+void CMenu::GroupBoxStart(const char *szLabel, int nWidth)
 {
 	m_nCursorY += CFG::Menu_Spacing_Y * 2; //hmm
 
@@ -128,7 +129,7 @@ void CMenu::GroupBoxStart(const char* szLabel, int nWidth)
 		int w_out = 0, h_out = 0;
 		I::MatSystemSurface->GetTextSize(H::Fonts->Get(EFonts::Menu).m_dwFont, Utils::ConvertUtf8ToWide(szLabel).c_str(), w_out, h_out);
 		return w_out;
-		}();
+	}();
 
 	int nWidthRemaining = w - (nTextW + (CFG::Menu_Spacing_X * 4));
 	int nSideWidth = nWidthRemaining / 2;
@@ -159,7 +160,7 @@ void CMenu::GroupBoxEnd()
 	m_nCursorY += CFG::Menu_Spacing_Y;
 }
 
-bool CMenu::CheckBox(const char* szLabel, bool& bVar)
+bool CMenu::CheckBox(const char *szLabel, bool &bVar)
 {
 	bool bCallback = false;
 
@@ -172,25 +173,25 @@ bool CMenu::CheckBox(const char* szLabel, bool& bVar)
 		int w_out = 0, h_out = 0;
 		I::MatSystemSurface->GetTextSize(H::Fonts->Get(EFonts::Menu).m_dwFont, Utils::ConvertUtf8ToWide(szLabel).c_str(), w_out, h_out);
 		return w + w_out + 1;
-		}();
+	}();
 
 	bool bHovered = IsHovered(x, y, w_with_text, h, &bVar);
-
+	
 	// Animation state tracking
 	std::string checkboxId = std::string("chk_") + szLabel + "_" + std::to_string(x) + "_" + std::to_string(y);
-
+	
 	// Hover animation
 	if (m_buttonHoverStates.find(checkboxId) == m_buttonHoverStates.end())
 		m_buttonHoverStates[checkboxId] = 0.0f;
-
+	
 	float& hoverState = m_buttonHoverStates[checkboxId];
 	float targetHover = bHovered ? 1.0f : 0.0f;
 	hoverState += (targetHover - hoverState) * 8.0f * I::GlobalVars->frametime;
-
+	
 	// Toggle animation
 	if (m_buttonPressStates.find(checkboxId) == m_buttonPressStates.end())
 		m_buttonPressStates[checkboxId] = bVar ? 1.0f : 0.0f;
-
+	
 	float& toggleState = m_buttonPressStates[checkboxId];
 	float targetToggle = bVar ? 1.0f : 0.0f;
 	toggleState += (targetToggle - toggleState) * 10.0f * I::GlobalVars->frametime;
@@ -202,21 +203,21 @@ bool CMenu::CheckBox(const char* szLabel, bool& bVar)
 	}
 
 	Color_t clr = CFG::Menu_Accent_Primary;
-
+	
 	// Animated fill
 	if (toggleState > 0.01f) {
 		byte fillAlpha = static_cast<byte>(25 + toggleState * 55);
 		Color_t fillColor = { clr.r, clr.g, clr.b, fillAlpha };
 		Color_t fillColorBright = { clr.r, clr.g, clr.b, static_cast<byte>(fillAlpha * 0.5f) };
 		H::Draw->GradientRect(x, y, w, h, fillColorBright, fillColor, false);
-
+		
 		// Animated checkmark
 		int checkSize = static_cast<int>(w * 0.6f * toggleState);
 		int checkX = x + (w - checkSize) / 2;
 		int checkY = y + (h - checkSize) / 2;
 		H::Draw->Rect(checkX, checkY, checkSize, checkSize, clr);
 	}
-
+	
 	// Hover glow
 	if (hoverState > 0.01f)
 	{
@@ -226,7 +227,7 @@ bool CMenu::CheckBox(const char* szLabel, bool& bVar)
 	}
 
 	H::Draw->OutlinedRect(x, y, w, h, clr);
-
+	
 	// Text color transition
 	Color_t textColor = CFG::Menu_Text_Inactive;
 	if (hoverState > 0.01f)
@@ -251,7 +252,7 @@ bool CMenu::CheckBox(const char* szLabel, bool& bVar)
 	return bCallback;
 }
 
-bool CMenu::SliderFloat(const char* szLabel, float& flVar, float flMin, float flMax, float flStep, const char* szFormat)
+bool CMenu::SliderFloat(const char *szLabel, float &flVar, float flMin, float flMax, float flStep, const char *szFormat)
 {
 	bool bCallback = false;
 
@@ -265,15 +266,15 @@ bool CMenu::SliderFloat(const char* szLabel, float& flVar, float flMin, float fl
 	bool bHovered = IsHovered(x, y + (nTextH + CFG::Menu_Spacing_Y), w, h, &flVar, true);
 
 	bool bAcceptsInput = [&]() -> bool
+	{
+		for (const auto &State : m_mapStates)
 		{
-			for (const auto& State : m_mapStates)
-			{
-				if (State.second && State.first != &flVar)
-					return false;
-			}
+			if (State.second && State.first != &flVar)
+				return false;
+		}
 
-			return true;
-		}();
+		return true;
+	}();
 
 	if (!m_bClickConsumed && bAcceptsInput)
 	{
@@ -287,7 +288,7 @@ bool CMenu::SliderFloat(const char* szLabel, float& flVar, float flMin, float fl
 					flVar -= flStep;
 
 				else flVar += flStep;
-
+				
 				MarkConfigChanged(); // Trigger autosave on right-click adjust
 			}
 		}
@@ -366,7 +367,7 @@ bool CMenu::SliderFloat(const char* szLabel, float& flVar, float flMin, float fl
 	return bCallback;
 }
 
-bool CMenu::SliderInt(const char* szLabel, int& nVar, int nMin, int nMax, int nStep)
+bool CMenu::SliderInt(const char *szLabel, int &nVar, int nMin, int nMax, int nStep)
 {
 	bool bCallback = false;
 
@@ -380,15 +381,15 @@ bool CMenu::SliderInt(const char* szLabel, int& nVar, int nMin, int nMax, int nS
 	bool bHovered = IsHovered(x, y + (nTextH + CFG::Menu_Spacing_Y), w, h, &nVar, true);
 
 	bool bAcceptsInput = [&]() -> bool
+	{
+		for (const auto &State : m_mapStates)
 		{
-			for (const auto& State : m_mapStates)
-			{
-				if (State.second && State.first != &nVar)
-					return false;
-			}
+			if (State.second && State.first != &nVar)
+				return false;
+		}
 
-			return true;
-		}();
+		return true;
+	}();
 
 	if (!m_bClickConsumed && bAcceptsInput)
 	{
@@ -402,7 +403,7 @@ bool CMenu::SliderInt(const char* szLabel, int& nVar, int nMin, int nMax, int nS
 					nVar -= nStep;
 
 				else nVar += nStep;
-
+				
 				MarkConfigChanged(); // Trigger autosave on right-click adjust
 			}
 		}
@@ -478,12 +479,12 @@ bool CMenu::SliderInt(const char* szLabel, int& nVar, int nMin, int nMax, int nS
 	return bCallback;
 }
 
-bool CMenu::InputKey(const char* szLabel, int& nKeyOut)
+bool CMenu::InputKey(const char *szLabel, int &nKeyOut)
 {
 	auto VK2STR = [&](const short key) -> std::string
+	{
+		switch (key)
 		{
-			switch (key)
-			{
 			case VK_LBUTTON: return "LButton";
 			case VK_RBUTTON: return "RButton";
 			case VK_MBUTTON: return "MButton";
@@ -503,15 +504,15 @@ bool CMenu::InputKey(const char* szLabel, int& nKeyOut)
 			case VK_CAPITAL: return "Caps Lock";
 			case 0x0: return "None";
 			default: break;
-			}
+		}
 
-			CHAR output[16] = { "\0" };
+		CHAR output[16] = { "\0" };
 
-			if (const int result = GetKeyNameTextA(MapVirtualKeyW(key, MAPVK_VK_TO_VSC) << 16, output, 16))
-				return output;
+		if (const int result = GetKeyNameTextA(MapVirtualKeyW(key, MAPVK_VK_TO_VSC) << 16, output, 16))
+			return output;
 
-			return "VK2STR_FAILED";
-		};
+		return "VK2STR_FAILED";
+	};
 
 	bool bCallback = false;
 
@@ -524,7 +525,7 @@ bool CMenu::InputKey(const char* szLabel, int& nKeyOut)
 		int w_out = 0, h_out = 0;
 		I::MatSystemSurface->GetTextSize(H::Fonts->Get(EFonts::Menu).m_dwFont, Utils::ConvertUtf8ToWide(szLabel).c_str(), w_out, h_out);
 		return w + w_out + 1;
-		}();
+	}();
 
 	bool bHovered = IsHovered(x, y, w_with_text, h, &nKeyOut);
 	bool bActive = m_mapStates[&nKeyOut] || bHovered;
@@ -623,7 +624,7 @@ bool CMenu::InputKey(const char* szLabel, int& nKeyOut)
 	return bCallback;
 }
 
-bool CMenu::Button(const char* szLabel, bool bActive, int nCustomWidth)
+bool CMenu::Button(const char *szLabel, bool bActive, int nCustomWidth)
 {
 	bool bCallback = false;
 
@@ -644,66 +645,66 @@ bool CMenu::Button(const char* szLabel, bool bActive, int nCustomWidth)
 	h += CFG::Menu_Spacing_Y - 1;
 
 	bool bHovered = IsHovered(x, y, w, h, nullptr);
-
+	
 	// Animation state tracking
 	std::string buttonId = std::string("btn_") + szLabel + "_" + std::to_string(x) + "_" + std::to_string(y);
-
+	
 	// Hover animation
 	if (m_buttonHoverStates.find(buttonId) == m_buttonHoverStates.end())
 		m_buttonHoverStates[buttonId] = 0.0f;
-
+	
 	float targetHover = (bHovered || bActive) ? 1.0f : 0.0f;
 	float& currentHover = m_buttonHoverStates[buttonId];
-
+	
 	// Smooth interpolation
 	float hoverSpeed = 8.0f;
 	currentHover += (targetHover - currentHover) * hoverSpeed * I::GlobalVars->frametime;
 	currentHover = std::max(0.0f, std::min(1.0f, currentHover));
-
+	
 	// Press animation
 	if (m_buttonPressStates.find(buttonId) == m_buttonPressStates.end())
 		m_buttonPressStates[buttonId] = 0.0f;
-
+	
 	float& pressState = m_buttonPressStates[buttonId];
-
+	
 	if (bHovered && H::Input->IsPressed(VK_LBUTTON) && !m_bClickConsumed)
 	{
 		bCallback = m_bClickConsumed = true;
 		pressState = 1.0f;
 	}
-
+	
 	// Decay press state
 	pressState *= 0.85f;
 	if (pressState < 0.01f) pressState = 0.0f;
-
+	
 	// Calculate animated values
 	float hoverAlpha = 50.0f + currentHover * 30.0f;
 	float pressScale = 1.0f - pressState * 0.05f;
 	float glowAlpha = currentHover * 40.0f;
-
+	
 	// Apply press scale
 	int scaledW = static_cast<int>(w * pressScale);
 	int scaledH = static_cast<int>(h * pressScale);
 	int offsetX = (w - scaledW) / 2;
 	int offsetY = (h - scaledH) / 2;
-
+	
 	Color_t clr = CFG::Menu_Accent_Primary;
-
+	
 	// Glow effect (outer)
 	if (glowAlpha > 1.0f)
 	{
 		Color_t glowColor = { clr.r, clr.g, clr.b, static_cast<byte>(glowAlpha) };
 		H::Draw->Rect(x + offsetX - 1, y + offsetY - 1, scaledW + 2, scaledH + 2, glowColor);
 	}
-
+	
 	// Gradient background
 	Color_t clr_dim = { clr.r, clr.g, clr.b, static_cast<byte>(hoverAlpha) };
 	Color_t clr_bright = { clr.r, clr.g, clr.b, static_cast<byte>(hoverAlpha * 0.5f) };
 	H::Draw->GradientRect(x + offsetX, y + offsetY, scaledW, scaledH, clr_bright, clr_dim, false);
-
+	
 	// Border
 	H::Draw->OutlinedRect(x + offsetX, y + offsetY, scaledW, scaledH, clr);
-
+	
 	// Text with hover color transition
 	Color_t textColor = CFG::Menu_Text_Inactive;
 	if (currentHover > 0.01f)
@@ -713,7 +714,7 @@ bool CMenu::Button(const char* szLabel, bool bActive, int nCustomWidth)
 		textColor.g = static_cast<byte>(textColor.g + (activeColor.g - textColor.g) * currentHover);
 		textColor.b = static_cast<byte>(textColor.b + (activeColor.b - textColor.b) * currentHover);
 	}
-
+	
 	H::Draw->String(
 		H::Fonts->Get(EFonts::Menu),
 		x + (w / 2), y + (h / 2) - 1,
@@ -727,7 +728,7 @@ bool CMenu::Button(const char* szLabel, bool bActive, int nCustomWidth)
 	return bCallback;
 }
 
-bool CMenu::playerListButton(const wchar_t* label, int nCustomWidth, Color_t clr, bool center_txt)
+bool CMenu::playerListButton(const wchar_t *label, int nCustomWidth, Color_t clr, bool center_txt)
 {
 	bool bCallback = false;
 
@@ -782,7 +783,7 @@ bool CMenu::playerListButton(const wchar_t* label, int nCustomWidth, Color_t clr
 	return bCallback;
 }
 
-bool CMenu::InputText(const char* szLabel, const char* szLabel2, std::string& strOutput)
+bool CMenu::InputText(const char *szLabel, const char *szLabel2, std::string &strOutput)
 {
 	bool bCallback = false;
 
@@ -817,15 +818,15 @@ bool CMenu::InputText(const char* szLabel, const char* szLabel2, std::string& st
 	}
 
 	bool bCanOpen = [&]() -> bool
+	{
+		for (const auto &State : m_mapStates)
 		{
-			for (const auto& State : m_mapStates)
-			{
-				if (State.second && State.first != &strOutput)
-					return false;
-			}
+			if (State.second && State.first != &strOutput)
+				return false;
+		}
 
-			return true;
-		}();
+		return true;
+	}();
 
 	// Use a map to store temp strings per input field
 	static std::map<void*, std::string> mapTempStrings;
@@ -866,7 +867,7 @@ bool CMenu::InputText(const char* szLabel, const char* szLabel2, std::string& st
 		{
 			bool bShift = H::Input->IsHeld(VK_SHIFT);
 			bool bCaps = (GetKeyState(VK_CAPITAL) & 1) != 0;
-
+			
 			// Letters A-Z
 			for (int n = 'A'; n <= 'Z'; n++)
 			{
@@ -876,7 +877,7 @@ bool CMenu::InputText(const char* szLabel, const char* szLabel2, std::string& st
 					strTemp += ch;
 				}
 			}
-
+			
 			// Numbers 0-9 and their shift variants
 			const char* numShift = ")!@#$%^&*(";
 			for (int n = '0'; n <= '9'; n++)
@@ -887,11 +888,11 @@ bool CMenu::InputText(const char* szLabel, const char* szLabel2, std::string& st
 					strTemp += ch;
 				}
 			}
-
+			
 			// Space
 			if (H::Input->IsPressedAndHeld(VK_SPACE))
 				strTemp += ' ';
-
+			
 			// Special characters
 			if (H::Input->IsPressedAndHeld(VK_OEM_PERIOD)) // . >
 				strTemp += bShift ? '>' : '.';
@@ -934,14 +935,14 @@ bool CMenu::InputText(const char* szLabel, const char* szLabel2, std::string& st
 		// Use a separate static map for display strings to handle truncation
 		static std::map<void*, std::string> mapDisplayStrings;
 		std::string& strDisplay = mapDisplayStrings[&strOutput];
-
+		
 		int maxDisplayWidth = w - (CFG::Menu_Spacing_X * 2);
 		strDisplay = strTemp;
-
+		
 		// If text is too wide, show only the end portion (so user sees what they're typing)
 		int textW = 0, textH = 0;
 		I::MatSystemSurface->GetTextSize(H::Fonts->Get(EFonts::Menu).m_dwFont, Utils::ConvertUtf8ToWide(strDisplay).c_str(), textW, textH);
-
+		
 		while (textW > maxDisplayWidth && strDisplay.length() > 1)
 		{
 			strDisplay = strDisplay.substr(1);
@@ -966,7 +967,7 @@ bool CMenu::InputText(const char* szLabel, const char* szLabel2, std::string& st
 	return bCallback;
 }
 
-bool CMenu::SelectSingle(const char* szLabel, int& nVar, const std::vector<std::pair<const char*, int>>& vecSelects)
+bool CMenu::SelectSingle(const char *szLabel, int &nVar, const std::vector<std::pair<const char *, int>> &vecSelects)
 {
 	bool bCallback = false;
 
@@ -985,16 +986,16 @@ bool CMenu::SelectSingle(const char* szLabel, int& nVar, const std::vector<std::
 		m_bClickConsumed = true;
 	}
 
-	auto pszCurSelected = [&]() -> const char*
+	auto pszCurSelected = [&]() -> const char *
+	{
+		for (const auto &Select : vecSelects)
 		{
-			for (const auto& Select : vecSelects)
-			{
-				if (Select.second == nVar)
-					return Select.first;
-			}
+			if (Select.second == nVar)
+				return Select.first;
+		}
 
-			return "Unknown";
-		}();
+		return "Unknown";
+	}();
 
 	Color_t clr = CFG::Menu_Accent_Primary;
 	Color_t bg{ CFG::Menu_Background };
@@ -1039,7 +1040,7 @@ bool CMenu::SelectSingle(const char* szLabel, int& nVar, const std::vector<std::
 
 		for (int n = 0; n < static_cast<int>(vecSelects.size()); n++)
 		{
-			const auto& Select = vecSelects[n];
+			const auto &Select = vecSelects[n];
 
 			if (Select.second == nVar)
 			{
@@ -1076,7 +1077,7 @@ bool CMenu::SelectSingle(const char* szLabel, int& nVar, const std::vector<std::
 	return bCallback;
 }
 
-bool CMenu::SelectMulti(const char* szLabel, std::vector<std::pair<const char*, bool&>>& vecSelects)
+bool CMenu::SelectMulti(const char *szLabel, std::vector<std::pair<const char *, bool &>> &vecSelects)
 {
 	bool bCallback = false;
 
@@ -1114,7 +1115,7 @@ bool CMenu::SelectMulti(const char* szLabel, std::vector<std::pair<const char*, 
 
 	std::string strSelected = {};
 
-	for (const auto& Select : vecSelects)
+	for (const auto &Select : vecSelects)
 	{
 		if (Select.second)
 		{
@@ -1154,7 +1155,7 @@ bool CMenu::SelectMulti(const char* szLabel, std::vector<std::pair<const char*, 
 
 		for (int n = 0; n < static_cast<int>(vecSelects.size()); n++)
 		{
-			const auto& Select = vecSelects[n];
+			const auto &Select = vecSelects[n];
 
 			int nSelectY = (y + (nTextH + CFG::Menu_Spacing_Y) + h) + (h * n);
 			bool bSelectHovered = IsHovered(x, nSelectY, w, h, &vecSelects);
@@ -1165,7 +1166,7 @@ bool CMenu::SelectMulti(const char* szLabel, std::vector<std::pair<const char*, 
 				int w = 0, h = 0;
 				I::MatSystemSurface->GetTextSize(H::Fonts->Get(EFonts::Menu).m_dwFont, Utils::ConvertUtf8ToWide("Yess").c_str(), w, h);
 				return w;
-				}();
+			}();
 
 			H::LateRender->String(
 				H::Fonts->Get(EFonts::Menu),
@@ -1525,50 +1526,42 @@ void CMenu::MainWindow()
 		CFG::Menu_Width,
 		CFG::Menu_Height
 	);
-
+	
 	// Apply menu open animation (scale and fade)
 	float scale = 0.9f + m_flMenuOpenProgress * 0.1f;
 	byte alpha = static_cast<byte>(m_flMenuOpenProgress * 255);
-
+	
 	// Calculate scaled dimensions
 	int scaledW = static_cast<int>(CFG::Menu_Width * scale);
 	int scaledH = static_cast<int>(CFG::Menu_Height * scale);
 	int offsetX = (CFG::Menu_Width - scaledW) / 2;
 	int offsetY = (CFG::Menu_Height - scaledH) / 2;
-
-	// Background with fade
+	
+	int menuX = CFG::Menu_Pos_X + offsetX;
+	int menuY = CFG::Menu_Pos_Y + offsetY;
+	
+	// ========== 30% BLUR EFFECT ==========
+	// Simple blur simulation - offset rectangles at low opacity
+	Color_t blurColor = { 0, 0, 0, static_cast<byte>(25 * (alpha / 255.0f)) }; // 30% strength
+	for (int i = 3; i >= 1; i--)
+	{
+		H::Draw->Rect(menuX - i, menuY - i, scaledW + i * 2, scaledH + i * 2, blurColor);
+	}
+	
+	// Main background
 	Color_t bgColor = CFG::Menu_Background;
 	bgColor.a = static_cast<byte>((bgColor.a / 255.0f) * alpha);
-	H::Draw->Rect(
-		CFG::Menu_Pos_X + offsetX,
-		CFG::Menu_Pos_Y + offsetY,
-		scaledW,
-		scaledH,
-		bgColor
-	);
-
+	H::Draw->Rect(menuX, menuY, scaledW, scaledH, bgColor);
+	
 	// Border with accent primary color
 	Color_t borderColor = CFG::Menu_Accent_Primary;
 	borderColor.a = alpha;
-
-	H::Draw->OutlinedRect(
-		CFG::Menu_Pos_X + offsetX,
-		CFG::Menu_Pos_Y + offsetY,
-		scaledW,
-		scaledH,
-		borderColor
-	);
-
+	H::Draw->OutlinedRect(menuX, menuY, scaledW, scaledH, borderColor);
+	
 	// Drag bar line
 	int dragBarY = static_cast<int>((CFG::Menu_Drag_Bar_Height - 1) * scale);
-	H::Draw->Line(
-		CFG::Menu_Pos_X + offsetX,
-		CFG::Menu_Pos_Y + offsetY + dragBarY,
-		CFG::Menu_Pos_X + offsetX + scaledW - 1,
-		CFG::Menu_Pos_Y + offsetY + dragBarY,
-		borderColor
-	);
-
+	H::Draw->Line(menuX, menuY + dragBarY, menuX + scaledW - 1, menuY + dragBarY, borderColor);
+	
 	// Only render content if menu is mostly open
 	if (m_flMenuOpenProgress < 0.3f)
 		return;
@@ -1579,647 +1572,645 @@ void CMenu::MainWindow()
 	enum class EMainTabs { AIM, VISUALS, EXPLOITS, MISC, PLAYERS, CONFIGS, PLAYER_DETAILS };
 	static EMainTabs MainTab = EMainTabs::AIM;
 	static int nSelectedPlayerIndex = -1; // For player details view
-
+	
 	// Enhanced tab box with detailed pixel art icons
 	auto DrawTabBox = [&](const char* label, int type, bool active) -> bool {
 		static float animTime = 0.0f;
 		animTime += I::GlobalVars->frametime * 0.8f; // Slower animation speed
-
+		
 		int x = m_nCursorX;
 		int y = m_nCursorY;
 		int boxW = CFG::Menu_Tab_Button_Width;
 		int boxH = 50; // Taller box for icon + text
-
+		
 		bool bHovered = IsHovered(x, y, boxW, boxH, nullptr);
 		bool bCallback = false;
-
+		
 		if (bHovered && H::Input->IsPressed(VK_LBUTTON) && !m_bClickConsumed)
 			bCallback = m_bClickConsumed = true;
-
+		
 		// Animation states
 		std::string tabId = std::string("tab_") + label;
 		if (m_buttonHoverStates.find(tabId) == m_buttonHoverStates.end())
 			m_buttonHoverStates[tabId] = 0.0f;
-
+		
 		float& hoverState = m_buttonHoverStates[tabId];
 		float targetHover = (bHovered || active) ? 1.0f : 0.0f;
 		hoverState += (targetHover - hoverState) * 8.0f * I::GlobalVars->frametime;
-
+		
 		// Colors
 		Color_t accentColor = CFG::Menu_Accent_Primary;
 		Color_t bgColor = { accentColor.r, accentColor.g, accentColor.b, static_cast<byte>(20 + hoverState * 40) };
 		Color_t glowColor = { accentColor.r, accentColor.g, accentColor.b, static_cast<byte>(hoverState * 50) };
 		Color_t iconColor = active ? accentColor : CFG::Menu_Text_Inactive;
-
+		
 		// Glow effect
 		if (hoverState > 0.01f) {
 			H::Draw->Rect(x - 1, y - 1, boxW + 2, boxH + 2, glowColor);
 		}
-
+		
 		// Box background
 		H::Draw->GradientRect(x, y, boxW, boxH, bgColor, { bgColor.r, bgColor.g, bgColor.b, static_cast<byte>(bgColor.a * 0.5f) }, false);
 		H::Draw->OutlinedRect(x, y, boxW, boxH, accentColor);
-
+		
 		// Icon area (top part of box) - larger canvas for more detailed pixel art
 		int iconSize = 36;
 		int iconX = x + (boxW - iconSize) / 2;
 		int iconY = y + 4;
 		int centerX = iconX + iconSize / 2;
 		int centerY = iconY + iconSize / 2;
-
+		
 		int frame = static_cast<int>(animTime) % 2;
 		float pulse = active ? (1.0f + std::sin(animTime * 1.5f) * 0.12f) : 1.0f; // Slower, gentler pulse
-
+		
 		// Draw detailed pixel art icons
-		switch (type) {
-		case 0: // Aim - Colored Sniper Scope
-		{
-			// Define colors
-			Color_t scopeGray = { 120, 120, 130, 255 };
-			Color_t scopeDark = { 60, 60, 70, 255 };
-			Color_t targetRed = { 220, 50, 50, 255 };
-			Color_t centerDot = { 255, 80, 80, 255 };
-			Color_t glintWhite = { 255, 255, 255, 255 };
+		switch(type) {
+			case 0: // Aim - Colored Sniper Scope
+			{
+				// Define colors
+				Color_t scopeGray = { 120, 120, 130, 255 };
+				Color_t scopeDark = { 60, 60, 70, 255 };
+				Color_t targetRed = { 220, 50, 50, 255 };
+				Color_t centerDot = { 255, 80, 80, 255 };
+				Color_t glintWhite = { 255, 255, 255, 255 };
+				
+				if (!active) {
+					scopeGray.a = 200;
+					targetRed.a = 200;
+					centerDot.a = 200;
+				}
+				
+				// Outer scope circles (gray/dark gray)
+				H::Draw->OutlinedCircle(centerX, centerY, static_cast<int>(11 * pulse), 20, scopeDark);
+				H::Draw->OutlinedCircle(centerX, centerY, static_cast<int>(9 * pulse), 20, scopeGray);
+				H::Draw->OutlinedCircle(centerX, centerY, static_cast<int>(7 * pulse), 16, scopeGray);
+				
+				// Crosshair lines (red targeting lines)
+				H::Draw->Rect(centerX - 12, centerY - 1, 3, 2, targetRed);
+				H::Draw->Rect(centerX + 10, centerY - 1, 3, 2, targetRed);
+				H::Draw->Rect(centerX - 1, centerY - 12, 2, 3, targetRed);
+				H::Draw->Rect(centerX - 1, centerY + 10, 2, 3, targetRed);
+				
+				// Center dot (bright red, blinks) - perfectly centered
+				if (frame == 0 || active) {
+					H::Draw->Rect(centerX - 1, centerY - 1, 2, 2, centerDot);
+				}
+				
+				// Mil-dots (range markers - gray)
+				for (int i = 1; i <= 3; i++) {
+					H::Draw->Rect(centerX - 1, centerY - 3 * i - 4, 2, 2, scopeGray);
+					H::Draw->Rect(centerX - 1, centerY + 3 * i + 2, 2, 2, scopeGray);
+					H::Draw->Rect(centerX - 3 * i - 4, centerY - 1, 2, 2, scopeGray);
+					H::Draw->Rect(centerX + 3 * i + 2, centerY - 1, 2, 2, scopeGray);
+				}
+				
 
-			if (!active) {
-				scopeGray.a = 200;
-				targetRed.a = 200;
-				centerDot.a = 200;
+				break;
 			}
-
-			// Outer scope circles (gray/dark gray)
-			H::Draw->OutlinedCircle(centerX, centerY, static_cast<int>(11 * pulse), 20, scopeDark);
-			H::Draw->OutlinedCircle(centerX, centerY, static_cast<int>(9 * pulse), 20, scopeGray);
-			H::Draw->OutlinedCircle(centerX, centerY, static_cast<int>(7 * pulse), 16, scopeGray);
-
-			// Crosshair lines (red targeting lines)
-			H::Draw->Rect(centerX - 12, centerY - 1, 3, 2, targetRed);
-			H::Draw->Rect(centerX + 10, centerY - 1, 3, 2, targetRed);
-			H::Draw->Rect(centerX - 1, centerY - 12, 2, 3, targetRed);
-			H::Draw->Rect(centerX - 1, centerY + 10, 2, 3, targetRed);
-
-			// Center dot (bright red, blinks) - perfectly centered
-			if (frame == 0 || active) {
-				H::Draw->Rect(centerX - 1, centerY - 1, 2, 2, centerDot);
-			}
-
-			// Mil-dots (range markers - gray)
-			for (int i = 1; i <= 3; i++) {
-				H::Draw->Rect(centerX - 1, centerY - 3 * i - 4, 2, 2, scopeGray);
-				H::Draw->Rect(centerX - 1, centerY + 3 * i + 2, 2, 2, scopeGray);
-				H::Draw->Rect(centerX - 3 * i - 4, centerY - 1, 2, 2, scopeGray);
-				H::Draw->Rect(centerX + 3 * i + 2, centerY - 1, 2, 2, scopeGray);
-			}
-
-
-			break;
-		}
-		case 1: // Visuals - Color-Changing Blinking Eye (Almond Shape)
-		{
-			// Define base colors
-			Color_t eyeWhite = { 240, 240, 250, 255 };
-			Color_t eyeOutline = { 80, 80, 100, 255 };
-			Color_t pupilBlack = { 20, 20, 30, 255 };
-			Color_t lashBrown = { 60, 50, 40, 255 };
-
-			// 6 different iris colors that cycle with each blink
-			Color_t irisColors[6] = {
-				{ 100, 150, 220, 255 }, // Blue
-				{ 100, 200, 120, 255 }, // Green
-				{ 180, 100, 200, 255 }, // Purple
-				{ 220, 150, 100, 255 }, // Amber/Orange
-				{ 200, 100, 120, 255 }, // Red/Pink
-				{ 100, 180, 180, 255 }  // Cyan/Teal
-			};
-
-			// Long animation cycle: 6 blinks × 4.3s = 25.8 seconds total
-			float fullCycle = active ? std::fmod(animTime * 0.25f, 25.8f) : 0.0f;
-
-			// Determine which blink we're on (0-5)
-			int blinkNumber = static_cast<int>(fullCycle / 4.3f);
-			float blinkCycle = std::fmod(fullCycle, 4.3f);
-
-			int eyeCenterX = centerX;
-			int eyeCenterY = iconY + 16;
-
-			// Calculate eye openness (0 = closed, 1 = fully open)
-			float eyeOpenness = 1.0f;
-			float colorTransition = 1.0f;
-
-			if (active) {
-				if (blinkCycle >= 2.0f && blinkCycle < 3.0f) {
-					float closeProgress = (blinkCycle - 2.0f) / 1.0f;
-					eyeOpenness = 1.0f - closeProgress;
-					colorTransition = closeProgress * 0.5f;
-				}
-				else if (blinkCycle >= 3.0f && blinkCycle < 3.1f) {
-					eyeOpenness = 0.0f;
-					colorTransition = 0.5f;
-				}
-				else if (blinkCycle >= 3.1f && blinkCycle < 4.1f) {
-					float openProgress = (blinkCycle - 3.1f) / 1.0f;
-					eyeOpenness = openProgress;
-					colorTransition = 0.5f + (openProgress * 0.5f);
-				}
-				else if (blinkCycle >= 0.0f && blinkCycle < 2.0f) {
-					eyeOpenness = 1.0f;
-					colorTransition = 0.0f;
-				}
-				else {
-					eyeOpenness = 1.0f;
-					colorTransition = 1.0f;
-				}
-			}
-
-			// Interpolate iris color
-			int currentColorIndex = blinkNumber % 6;
-			int nextColorIndex = (blinkNumber + 1) % 6;
-			Color_t currentColor = irisColors[currentColorIndex];
-			Color_t nextColor = irisColors[nextColorIndex];
-
-			Color_t irisColor;
-			irisColor.r = static_cast<byte>(currentColor.r + (nextColor.r - currentColor.r) * colorTransition);
-			irisColor.g = static_cast<byte>(currentColor.g + (nextColor.g - currentColor.g) * colorTransition);
-			irisColor.b = static_cast<byte>(currentColor.b + (nextColor.b - currentColor.b) * colorTransition);
-			irisColor.a = 255;
-
-			if (!active) {
-				eyeWhite.a = 200;
-				irisColor.a = 200;
-				eyeOutline.a = 200;
-			}
-
-			// Draw almond-shaped eye using pixel rows
-			if (eyeOpenness > 0.02f) {
-				// Almond eye shape - widths for each row from center outward
-				// Full eye is 11 rows tall (5 above center, 5 below, 1 center)
-				// Use even widths to ensure symmetric centering
-				int almondWidths[11] = { 4, 10, 16, 20, 22, 24, 22, 20, 16, 10, 4 };
-
-				int maxHeight = 11;
-				int visibleHeight = static_cast<int>(maxHeight * eyeOpenness);
-				if (visibleHeight < 1) visibleHeight = 1;
-
-				// Calculate which rows to draw based on openness (from center outward)
-				int halfVisible = visibleHeight / 2;
-				int startRow = 5 - halfVisible;
-				int endRow = 5 + halfVisible;
-				if (visibleHeight % 2 == 0 && visibleHeight > 1) startRow++;
-
-				// Draw almond eye white fill - use exact positions to avoid stray pixels
-				for (int row = startRow; row <= endRow && row < 11; row++) {
-					if (row < 0) continue;
-					int rowWidth = almondWidths[row];
-					int rowY = eyeCenterY - 5 + row;
-					// Center properly by using integer division that rounds down
-					int halfWidth = rowWidth / 2;
-					int rowX = eyeCenterX - halfWidth;
-					// Adjust width to not exceed outline bounds
-					H::Draw->Rect(rowX, rowY, rowWidth - 1, 1, eyeWhite);
-				}
-
-				// Draw almond outline (top and bottom curves)
-				// Top curve
-				if (startRow <= 0) H::Draw->Line(eyeCenterX - 2, eyeCenterY - 5, eyeCenterX + 1, eyeCenterY - 5, eyeOutline);
-				if (startRow <= 1) H::Draw->Line(eyeCenterX - 5, eyeCenterY - 4, eyeCenterX + 4, eyeCenterY - 4, eyeOutline);
-				if (startRow <= 2) {
-					H::Draw->Rect(eyeCenterX - 8, eyeCenterY - 3, 1, 1, eyeOutline);
-					H::Draw->Rect(eyeCenterX + 7, eyeCenterY - 3, 1, 1, eyeOutline);
-				}
-				if (startRow <= 3) {
-					H::Draw->Rect(eyeCenterX - 10, eyeCenterY - 2, 1, 1, eyeOutline);
-					H::Draw->Rect(eyeCenterX + 9, eyeCenterY - 2, 1, 1, eyeOutline);
-				}
-				if (startRow <= 4) {
-					H::Draw->Rect(eyeCenterX - 11, eyeCenterY - 1, 1, 1, eyeOutline);
-					H::Draw->Rect(eyeCenterX + 10, eyeCenterY - 1, 1, 1, eyeOutline);
-				}
-				// Center row corners (pointed almond tips)
-				H::Draw->Rect(eyeCenterX - 12, eyeCenterY, 1, 1, eyeOutline);
-				H::Draw->Rect(eyeCenterX + 11, eyeCenterY, 1, 1, eyeOutline);
-				// Bottom curve
-				if (endRow >= 6) {
-					H::Draw->Rect(eyeCenterX - 11, eyeCenterY + 1, 1, 1, eyeOutline);
-					H::Draw->Rect(eyeCenterX + 10, eyeCenterY + 1, 1, 1, eyeOutline);
-				}
-				if (endRow >= 7) {
-					H::Draw->Rect(eyeCenterX - 10, eyeCenterY + 2, 1, 1, eyeOutline);
-					H::Draw->Rect(eyeCenterX + 9, eyeCenterY + 2, 1, 1, eyeOutline);
-				}
-				if (endRow >= 8) {
-					H::Draw->Rect(eyeCenterX - 8, eyeCenterY + 3, 1, 1, eyeOutline);
-					H::Draw->Rect(eyeCenterX + 7, eyeCenterY + 3, 1, 1, eyeOutline);
-				}
-				if (endRow >= 9) H::Draw->Line(eyeCenterX - 5, eyeCenterY + 4, eyeCenterX + 4, eyeCenterY + 4, eyeOutline);
-				if (endRow >= 10) H::Draw->Line(eyeCenterX - 2, eyeCenterY + 5, eyeCenterX + 1, eyeCenterY + 5, eyeOutline);
-
-				// Draw iris (circular) when eye is open enough
-				if (eyeOpenness > 0.3f) {
-					int irisRadius = static_cast<int>(5.0f * eyeOpenness);
-					if (irisRadius > 0) {
-						H::Draw->FilledCircle(eyeCenterX, eyeCenterY, irisRadius, 16, irisColor);
-						H::Draw->OutlinedCircle(eyeCenterX, eyeCenterY, irisRadius, 16, eyeOutline);
+			case 1: // Visuals - Color-Changing Blinking Eye (Almond Shape)
+			{
+				// Define base colors
+				Color_t eyeWhite = { 240, 240, 250, 255 };
+				Color_t eyeOutline = { 80, 80, 100, 255 };
+				Color_t pupilBlack = { 20, 20, 30, 255 };
+				Color_t lashBrown = { 60, 50, 40, 255 };
+				
+				// 6 different iris colors that cycle with each blink
+				Color_t irisColors[6] = {
+					{ 100, 150, 220, 255 }, // Blue
+					{ 100, 200, 120, 255 }, // Green
+					{ 180, 100, 200, 255 }, // Purple
+					{ 220, 150, 100, 255 }, // Amber/Orange
+					{ 200, 100, 120, 255 }, // Red/Pink
+					{ 100, 180, 180, 255 }  // Cyan/Teal
+				};
+				
+				// Long animation cycle: 6 blinks × 4.3s = 25.8 seconds total
+				float fullCycle = active ? std::fmod(animTime * 0.25f, 25.8f) : 0.0f;
+				
+				// Determine which blink we're on (0-5)
+				int blinkNumber = static_cast<int>(fullCycle / 4.3f);
+				float blinkCycle = std::fmod(fullCycle, 4.3f);
+				
+				int eyeCenterX = centerX;
+				int eyeCenterY = iconY + 16;
+				
+				// Calculate eye openness (0 = closed, 1 = fully open)
+				float eyeOpenness = 1.0f;
+				float colorTransition = 1.0f;
+				
+				if (active) {
+					if (blinkCycle >= 2.0f && blinkCycle < 3.0f) {
+						float closeProgress = (blinkCycle - 2.0f) / 1.0f;
+						eyeOpenness = 1.0f - closeProgress;
+						colorTransition = closeProgress * 0.5f;
 					}
-
-					// Draw pupil (circular) when eye is more open
-					if (eyeOpenness > 0.5f) {
-						int pupilRadius = static_cast<int>(2.0f * eyeOpenness);
-						if (pupilRadius > 0) {
-							H::Draw->FilledCircle(eyeCenterX, eyeCenterY, pupilRadius, 12, pupilBlack);
-						}
-						// Highlight (shine)
-						H::Draw->Rect(eyeCenterX - 2, eyeCenterY - 2, 2, 2, eyeWhite);
+					else if (blinkCycle >= 3.0f && blinkCycle < 3.1f) {
+						eyeOpenness = 0.0f;
+						colorTransition = 0.5f;
 					}
-				}
-			}
-
-			// Eyelashes - only when eye is mostly open
-			if (eyeOpenness > 0.6f) {
-				// Top lashes (curved outward from almond shape)
-				H::Draw->Line(eyeCenterX - 10, eyeCenterY - 4, eyeCenterX - 13, eyeCenterY - 8, lashBrown);
-				H::Draw->Line(eyeCenterX - 5, eyeCenterY - 5, eyeCenterX - 6, eyeCenterY - 9, lashBrown);
-				H::Draw->Line(eyeCenterX, eyeCenterY - 5, eyeCenterX, eyeCenterY - 10, lashBrown);
-				H::Draw->Line(eyeCenterX + 5, eyeCenterY - 5, eyeCenterX + 6, eyeCenterY - 9, lashBrown);
-				H::Draw->Line(eyeCenterX + 10, eyeCenterY - 4, eyeCenterX + 13, eyeCenterY - 8, lashBrown);
-
-				// Bottom lashes (smaller)
-				H::Draw->Line(eyeCenterX - 6, eyeCenterY + 4, eyeCenterX - 7, eyeCenterY + 6, lashBrown);
-				H::Draw->Line(eyeCenterX, eyeCenterY + 5, eyeCenterX, eyeCenterY + 8, lashBrown);
-				H::Draw->Line(eyeCenterX + 6, eyeCenterY + 4, eyeCenterX + 7, eyeCenterY + 6, lashBrown);
-			}
-
-			break;
-		}
-		case 2: // Misc - Enhanced Gear/Wrench with Colors
-		{
-			// Define colors
-			Color_t wrenchSilver = { 180, 180, 190, 255 };
-			Color_t wrenchDark = { 100, 100, 110, 255 };
-			Color_t gearGold = { 220, 180, 80, 255 };
-			Color_t gearDark = { 160, 130, 50, 255 };
-			Color_t boltGray = { 140, 140, 150, 255 };
-
-			if (!active) {
-				wrenchSilver.a = 200;
-				gearGold.a = 200;
-			}
-
-			// Wrench (silver/gray) - shifted right and down
-			H::Draw->Rect(iconX + 20, iconY + 6, 4, 17, wrenchSilver);
-			H::Draw->OutlinedRect(iconX + 20, iconY + 6, 4, 17, wrenchDark);
-			// Wrench head (adjustable)
-			H::Draw->OutlinedRect(iconX + 18, iconY + 4, 8, 6, wrenchDark);
-			H::Draw->Rect(iconX + 20, iconY + 5, 4, 4, wrenchSilver);
-			// Adjustment lines
-			H::Draw->Line(iconX + 19, iconY + 6, iconX + 19, iconY + 8, wrenchDark);
-			H::Draw->Line(iconX + 25, iconY + 6, iconX + 25, iconY + 8, wrenchDark);
-
-			// Rotating gear (gold) - ONLY ANIMATES WHEN ACTIVE
-			float gearAngle = active ? (animTime * 15.0f) : 0.0f; // Only rotate when active
-			for (int i = 0; i < 8; i++) {
-				float angle = (i * 45.0f + gearAngle) * (3.14159f / 180.0f);
-				int x1 = iconX + 11 + static_cast<int>(std::cos(angle) * 6);
-				int y1 = iconY + 17 + static_cast<int>(std::sin(angle) * 6);
-				H::Draw->Rect(x1 - 1, y1 - 1, 3, 3, gearGold);
-			}
-			// Gear center (detailed)
-			H::Draw->OutlinedCircle(iconX + 11, iconY + 17, 4, 12, gearDark);
-			H::Draw->OutlinedCircle(iconX + 11, iconY + 17, 2, 8, gearDark);
-			H::Draw->Rect(iconX + 10, iconY + 16, 3, 3, gearGold);
-
-			// Bolts (gray)
-			H::Draw->Rect(iconX + 9, iconY + 15, 2, 2, boltGray);
-			H::Draw->Rect(iconX + 12, iconY + 15, 2, 2, boltGray);
-			H::Draw->Rect(iconX + 9, iconY + 18, 2, 2, boltGray);
-			H::Draw->Rect(iconX + 12, iconY + 18, 2, 2, boltGray);
-			break;
-		}
-		case 3: // Players - TF2 Spy Icon (Based on Reference)
-		{
-			// Color palette matching reference image
-			Color_t maskBlue = { 70, 80, 110, 255 };       // Blue-gray balaclava
-			Color_t skinPeach = { 240, 180, 140, 255 };    // Peach skin tone
-			Color_t eyeWhite = { 255, 255, 255, 255 };     // White of eyes
-			Color_t eyeDark = { 40, 50, 70, 255 };         // Dark pupils/brows
-			Color_t mouthDark = { 20, 20, 20, 255 };       // Black mouth
-			Color_t cigBrown = { 100, 70, 50, 255 };       // Brown cigarette
-			Color_t cigEmber = { 255, 140, 40, 255 };      // Orange ember
-			Color_t collarBeige = { 220, 210, 180, 255 };  // Beige collar
-			Color_t suitDark = { 50, 60, 80, 255 };        // Dark blue suit
-			Color_t tieDark = { 30, 35, 50, 255 };         // Dark tie
-
-			// Adjust opacity when inactive
-			if (!active) {
-				maskBlue.a = 200;
-				skinPeach.a = 200;
-				cigEmber.a = 200;
-			}
-
-			// ROUNDED HEAD - Balaclava mask
-			// Row 0-1: Top of head
-			H::Draw->Line(iconX + 15, iconY + 0, iconX + 21, iconY + 0, maskBlue);
-			H::Draw->Line(iconX + 13, iconY + 1, iconX + 23, iconY + 1, maskBlue);
-
-			// Row 2-3: Upper head (widest)
-			H::Draw->Line(iconX + 11, iconY + 2, iconX + 25, iconY + 2, maskBlue);
-			H::Draw->Line(iconX + 10, iconY + 3, iconX + 26, iconY + 3, maskBlue);
-
-			// Row 4-6: Forehead area
-			H::Draw->Line(iconX + 9, iconY + 4, iconX + 27, iconY + 4, maskBlue);
-			H::Draw->Line(iconX + 8, iconY + 5, iconX + 28, iconY + 5, maskBlue);
-			H::Draw->Line(iconX + 8, iconY + 6, iconX + 28, iconY + 6, maskBlue);
-
-			// Row 7: Upper eye area
-			H::Draw->Line(iconX + 8, iconY + 7, iconX + 28, iconY + 7, maskBlue);
-
-			// Row 8: Top of eye area with brows - FILL ENTIRE ROW
-			H::Draw->Line(iconX + 8, iconY + 8, iconX + 28, iconY + 8, maskBlue); // Fill entire row
-			H::Draw->Line(iconX + 11, iconY + 8, iconX + 14, iconY + 8, eyeDark); // Left brow
-			H::Draw->Line(iconX + 15, iconY + 8, iconX + 16, iconY + 8, skinPeach); // Nose bridge
-			H::Draw->Line(iconX + 17, iconY + 8, iconX + 20, iconY + 8, eyeDark); // Right brow
-
-			// Row 9: Eyes - white with dark pupils - FILL ENTIRE ROW
-			H::Draw->Line(iconX + 8, iconY + 9, iconX + 28, iconY + 9, maskBlue); // Fill entire row
-			H::Draw->Rect(iconX + 11, iconY + 9, 4, 1, eyeWhite); // Left eye white
-			H::Draw->Rect(iconX + 12, iconY + 9, 2, 1, eyeDark); // Left pupil
-			H::Draw->Rect(iconX + 15, iconY + 9, 2, 1, skinPeach); // Nose
-			H::Draw->Rect(iconX + 17, iconY + 9, 4, 1, eyeWhite); // Right eye white
-			H::Draw->Rect(iconX + 18, iconY + 9, 2, 1, eyeDark); // Right pupil
-
-			// Row 10: Below eyes - FILL ENTIRE ROW
-			H::Draw->Line(iconX + 8, iconY + 10, iconX + 28, iconY + 10, maskBlue); // Fill entire row
-			H::Draw->Line(iconX + 12, iconY + 10, iconX + 20, iconY + 10, skinPeach); // Skin on top
-
-			// Row 11: Nose cutout area - FILL ENTIRE ROW
-			H::Draw->Line(iconX + 9, iconY + 11, iconX + 27, iconY + 11, maskBlue); // Fill entire row
-			H::Draw->Rect(iconX + 14, iconY + 11, 1, 1, skinPeach); // Nose tip
-			H::Draw->Rect(iconX + 15, iconY + 11, 1, 1, maskBlue); // Nose cutout
-			H::Draw->Rect(iconX + 16, iconY + 11, 1, 1, skinPeach);
-
-			// Row 12: Lower face opening - FILL ENTIRE ROW
-			H::Draw->Line(iconX + 10, iconY + 12, iconX + 26, iconY + 12, maskBlue); // Fill entire row
-			H::Draw->Line(iconX + 14, iconY + 12, iconX + 20, iconY + 12, skinPeach); // Skin on top
-
-			// Row 13: Mouth area with cigarette - FILL ENTIRE ROW
-			H::Draw->Line(iconX + 10, iconY + 13, iconX + 25, iconY + 13, maskBlue); // Fill entire row
-			H::Draw->Line(iconX + 14, iconY + 13, iconX + 15, iconY + 13, skinPeach);
-			H::Draw->Rect(iconX + 16, iconY + 13, 4, 1, mouthDark); // Mouth
-			H::Draw->Line(iconX + 20, iconY + 13, iconX + 21, iconY + 13, cigBrown); // Cigarette
-			H::Draw->Rect(iconX + 22, iconY + 13, 1, 1, cigEmber); // Ember
-
-			// Animated smoke when active
-			if (active) {
-				Color_t smoke = { 200, 200, 210, 150 };
-				if (frame == 0) {
-					H::Draw->Rect(iconX + 23, iconY + 11, 1, 1, smoke);
-					H::Draw->Rect(iconX + 24, iconY + 10, 1, 1, smoke);
-				}
-				else {
-					H::Draw->Rect(iconX + 24, iconY + 11, 1, 1, smoke);
-					H::Draw->Rect(iconX + 25, iconY + 9, 1, 1, smoke);
-				}
-			}
-
-			// Row 14: Lower chin - FILL ENTIRE ROW
-			H::Draw->Line(iconX + 11, iconY + 14, iconX + 24, iconY + 14, maskBlue); // Fill entire row
-			H::Draw->Line(iconX + 15, iconY + 14, iconX + 19, iconY + 14, skinPeach); // Skin on top
-
-			// Row 15-16: Bottom of mask
-			H::Draw->Line(iconX + 12, iconY + 15, iconX + 22, iconY + 15, maskBlue);
-			H::Draw->Line(iconX + 14, iconY + 16, iconX + 20, iconY + 16, maskBlue);
-
-			// Row 17-18: Neck area
-			H::Draw->Line(iconX + 15, iconY + 17, iconX + 19, iconY + 17, maskBlue);
-			H::Draw->Line(iconX + 16, iconY + 18, iconX + 18, iconY + 18, maskBlue);
-
-			// Row 19-20: Lower neck/collar transition
-			H::Draw->Line(iconX + 15, iconY + 19, iconX + 19, iconY + 19, suitDark);
-			H::Draw->Line(iconX + 14, iconY + 20, iconX + 20, iconY + 20, suitDark);
-
-			// SHOULDERS & SUIT - Rows 21-32
-			// Row 21-22: Upper shoulders
-			H::Draw->Line(iconX + 8, iconY + 21, iconX + 28, iconY + 21, suitDark);
-			H::Draw->Line(iconX + 6, iconY + 22, iconX + 30, iconY + 22, suitDark);
-
-			// Row 23: Collar starts showing - FILL ENTIRE ROW FIRST
-			H::Draw->Line(iconX + 5, iconY + 23, iconX + 31, iconY + 23, suitDark); // Fill entire row
-			H::Draw->Line(iconX + 11, iconY + 23, iconX + 14, iconY + 23, collarBeige); // Left collar
-			H::Draw->Line(iconX + 15, iconY + 23, iconX + 19, iconY + 23, tieDark); // Tie
-			H::Draw->Line(iconX + 20, iconY + 23, iconX + 23, iconY + 23, collarBeige); // Right collar
-
-			// Rows 24-32: Suit body with visible collar and tie - FILL ALL GAPS
-			for (int row = 24; row <= 32; row++) {
-				// Fill entire row first with suit color to avoid gaps
-				H::Draw->Line(iconX + 5, iconY + row, iconX + 31, iconY + row, suitDark);
-
-				// Then draw collar on top (V-shape getting narrower)
-				int collarWidth = std::max(0, 5 - (row - 24) / 2);
-				if (collarWidth > 0) {
-					H::Draw->Line(iconX + 10, iconY + row, iconX + 10 + collarWidth, iconY + row, collarBeige);
-					H::Draw->Line(iconX + 24 - collarWidth, iconY + row, iconX + 24, iconY + row, collarBeige);
-				}
-
-				// Dark tie in center
-				H::Draw->Rect(iconX + 17, iconY + row, 2, 1, tieDark);
-			}
-
-			break;
-		}
-		case 4: // Configs - Yellow Folder with Animated Paper
-		{
-			// Define colors
-			Color_t folderYellow = { 240, 200, 80, 255 };
-			Color_t folderDark = { 200, 160, 60, 255 };
-			Color_t paperWhite = { 250, 250, 250, 255 };
-			Color_t textDark = { 40, 40, 40, 255 };
-
-			if (!active) {
-				folderYellow.a = 200;
-				paperWhite.a = 200;
-			}
-
-			// Paper sliding out from inside folder when active
-			if (active) {
-				// Animation: paper slides up from inside the folder
-				int slideAmount = (frame == 0 ? 4 : 8); // How much paper is visible
-
-				// Paper starts from inside folder (iconY + 9) and slides up
-				int paperY = iconY + 9 - slideAmount; // Starts inside, slides up
-				int paperX = iconX + 10; // Centered in folder (moved right by 2)
-				int paperHeight = 18; // Total paper height
-
-				// Draw the visible part of the paper (the part that's outside the folder)
-				int visibleHeight = std::min(slideAmount, paperHeight);
-
-				// Paper body
-				H::Draw->Rect(paperX, paperY, 20, visibleHeight, paperWhite);
-				H::Draw->OutlinedRect(paperX, paperY, 20, visibleHeight, textDark);
-
-				// Text lines on visible part of paper
-				if (visibleHeight > 2) H::Draw->Line(paperX + 2, paperY + 2, paperX + 17, paperY + 2, textDark);
-				if (visibleHeight > 4) H::Draw->Line(paperX + 2, paperY + 4, paperX + 16, paperY + 4, textDark);
-				if (visibleHeight > 6) H::Draw->Line(paperX + 2, paperY + 6, paperX + 18, paperY + 6, textDark);
-			}
-
-			// Folder body (ALL YELLOW) - 26px (reduced from 28) - drawn AFTER paper so it covers the bottom part
-			H::Draw->Rect(iconX + 4, iconY + 9, 26, 13, folderYellow);
-			H::Draw->OutlinedRect(iconX + 4, iconY + 9, 26, 13, folderDark);
-
-			// Folder tab (ALL YELLOW) - 14px
-			H::Draw->Rect(iconX + 4, iconY + 6, 14, 4, folderYellow);
-			H::Draw->OutlinedRect(iconX + 4, iconY + 6, 14, 4, folderDark);
-
-			break;
-		}
-		case 5: // Exploits - Matrix Falling Numbers
-		{
-			// Matrix color palette
-			Color_t matrixBright = { 0, 255, 70, 255 };    // Bright green (foreground)
-			Color_t matrixMid = { 0, 200, 50, 255 };       // Medium green
-			Color_t matrixDim = { 0, 150, 40, 200 };       // Dim green (background)
-			Color_t matrixDark = { 0, 80, 20, 150 };       // Dark green (trail)
-
-			if (!active) {
-				matrixBright.a = 180;
-				matrixMid.a = 180;
-				matrixDim.a = 150;
-				matrixDark.a = 100;
-			}
-
-			// Static state for animation persistence
-			static float matrixOffsets[6] = { 0.0f, 0.3f, 0.6f, 0.1f, 0.5f, 0.8f };
-			static int matrixDigits[6][6] = {
-				{1, 4, 7, 2, 9, 3},
-				{8, 0, 5, 6, 1, 4},
-				{3, 9, 2, 8, 0, 7},
-				{6, 1, 4, 3, 5, 2},
-				{0, 7, 8, 1, 6, 9},
-				{5, 2, 3, 4, 8, 0}
-			};
-			static float matrixSpeeds[6] = { 0.9f, 1.1f, 0.8f, 1.2f, 1.0f, 0.85f };
-
-			// Update animation when active
-			if (active) {
-				for (int col = 0; col < 6; col++) {
-					matrixOffsets[col] += matrixSpeeds[col] * I::GlobalVars->frametime * 2.0f;
-					if (matrixOffsets[col] >= 1.0f) {
-						matrixOffsets[col] = 0.0f;
-						// Shift digits down and generate new top digit
-						for (int row = 5; row > 0; row--) {
-							matrixDigits[col][row] = matrixDigits[col][row - 1];
-						}
-						matrixDigits[col][0] = rand() % 10;
+					else if (blinkCycle >= 3.1f && blinkCycle < 4.1f) {
+						float openProgress = (blinkCycle - 3.1f) / 1.0f;
+						eyeOpenness = openProgress;
+						colorTransition = 0.5f + (openProgress * 0.5f);
 					}
-				}
-			}
-
-			// Draw 6 columns of falling numbers
-			int colWidth = 5;
-			int rowHeight = 5;
-			int startX = iconX + 3;
-			int startY = iconY + 2;
-
-			for (int col = 0; col < 6; col++) {
-				int colX = startX + col * colWidth;
-				float offset = matrixOffsets[col];
-
-				for (int row = 0; row < 6; row++) {
-					int digit = matrixDigits[col][row];
-					int rowY = startY + row * rowHeight + static_cast<int>(offset * rowHeight);
-
-					// Skip if outside icon bounds
-					if (rowY < iconY || rowY > iconY + iconSize - 4)
-						continue;
-
-					// Determine brightness based on row (top = brightest when active)
-					Color_t digitColor;
-					if (active) {
-						if (row == 0) digitColor = matrixBright;
-						else if (row == 1) digitColor = matrixMid;
-						else if (row < 4) digitColor = matrixDim;
-						else digitColor = matrixDark;
+					else if (blinkCycle >= 0.0f && blinkCycle < 2.0f) {
+						eyeOpenness = 1.0f;
+						colorTransition = 0.0f;
 					}
 					else {
-						// Static display when inactive - all same brightness
-						digitColor = matrixDim;
-					}
-
-					// Draw digit as simple pixel representation
-					// Using a minimal 3x4 pixel font for digits 0-9
-					int dx = colX;
-					int dy = rowY;
-
-					switch (digit) {
-					case 0:
-						H::Draw->Rect(dx, dy, 3, 1, digitColor);
-						H::Draw->Rect(dx, dy + 3, 3, 1, digitColor);
-						H::Draw->Rect(dx, dy + 1, 1, 2, digitColor);
-						H::Draw->Rect(dx + 2, dy + 1, 1, 2, digitColor);
-						break;
-					case 1:
-						H::Draw->Rect(dx + 1, dy, 1, 4, digitColor);
-						break;
-					case 2:
-						H::Draw->Rect(dx, dy, 3, 1, digitColor);
-						H::Draw->Rect(dx + 2, dy + 1, 1, 1, digitColor);
-						H::Draw->Rect(dx, dy + 2, 3, 1, digitColor);
-						H::Draw->Rect(dx, dy + 3, 3, 1, digitColor);
-						break;
-					case 3:
-						H::Draw->Rect(dx, dy, 3, 1, digitColor);
-						H::Draw->Rect(dx + 2, dy + 1, 1, 1, digitColor);
-						H::Draw->Rect(dx, dy + 2, 3, 1, digitColor);
-						H::Draw->Rect(dx + 2, dy + 3, 1, 1, digitColor);
-						H::Draw->Rect(dx, dy + 3, 3, 1, digitColor);
-						break;
-					case 4:
-						H::Draw->Rect(dx, dy, 1, 2, digitColor);
-						H::Draw->Rect(dx + 2, dy, 1, 4, digitColor);
-						H::Draw->Rect(dx, dy + 2, 3, 1, digitColor);
-						break;
-					case 5:
-						H::Draw->Rect(dx, dy, 3, 1, digitColor);
-						H::Draw->Rect(dx, dy + 1, 1, 1, digitColor);
-						H::Draw->Rect(dx, dy + 2, 3, 1, digitColor);
-						H::Draw->Rect(dx + 2, dy + 3, 1, 1, digitColor);
-						H::Draw->Rect(dx, dy + 3, 3, 1, digitColor);
-						break;
-					case 6:
-						H::Draw->Rect(dx, dy, 3, 1, digitColor);
-						H::Draw->Rect(dx, dy + 1, 1, 2, digitColor);
-						H::Draw->Rect(dx, dy + 2, 3, 1, digitColor);
-						H::Draw->Rect(dx + 2, dy + 3, 1, 1, digitColor);
-						H::Draw->Rect(dx, dy + 3, 3, 1, digitColor);
-						break;
-					case 7:
-						H::Draw->Rect(dx, dy, 3, 1, digitColor);
-						H::Draw->Rect(dx + 2, dy + 1, 1, 3, digitColor);
-						break;
-					case 8:
-						H::Draw->Rect(dx, dy, 3, 1, digitColor);
-						H::Draw->Rect(dx, dy + 1, 1, 1, digitColor);
-						H::Draw->Rect(dx + 2, dy + 1, 1, 1, digitColor);
-						H::Draw->Rect(dx, dy + 2, 3, 1, digitColor);
-						H::Draw->Rect(dx, dy + 3, 1, 1, digitColor);
-						H::Draw->Rect(dx + 2, dy + 3, 1, 1, digitColor);
-						H::Draw->Rect(dx, dy + 3, 3, 1, digitColor);
-						break;
-					case 9:
-						H::Draw->Rect(dx, dy, 3, 1, digitColor);
-						H::Draw->Rect(dx, dy + 1, 1, 1, digitColor);
-						H::Draw->Rect(dx + 2, dy + 1, 1, 1, digitColor);
-						H::Draw->Rect(dx, dy + 2, 3, 1, digitColor);
-						H::Draw->Rect(dx + 2, dy + 3, 1, 1, digitColor);
-						H::Draw->Rect(dx, dy + 3, 3, 1, digitColor);
-						break;
+						eyeOpenness = 1.0f;
+						colorTransition = 1.0f;
 					}
 				}
+				
+				// Interpolate iris color
+				int currentColorIndex = blinkNumber % 6;
+				int nextColorIndex = (blinkNumber + 1) % 6;
+				Color_t currentColor = irisColors[currentColorIndex];
+				Color_t nextColor = irisColors[nextColorIndex];
+				
+				Color_t irisColor;
+				irisColor.r = static_cast<byte>(currentColor.r + (nextColor.r - currentColor.r) * colorTransition);
+				irisColor.g = static_cast<byte>(currentColor.g + (nextColor.g - currentColor.g) * colorTransition);
+				irisColor.b = static_cast<byte>(currentColor.b + (nextColor.b - currentColor.b) * colorTransition);
+				irisColor.a = 255;
+				
+				if (!active) {
+					eyeWhite.a = 200;
+					irisColor.a = 200;
+					eyeOutline.a = 200;
+				}
+				
+				// Draw almond-shaped eye using pixel rows
+				if (eyeOpenness > 0.02f) {
+					// Almond eye shape - widths for each row from center outward
+					// Full eye is 11 rows tall (5 above center, 5 below, 1 center)
+					// Use even widths to ensure symmetric centering
+					int almondWidths[11] = { 4, 10, 16, 20, 22, 24, 22, 20, 16, 10, 4 };
+					
+					int maxHeight = 11;
+					int visibleHeight = static_cast<int>(maxHeight * eyeOpenness);
+					if (visibleHeight < 1) visibleHeight = 1;
+					
+					// Calculate which rows to draw based on openness (from center outward)
+					int halfVisible = visibleHeight / 2;
+					int startRow = 5 - halfVisible;
+					int endRow = 5 + halfVisible;
+					if (visibleHeight % 2 == 0 && visibleHeight > 1) startRow++;
+					
+					// Draw almond eye white fill - use exact positions to avoid stray pixels
+					for (int row = startRow; row <= endRow && row < 11; row++) {
+						if (row < 0) continue;
+						int rowWidth = almondWidths[row];
+						int rowY = eyeCenterY - 5 + row;
+						// Center properly by using integer division that rounds down
+						int halfWidth = rowWidth / 2;
+						int rowX = eyeCenterX - halfWidth;
+						// Adjust width to not exceed outline bounds
+						H::Draw->Rect(rowX, rowY, rowWidth - 1, 1, eyeWhite);
+					}
+					
+					// Draw almond outline (top and bottom curves)
+					// Top curve
+					if (startRow <= 0) H::Draw->Line(eyeCenterX - 2, eyeCenterY - 5, eyeCenterX + 1, eyeCenterY - 5, eyeOutline);
+					if (startRow <= 1) H::Draw->Line(eyeCenterX - 5, eyeCenterY - 4, eyeCenterX + 4, eyeCenterY - 4, eyeOutline);
+					if (startRow <= 2) {
+						H::Draw->Rect(eyeCenterX - 8, eyeCenterY - 3, 1, 1, eyeOutline);
+						H::Draw->Rect(eyeCenterX + 7, eyeCenterY - 3, 1, 1, eyeOutline);
+					}
+					if (startRow <= 3) {
+						H::Draw->Rect(eyeCenterX - 10, eyeCenterY - 2, 1, 1, eyeOutline);
+						H::Draw->Rect(eyeCenterX + 9, eyeCenterY - 2, 1, 1, eyeOutline);
+					}
+					if (startRow <= 4) {
+						H::Draw->Rect(eyeCenterX - 11, eyeCenterY - 1, 1, 1, eyeOutline);
+						H::Draw->Rect(eyeCenterX + 10, eyeCenterY - 1, 1, 1, eyeOutline);
+					}
+					// Center row corners (pointed almond tips)
+					H::Draw->Rect(eyeCenterX - 12, eyeCenterY, 1, 1, eyeOutline);
+					H::Draw->Rect(eyeCenterX + 11, eyeCenterY, 1, 1, eyeOutline);
+					// Bottom curve
+					if (endRow >= 6) {
+						H::Draw->Rect(eyeCenterX - 11, eyeCenterY + 1, 1, 1, eyeOutline);
+						H::Draw->Rect(eyeCenterX + 10, eyeCenterY + 1, 1, 1, eyeOutline);
+					}
+					if (endRow >= 7) {
+						H::Draw->Rect(eyeCenterX - 10, eyeCenterY + 2, 1, 1, eyeOutline);
+						H::Draw->Rect(eyeCenterX + 9, eyeCenterY + 2, 1, 1, eyeOutline);
+					}
+					if (endRow >= 8) {
+						H::Draw->Rect(eyeCenterX - 8, eyeCenterY + 3, 1, 1, eyeOutline);
+						H::Draw->Rect(eyeCenterX + 7, eyeCenterY + 3, 1, 1, eyeOutline);
+					}
+					if (endRow >= 9) H::Draw->Line(eyeCenterX - 5, eyeCenterY + 4, eyeCenterX + 4, eyeCenterY + 4, eyeOutline);
+					if (endRow >= 10) H::Draw->Line(eyeCenterX - 2, eyeCenterY + 5, eyeCenterX + 1, eyeCenterY + 5, eyeOutline);
+					
+					// Draw iris (circular) when eye is open enough
+					if (eyeOpenness > 0.3f) {
+						int irisRadius = static_cast<int>(5.0f * eyeOpenness);
+						if (irisRadius > 0) {
+							H::Draw->FilledCircle(eyeCenterX, eyeCenterY, irisRadius, 16, irisColor);
+							H::Draw->OutlinedCircle(eyeCenterX, eyeCenterY, irisRadius, 16, eyeOutline);
+						}
+						
+						// Draw pupil (circular) when eye is more open
+						if (eyeOpenness > 0.5f) {
+							int pupilRadius = static_cast<int>(2.0f * eyeOpenness);
+							if (pupilRadius > 0) {
+								H::Draw->FilledCircle(eyeCenterX, eyeCenterY, pupilRadius, 12, pupilBlack);
+							}
+							// Highlight (shine)
+							H::Draw->Rect(eyeCenterX - 2, eyeCenterY - 2, 2, 2, eyeWhite);
+						}
+					}
+				}
+				
+				// Eyelashes - only when eye is mostly open
+				if (eyeOpenness > 0.6f) {
+					// Top lashes (curved outward from almond shape)
+					H::Draw->Line(eyeCenterX - 10, eyeCenterY - 4, eyeCenterX - 13, eyeCenterY - 8, lashBrown);
+					H::Draw->Line(eyeCenterX - 5, eyeCenterY - 5, eyeCenterX - 6, eyeCenterY - 9, lashBrown);
+					H::Draw->Line(eyeCenterX, eyeCenterY - 5, eyeCenterX, eyeCenterY - 10, lashBrown);
+					H::Draw->Line(eyeCenterX + 5, eyeCenterY - 5, eyeCenterX + 6, eyeCenterY - 9, lashBrown);
+					H::Draw->Line(eyeCenterX + 10, eyeCenterY - 4, eyeCenterX + 13, eyeCenterY - 8, lashBrown);
+					
+					// Bottom lashes (smaller)
+					H::Draw->Line(eyeCenterX - 6, eyeCenterY + 4, eyeCenterX - 7, eyeCenterY + 6, lashBrown);
+					H::Draw->Line(eyeCenterX, eyeCenterY + 5, eyeCenterX, eyeCenterY + 8, lashBrown);
+					H::Draw->Line(eyeCenterX + 6, eyeCenterY + 4, eyeCenterX + 7, eyeCenterY + 6, lashBrown);
+				}
+				
+				break;
 			}
-
-			break;
+			case 2: // Misc - Enhanced Gear/Wrench with Colors
+			{
+				// Define colors
+				Color_t wrenchSilver = { 180, 180, 190, 255 };
+				Color_t wrenchDark = { 100, 100, 110, 255 };
+				Color_t gearGold = { 220, 180, 80, 255 };
+				Color_t gearDark = { 160, 130, 50, 255 };
+				Color_t boltGray = { 140, 140, 150, 255 };
+				
+				if (!active) {
+					wrenchSilver.a = 200;
+					gearGold.a = 200;
+				}
+				
+				// Wrench (silver/gray) - shifted right and down
+				H::Draw->Rect(iconX + 20, iconY + 6, 4, 17, wrenchSilver);
+				H::Draw->OutlinedRect(iconX + 20, iconY + 6, 4, 17, wrenchDark);
+				// Wrench head (adjustable)
+				H::Draw->OutlinedRect(iconX + 18, iconY + 4, 8, 6, wrenchDark);
+				H::Draw->Rect(iconX + 20, iconY + 5, 4, 4, wrenchSilver);
+				// Adjustment lines
+				H::Draw->Line(iconX + 19, iconY + 6, iconX + 19, iconY + 8, wrenchDark);
+				H::Draw->Line(iconX + 25, iconY + 6, iconX + 25, iconY + 8, wrenchDark);
+				
+				// Rotating gear (gold) - ONLY ANIMATES WHEN ACTIVE
+				float gearAngle = active ? (animTime * 15.0f) : 0.0f; // Only rotate when active
+				for (int i = 0; i < 8; i++) {
+					float angle = (i * 45.0f + gearAngle) * (3.14159f / 180.0f);
+					int x1 = iconX + 11 + static_cast<int>(std::cos(angle) * 6);
+					int y1 = iconY + 17 + static_cast<int>(std::sin(angle) * 6);
+					H::Draw->Rect(x1 - 1, y1 - 1, 3, 3, gearGold);
+				}
+				// Gear center (detailed)
+				H::Draw->OutlinedCircle(iconX + 11, iconY + 17, 4, 12, gearDark);
+				H::Draw->OutlinedCircle(iconX + 11, iconY + 17, 2, 8, gearDark);
+				H::Draw->Rect(iconX + 10, iconY + 16, 3, 3, gearGold);
+				
+				// Bolts (gray)
+				H::Draw->Rect(iconX + 9, iconY + 15, 2, 2, boltGray);
+				H::Draw->Rect(iconX + 12, iconY + 15, 2, 2, boltGray);
+				H::Draw->Rect(iconX + 9, iconY + 18, 2, 2, boltGray);
+				H::Draw->Rect(iconX + 12, iconY + 18, 2, 2, boltGray);
+				break;
+			}
+			case 3: // Players - TF2 Spy Icon (Based on Reference)
+			{
+				// Color palette matching reference image
+				Color_t maskBlue = { 70, 80, 110, 255 };       // Blue-gray balaclava
+				Color_t skinPeach = { 240, 180, 140, 255 };    // Peach skin tone
+				Color_t eyeWhite = { 255, 255, 255, 255 };     // White of eyes
+				Color_t eyeDark = { 40, 50, 70, 255 };         // Dark pupils/brows
+				Color_t mouthDark = { 20, 20, 20, 255 };       // Black mouth
+				Color_t cigBrown = { 100, 70, 50, 255 };       // Brown cigarette
+				Color_t cigEmber = { 255, 140, 40, 255 };      // Orange ember
+				Color_t collarBeige = { 220, 210, 180, 255 };  // Beige collar
+				Color_t suitDark = { 50, 60, 80, 255 };        // Dark blue suit
+				Color_t tieDark = { 30, 35, 50, 255 };         // Dark tie
+				
+				// Adjust opacity when inactive
+				if (!active) {
+					maskBlue.a = 200;
+					skinPeach.a = 200;
+					cigEmber.a = 200;
+				}
+				
+				// ROUNDED HEAD - Balaclava mask
+				// Row 0-1: Top of head
+				H::Draw->Line(iconX + 15, iconY + 0, iconX + 21, iconY + 0, maskBlue);
+				H::Draw->Line(iconX + 13, iconY + 1, iconX + 23, iconY + 1, maskBlue);
+				
+				// Row 2-3: Upper head (widest)
+				H::Draw->Line(iconX + 11, iconY + 2, iconX + 25, iconY + 2, maskBlue);
+				H::Draw->Line(iconX + 10, iconY + 3, iconX + 26, iconY + 3, maskBlue);
+				
+				// Row 4-6: Forehead area
+				H::Draw->Line(iconX + 9, iconY + 4, iconX + 27, iconY + 4, maskBlue);
+				H::Draw->Line(iconX + 8, iconY + 5, iconX + 28, iconY + 5, maskBlue);
+				H::Draw->Line(iconX + 8, iconY + 6, iconX + 28, iconY + 6, maskBlue);
+				
+				// Row 7: Upper eye area
+				H::Draw->Line(iconX + 8, iconY + 7, iconX + 28, iconY + 7, maskBlue);
+				
+				// Row 8: Top of eye area with brows - FILL ENTIRE ROW
+				H::Draw->Line(iconX + 8, iconY + 8, iconX + 28, iconY + 8, maskBlue); // Fill entire row
+				H::Draw->Line(iconX + 11, iconY + 8, iconX + 14, iconY + 8, eyeDark); // Left brow
+				H::Draw->Line(iconX + 15, iconY + 8, iconX + 16, iconY + 8, skinPeach); // Nose bridge
+				H::Draw->Line(iconX + 17, iconY + 8, iconX + 20, iconY + 8, eyeDark); // Right brow
+				
+				// Row 9: Eyes - white with dark pupils - FILL ENTIRE ROW
+				H::Draw->Line(iconX + 8, iconY + 9, iconX + 28, iconY + 9, maskBlue); // Fill entire row
+				H::Draw->Rect(iconX + 11, iconY + 9, 4, 1, eyeWhite); // Left eye white
+				H::Draw->Rect(iconX + 12, iconY + 9, 2, 1, eyeDark); // Left pupil
+				H::Draw->Rect(iconX + 15, iconY + 9, 2, 1, skinPeach); // Nose
+				H::Draw->Rect(iconX + 17, iconY + 9, 4, 1, eyeWhite); // Right eye white
+				H::Draw->Rect(iconX + 18, iconY + 9, 2, 1, eyeDark); // Right pupil
+				
+				// Row 10: Below eyes - FILL ENTIRE ROW
+				H::Draw->Line(iconX + 8, iconY + 10, iconX + 28, iconY + 10, maskBlue); // Fill entire row
+				H::Draw->Line(iconX + 12, iconY + 10, iconX + 20, iconY + 10, skinPeach); // Skin on top
+				
+				// Row 11: Nose cutout area - FILL ENTIRE ROW
+				H::Draw->Line(iconX + 9, iconY + 11, iconX + 27, iconY + 11, maskBlue); // Fill entire row
+				H::Draw->Rect(iconX + 14, iconY + 11, 1, 1, skinPeach); // Nose tip
+				H::Draw->Rect(iconX + 15, iconY + 11, 1, 1, maskBlue); // Nose cutout
+				H::Draw->Rect(iconX + 16, iconY + 11, 1, 1, skinPeach);
+				
+				// Row 12: Lower face opening - FILL ENTIRE ROW
+				H::Draw->Line(iconX + 10, iconY + 12, iconX + 26, iconY + 12, maskBlue); // Fill entire row
+				H::Draw->Line(iconX + 14, iconY + 12, iconX + 20, iconY + 12, skinPeach); // Skin on top
+				
+				// Row 13: Mouth area with cigarette - FILL ENTIRE ROW
+				H::Draw->Line(iconX + 10, iconY + 13, iconX + 25, iconY + 13, maskBlue); // Fill entire row
+				H::Draw->Line(iconX + 14, iconY + 13, iconX + 15, iconY + 13, skinPeach);
+				H::Draw->Rect(iconX + 16, iconY + 13, 4, 1, mouthDark); // Mouth
+				H::Draw->Line(iconX + 20, iconY + 13, iconX + 21, iconY + 13, cigBrown); // Cigarette
+				H::Draw->Rect(iconX + 22, iconY + 13, 1, 1, cigEmber); // Ember
+				
+				// Animated smoke when active
+				if (active) {
+					Color_t smoke = { 200, 200, 210, 150 };
+					if (frame == 0) {
+						H::Draw->Rect(iconX + 23, iconY + 11, 1, 1, smoke);
+						H::Draw->Rect(iconX + 24, iconY + 10, 1, 1, smoke);
+					} else {
+						H::Draw->Rect(iconX + 24, iconY + 11, 1, 1, smoke);
+						H::Draw->Rect(iconX + 25, iconY + 9, 1, 1, smoke);
+					}
+				}
+				
+				// Row 14: Lower chin - FILL ENTIRE ROW
+				H::Draw->Line(iconX + 11, iconY + 14, iconX + 24, iconY + 14, maskBlue); // Fill entire row
+				H::Draw->Line(iconX + 15, iconY + 14, iconX + 19, iconY + 14, skinPeach); // Skin on top
+				
+				// Row 15-16: Bottom of mask
+				H::Draw->Line(iconX + 12, iconY + 15, iconX + 22, iconY + 15, maskBlue);
+				H::Draw->Line(iconX + 14, iconY + 16, iconX + 20, iconY + 16, maskBlue);
+				
+				// Row 17-18: Neck area
+				H::Draw->Line(iconX + 15, iconY + 17, iconX + 19, iconY + 17, maskBlue);
+				H::Draw->Line(iconX + 16, iconY + 18, iconX + 18, iconY + 18, maskBlue);
+				
+				// Row 19-20: Lower neck/collar transition
+				H::Draw->Line(iconX + 15, iconY + 19, iconX + 19, iconY + 19, suitDark);
+				H::Draw->Line(iconX + 14, iconY + 20, iconX + 20, iconY + 20, suitDark);
+				
+				// SHOULDERS & SUIT - Rows 21-32
+				// Row 21-22: Upper shoulders
+				H::Draw->Line(iconX + 8, iconY + 21, iconX + 28, iconY + 21, suitDark);
+				H::Draw->Line(iconX + 6, iconY + 22, iconX + 30, iconY + 22, suitDark);
+				
+				// Row 23: Collar starts showing - FILL ENTIRE ROW FIRST
+				H::Draw->Line(iconX + 5, iconY + 23, iconX + 31, iconY + 23, suitDark); // Fill entire row
+				H::Draw->Line(iconX + 11, iconY + 23, iconX + 14, iconY + 23, collarBeige); // Left collar
+				H::Draw->Line(iconX + 15, iconY + 23, iconX + 19, iconY + 23, tieDark); // Tie
+				H::Draw->Line(iconX + 20, iconY + 23, iconX + 23, iconY + 23, collarBeige); // Right collar
+				
+				// Rows 24-32: Suit body with visible collar and tie - FILL ALL GAPS
+				for (int row = 24; row <= 32; row++) {
+					// Fill entire row first with suit color to avoid gaps
+					H::Draw->Line(iconX + 5, iconY + row, iconX + 31, iconY + row, suitDark);
+					
+					// Then draw collar on top (V-shape getting narrower)
+					int collarWidth = std::max(0, 5 - (row - 24) / 2);
+					if (collarWidth > 0) {
+						H::Draw->Line(iconX + 10, iconY + row, iconX + 10 + collarWidth, iconY + row, collarBeige);
+						H::Draw->Line(iconX + 24 - collarWidth, iconY + row, iconX + 24, iconY + row, collarBeige);
+					}
+					
+					// Dark tie in center
+					H::Draw->Rect(iconX + 17, iconY + row, 2, 1, tieDark);
+				}
+				
+				break;
+			}
+			case 4: // Configs - Yellow Folder with Animated Paper
+			{
+				// Define colors
+				Color_t folderYellow = { 240, 200, 80, 255 };
+				Color_t folderDark = { 200, 160, 60, 255 };
+				Color_t paperWhite = { 250, 250, 250, 255 };
+				Color_t textDark = { 40, 40, 40, 255 };
+				
+				if (!active) {
+					folderYellow.a = 200;
+					paperWhite.a = 200;
+				}
+				
+				// Paper sliding out from inside folder when active
+				if (active) {
+					// Animation: paper slides up from inside the folder
+					int slideAmount = (frame == 0 ? 4 : 8); // How much paper is visible
+					
+					// Paper starts from inside folder (iconY + 9) and slides up
+					int paperY = iconY + 9 - slideAmount; // Starts inside, slides up
+					int paperX = iconX + 10; // Centered in folder (moved right by 2)
+					int paperHeight = 18; // Total paper height
+					
+					// Draw the visible part of the paper (the part that's outside the folder)
+					int visibleHeight = std::min(slideAmount, paperHeight);
+					
+					// Paper body
+					H::Draw->Rect(paperX, paperY, 20, visibleHeight, paperWhite);
+					H::Draw->OutlinedRect(paperX, paperY, 20, visibleHeight, textDark);
+					
+					// Text lines on visible part of paper
+					if (visibleHeight > 2) H::Draw->Line(paperX + 2, paperY + 2, paperX + 17, paperY + 2, textDark);
+					if (visibleHeight > 4) H::Draw->Line(paperX + 2, paperY + 4, paperX + 16, paperY + 4, textDark);
+					if (visibleHeight > 6) H::Draw->Line(paperX + 2, paperY + 6, paperX + 18, paperY + 6, textDark);
+				}
+				
+				// Folder body (ALL YELLOW) - 26px (reduced from 28) - drawn AFTER paper so it covers the bottom part
+				H::Draw->Rect(iconX + 4, iconY + 9, 26, 13, folderYellow);
+				H::Draw->OutlinedRect(iconX + 4, iconY + 9, 26, 13, folderDark);
+				
+				// Folder tab (ALL YELLOW) - 14px
+				H::Draw->Rect(iconX + 4, iconY + 6, 14, 4, folderYellow);
+				H::Draw->OutlinedRect(iconX + 4, iconY + 6, 14, 4, folderDark);
+				
+				break;
+			}
+			case 5: // Exploits - Matrix Falling Numbers
+			{
+				// Matrix color palette
+				Color_t matrixBright = { 0, 255, 70, 255 };    // Bright green (foreground)
+				Color_t matrixMid = { 0, 200, 50, 255 };       // Medium green
+				Color_t matrixDim = { 0, 150, 40, 200 };       // Dim green (background)
+				Color_t matrixDark = { 0, 80, 20, 150 };       // Dark green (trail)
+				
+				if (!active) {
+					matrixBright.a = 180;
+					matrixMid.a = 180;
+					matrixDim.a = 150;
+					matrixDark.a = 100;
+				}
+				
+				// Static state for animation persistence
+				static float matrixOffsets[6] = { 0.0f, 0.3f, 0.6f, 0.1f, 0.5f, 0.8f };
+				static int matrixDigits[6][6] = {
+					{1, 4, 7, 2, 9, 3},
+					{8, 0, 5, 6, 1, 4},
+					{3, 9, 2, 8, 0, 7},
+					{6, 1, 4, 3, 5, 2},
+					{0, 7, 8, 1, 6, 9},
+					{5, 2, 3, 4, 8, 0}
+				};
+				static float matrixSpeeds[6] = { 0.9f, 1.1f, 0.8f, 1.2f, 1.0f, 0.85f };
+				
+				// Update animation when active
+				if (active) {
+					for (int col = 0; col < 6; col++) {
+						matrixOffsets[col] += matrixSpeeds[col] * I::GlobalVars->frametime * 2.0f;
+						if (matrixOffsets[col] >= 1.0f) {
+							matrixOffsets[col] = 0.0f;
+							// Shift digits down and generate new top digit
+							for (int row = 5; row > 0; row--) {
+								matrixDigits[col][row] = matrixDigits[col][row - 1];
+							}
+							matrixDigits[col][0] = rand() % 10;
+						}
+					}
+				}
+				
+				// Draw 6 columns of falling numbers
+				int colWidth = 5;
+				int rowHeight = 5;
+				int startX = iconX + 3;
+				int startY = iconY + 2;
+				
+				for (int col = 0; col < 6; col++) {
+					int colX = startX + col * colWidth;
+					float offset = matrixOffsets[col];
+					
+					for (int row = 0; row < 6; row++) {
+						int digit = matrixDigits[col][row];
+						int rowY = startY + row * rowHeight + static_cast<int>(offset * rowHeight);
+						
+						// Skip if outside icon bounds
+						if (rowY < iconY || rowY > iconY + iconSize - 4)
+							continue;
+						
+						// Determine brightness based on row (top = brightest when active)
+						Color_t digitColor;
+						if (active) {
+							if (row == 0) digitColor = matrixBright;
+							else if (row == 1) digitColor = matrixMid;
+							else if (row < 4) digitColor = matrixDim;
+							else digitColor = matrixDark;
+						} else {
+							// Static display when inactive - all same brightness
+							digitColor = matrixDim;
+						}
+						
+						// Draw digit as simple pixel representation
+						// Using a minimal 3x4 pixel font for digits 0-9
+						int dx = colX;
+						int dy = rowY;
+						
+						switch (digit) {
+							case 0:
+								H::Draw->Rect(dx, dy, 3, 1, digitColor);
+								H::Draw->Rect(dx, dy + 3, 3, 1, digitColor);
+								H::Draw->Rect(dx, dy + 1, 1, 2, digitColor);
+								H::Draw->Rect(dx + 2, dy + 1, 1, 2, digitColor);
+								break;
+							case 1:
+								H::Draw->Rect(dx + 1, dy, 1, 4, digitColor);
+								break;
+							case 2:
+								H::Draw->Rect(dx, dy, 3, 1, digitColor);
+								H::Draw->Rect(dx + 2, dy + 1, 1, 1, digitColor);
+								H::Draw->Rect(dx, dy + 2, 3, 1, digitColor);
+								H::Draw->Rect(dx, dy + 3, 3, 1, digitColor);
+								break;
+							case 3:
+								H::Draw->Rect(dx, dy, 3, 1, digitColor);
+								H::Draw->Rect(dx + 2, dy + 1, 1, 1, digitColor);
+								H::Draw->Rect(dx, dy + 2, 3, 1, digitColor);
+								H::Draw->Rect(dx + 2, dy + 3, 1, 1, digitColor);
+								H::Draw->Rect(dx, dy + 3, 3, 1, digitColor);
+								break;
+							case 4:
+								H::Draw->Rect(dx, dy, 1, 2, digitColor);
+								H::Draw->Rect(dx + 2, dy, 1, 4, digitColor);
+								H::Draw->Rect(dx, dy + 2, 3, 1, digitColor);
+								break;
+							case 5:
+								H::Draw->Rect(dx, dy, 3, 1, digitColor);
+								H::Draw->Rect(dx, dy + 1, 1, 1, digitColor);
+								H::Draw->Rect(dx, dy + 2, 3, 1, digitColor);
+								H::Draw->Rect(dx + 2, dy + 3, 1, 1, digitColor);
+								H::Draw->Rect(dx, dy + 3, 3, 1, digitColor);
+								break;
+							case 6:
+								H::Draw->Rect(dx, dy, 3, 1, digitColor);
+								H::Draw->Rect(dx, dy + 1, 1, 2, digitColor);
+								H::Draw->Rect(dx, dy + 2, 3, 1, digitColor);
+								H::Draw->Rect(dx + 2, dy + 3, 1, 1, digitColor);
+								H::Draw->Rect(dx, dy + 3, 3, 1, digitColor);
+								break;
+							case 7:
+								H::Draw->Rect(dx, dy, 3, 1, digitColor);
+								H::Draw->Rect(dx + 2, dy + 1, 1, 3, digitColor);
+								break;
+							case 8:
+								H::Draw->Rect(dx, dy, 3, 1, digitColor);
+								H::Draw->Rect(dx, dy + 1, 1, 1, digitColor);
+								H::Draw->Rect(dx + 2, dy + 1, 1, 1, digitColor);
+								H::Draw->Rect(dx, dy + 2, 3, 1, digitColor);
+								H::Draw->Rect(dx, dy + 3, 1, 1, digitColor);
+								H::Draw->Rect(dx + 2, dy + 3, 1, 1, digitColor);
+								H::Draw->Rect(dx, dy + 3, 3, 1, digitColor);
+								break;
+							case 9:
+								H::Draw->Rect(dx, dy, 3, 1, digitColor);
+								H::Draw->Rect(dx, dy + 1, 1, 1, digitColor);
+								H::Draw->Rect(dx + 2, dy + 1, 1, 1, digitColor);
+								H::Draw->Rect(dx, dy + 2, 3, 1, digitColor);
+								H::Draw->Rect(dx + 2, dy + 3, 1, 1, digitColor);
+								H::Draw->Rect(dx, dy + 3, 3, 1, digitColor);
+								break;
+						}
+					}
+				}
+				
+				break;
+			}
 		}
-		}
-
+		
 		// Text label (bottom part of box)
 		Color_t textColor = active ? CFG::Menu_Text_Active : CFG::Menu_Text_Inactive;
 		if (hoverState > 0.01f && !active) {
@@ -2227,7 +2218,7 @@ void CMenu::MainWindow()
 			textColor.g = static_cast<byte>(textColor.g + (CFG::Menu_Text_Active.g - textColor.g) * hoverState);
 			textColor.b = static_cast<byte>(textColor.b + (CFG::Menu_Text_Active.b - textColor.b) * hoverState);
 		}
-
+		
 		H::Draw->String(
 			H::Fonts->Get(EFonts::Menu),
 			x + boxW / 2,
@@ -2236,12 +2227,12 @@ void CMenu::MainWindow()
 			POS_CENTERXY,
 			label
 		);
-
+		
 		m_nCursorY += boxH + CFG::Menu_Spacing_Y;
 		m_nLastButtonW = boxW;
-
+		
 		return bCallback;
-		};
+	};
 
 	if (DrawTabBox("Aim", 0, MainTab == EMainTabs::AIM))
 		MainTab = EMainTabs::AIM;
@@ -2368,11 +2359,31 @@ void CMenu::MainWindow()
 				CheckBox("Smart Shotgun (Beta)", CFG::Aimbot_Hitscan_Smart_Shotgun);
 				CheckBox("FakeLag Fix", CFG::Aimbot_Hitscan_FakeLagFix);
 
+				// Track previous aim type to backup/restore FOV when switching to/from triggerbot
+				static int nPrevAimType = CFG::Aimbot_Hitscan_Aim_Type;
+				static float flBackupFOV = CFG::Aimbot_Hitscan_FOV;
+
 				SelectSingle("Aim Type", CFG::Aimbot_Hitscan_Aim_Type, {
 					{ "Normal", 0 },
 					{ "Silent", 1 },
-					{ "Smooth", 2 }
-					});
+					{ "Smooth", 2 },
+					{ "Triggerbot", 3 }
+				});
+
+				// Handle FOV backup/restore when aim type changes
+				if (CFG::Aimbot_Hitscan_Aim_Type != nPrevAimType)
+				{
+					if (CFG::Aimbot_Hitscan_Aim_Type == 3) // Switched TO triggerbot
+					{
+						flBackupFOV = CFG::Aimbot_Hitscan_FOV; // Backup current FOV
+						CFG::Aimbot_Hitscan_FOV = 30.0f; // Set FOV to 180
+					}
+					else if (nPrevAimType == 3) // Switched FROM triggerbot
+					{
+						CFG::Aimbot_Hitscan_FOV = flBackupFOV; // Restore FOV
+					}
+					nPrevAimType = CFG::Aimbot_Hitscan_Aim_Type;
+				}
 
 				SelectSingle("Hitbox", CFG::Aimbot_Hitscan_Hitbox, {
 					{ "Head", 0 },
@@ -2399,8 +2410,14 @@ void CMenu::MainWindow()
 					{ "Buildings", CFG::Aimbot_Hitscan_Scan_Buildings }
 					});
 
-				SliderFloat("FOV", CFG::Aimbot_Hitscan_FOV, 1.0f, 180.0f, 1.0f, "%.0f");
-				SliderFloat("Smoothing", CFG::Aimbot_Hitscan_Smoothing, 0.0f, 20.0f, 0.5f, "%.1f");
+				if (CFG::Aimbot_Hitscan_Aim_Type != 3) // Hide FOV for Triggerbot
+				{
+					SliderFloat("FOV", CFG::Aimbot_Hitscan_FOV, 1.0f, 180.0f, 1.0f, "%.0f");
+				}
+				if (CFG::Aimbot_Hitscan_Aim_Type == 2) // Only show smoothing for Smooth aim type
+				{
+					SliderFloat("Smoothing", CFG::Aimbot_Hitscan_Smoothing, 1.5f, 20.0f, 0.5f, "%.1f");
+				}
 				SliderFloat("Fake Latency", CFG::Aimbot_Hitscan_Fake_Latency, 0.0f, 600.0f, 10.0f, "%.0f ms");
 				SliderInt("Hitchance", CFG::Aimbot_Hitscan_Hitchance, 0, 100, 1);
 			}
@@ -2418,7 +2435,7 @@ void CMenu::MainWindow()
 				CheckBox("Ground Strafe Prediction", CFG::Aimbot_Projectile_Ground_Strafe_Prediction);
 				CheckBox("Air Strafe Prediction", CFG::Aimbot_Projectile_Air_Strafe_Prediction);
 				CheckBox("BBOX Multipoint", CFG::Aimbot_Projectile_BBOX_Multipoint);
-				SelectSingle("Rocket Splash", CFG::Aimbot_Projectile_Rocket_Splash,
+				SelectSingle("Splashbot", CFG::Aimbot_Projectile_Rocket_Splash,
 					{
 						{ "Disabled", 0 },
 						{ "Enabled", 1 },
@@ -2472,33 +2489,33 @@ void CMenu::MainWindow()
 				CheckBox("Aimbot Support (BETA)", CFG::Triggerbot_AutoAirblast_Aimbot_Support);
 
 				SelectSingle("Mode", CFG::Triggerbot_AutoAirblast_Mode,
-					{
-						{ "Legit", 0 },
-						{ "Rage", 1 }
-					});
+				{
+					{ "Legit", 0 },
+					{ "Rage", 1 }
+				});
 
 				SelectSingle("Aim Mode", CFG::Triggerbot_AutoAirblast_Aim_Mode,
-					{
-						{ "Normal", 0 },
-						{ "Silent", 1 }
-					});
+				{
+					{ "Normal", 0 },
+					{ "Silent", 1 }
+				});
 
 				multiselect("Ignore", TriggerbotAirblastIgnore,
-					{
-						{ "Rocket", CFG::Triggerbot_AutoAirblast_Ignore_Rocket },
-						{ "Sentry Rocket", CFG::Triggerbot_AutoAirblast_Ignore_SentryRocket },
-						{ "Jarate", CFG::Triggerbot_AutoAirblast_Ignore_Jar },
-						{ "Gas", CFG::Triggerbot_AutoAirblast_Ignore_JarGas },
-						{ "Milk", CFG::Triggerbot_AutoAirblast_Ignore_JarMilk },
-						{ "Arrow", CFG::Triggerbot_AutoAirblast_Ignore_Arrow },
-						{ "Flare", CFG::Triggerbot_AutoAirblast_Ignore_Flare },
-						{ "Cleaver", CFG::Triggerbot_AutoAirblast_Ignore_Cleaver },
-						{ "Healing Bolt", CFG::Triggerbot_AutoAirblast_Ignore_HealingBolt },
-						{ "Pipebomb", CFG::Triggerbot_AutoAirblast_Ignore_PipebombProjectile },
-						{ "Ball of Fire", CFG::Triggerbot_AutoAirblast_Ignore_BallOfFire },
-						{ "Energy Ring", CFG::Triggerbot_AutoAirblast_Ignore_EnergyRing },
-						{ "Energy Ball", CFG::Triggerbot_AutoAirblast_Ignore_EnergyBall },
-					});
+				{
+					{ "Rocket", CFG::Triggerbot_AutoAirblast_Ignore_Rocket },
+					{ "Sentry Rocket", CFG::Triggerbot_AutoAirblast_Ignore_SentryRocket },
+					{ "Jarate", CFG::Triggerbot_AutoAirblast_Ignore_Jar },
+					{ "Gas", CFG::Triggerbot_AutoAirblast_Ignore_JarGas },
+					{ "Milk", CFG::Triggerbot_AutoAirblast_Ignore_JarMilk },
+					{ "Arrow", CFG::Triggerbot_AutoAirblast_Ignore_Arrow },
+					{ "Flare", CFG::Triggerbot_AutoAirblast_Ignore_Flare },
+					{ "Cleaver", CFG::Triggerbot_AutoAirblast_Ignore_Cleaver },
+					{ "Healing Bolt", CFG::Triggerbot_AutoAirblast_Ignore_HealingBolt },
+					{ "Pipebomb", CFG::Triggerbot_AutoAirblast_Ignore_PipebombProjectile },
+					{ "Ball of Fire", CFG::Triggerbot_AutoAirblast_Ignore_BallOfFire },
+					{ "Energy Ring", CFG::Triggerbot_AutoAirblast_Ignore_EnergyRing },
+					{ "Energy Ball", CFG::Triggerbot_AutoAirblast_Ignore_EnergyBall },
+				});
 			}
 			GroupBoxEnd();
 
@@ -2557,23 +2574,23 @@ void CMenu::MainWindow()
 				CheckBox("Knife If Lethal", CFG::Triggerbot_AutoBackstab_Knife_If_Lethal);
 
 				SelectSingle("Mode", CFG::Triggerbot_AutoBacktab_Mode,
-					{
-						{ "Legit", 0 },
-						{ "Rage", 1 }
-					});
+				{
+					{ "Legit", 0 },
+					{ "Rage", 1 }
+				});
 
 				SelectSingle("Aim Mode", CFG::Triggerbot_AutoBacktab_Aim_Mode,
-					{
-						{ "Normal", 0 },
-						{ "Silent", 1 }
-					});
+				{
+					{ "Normal", 0 },
+					{ "Silent", 1 }
+				});
 
 				multiselect("Ignore", AutoBackstabIgnores,
-					{
-						{ "Friends", CFG::Triggerbot_AutoBackstab_Ignore_Friends },
-						{ "Invisible", CFG::Triggerbot_AutoBackstab_Ignore_Invisible },
-						{ "Invulnerable", CFG::Triggerbot_AutoBackstab_Ignore_Invulnerable }
-					});
+				{
+					{ "Friends", CFG::Triggerbot_AutoBackstab_Ignore_Friends },
+					{ "Invisible", CFG::Triggerbot_AutoBackstab_Ignore_Invisible },
+					{ "Invulnerable", CFG::Triggerbot_AutoBackstab_Ignore_Invulnerable }
+				});
 			}
 			GroupBoxEnd();
 
@@ -2586,7 +2603,7 @@ void CMenu::MainWindow()
 				SelectSingle("Pop For", CFG::Triggerbot_AutoVaccinator_Pop, {
 					{ "Everyone", 0 },
 					{ "Friends Only", 1 }
-					});
+				});
 			}
 			GroupBoxEnd();
 
@@ -2597,16 +2614,16 @@ void CMenu::MainWindow()
 				CheckBox("Range ESP", CFG::Triggerbot_AutoSapper_ESP);
 
 				SelectSingle("Mode", CFG::Triggerbot_AutoSapper_Mode,
-					{
-						{ "Legit", 0 },
-						{ "Rage", 1 }
-					});
+				{
+					{ "Legit", 0 },
+					{ "Rage", 1 }
+				});
 
 				SelectSingle("Aim Mode", CFG::Triggerbot_AutoSapper_Aim_Mode,
-					{
-						{ "Normal", 0 },
-						{ "Silent", 1 }
-					});
+				{
+					{ "Normal", 0 },
+					{ "Silent", 1 }
+				});
 			}
 			GroupBoxEnd();
 
@@ -2699,13 +2716,13 @@ void CMenu::MainWindow()
 					{ "Teammate Projectiles", CFG::ESP_World_Ignore_TeammateProjectiles },
 					{ "Halloween Gifts", CFG::ESP_World_Ignore_Halloween_Gift },
 					{ "MVM Money", CFG::ESP_World_Ignore_MVM_Money }
-					});
+				});
 
 				multiselect("Draw", WorldDraw, {
 					{ "Name", CFG::ESP_World_Name },
 					{ "Box", CFG::ESP_World_Box },
 					{ "Tracer", CFG::ESP_World_Tracer }
-					});
+				});
 			}
 			GroupBoxEnd();
 
@@ -2731,6 +2748,7 @@ void CMenu::MainWindow()
 
 				multiselect("Draw", PlayerDraw, {
 					{ "Name", CFG::ESP_Players_Name },
+					{ "Weapon Name", CFG::ESP_Players_Weapon_Name },
 					{ "Tags", CFG::ESP_Players_Tags },
 					{ "Class", CFG::ESP_Players_Class },
 					{ "Class Icon", CFG::ESP_Players_Class_Icon },
@@ -2842,7 +2860,7 @@ void CMenu::MainWindow()
 					{ "Ammo Packs", CFG::Radar_World_Ignore_AmmoPacks },
 					{ "Halloween Gifts", CFG::Radar_World_Ignore_Halloween_Gift },
 					{ "MVM Money", CFG::Radar_World_Ignore_MVM_Money }
-					});
+				});
 			}
 			GroupBoxEnd();
 		}
@@ -2898,7 +2916,7 @@ void CMenu::MainWindow()
 					{ "Glossy", 3 },
 					{ "Glow", 4 },
 					{ "Plastic", 5 }
-					});
+				});
 
 				SliderFloat("Weapon Alpha", CFG::Materials_ViewModel_Weapon_Alpha, 0.0f, 1.0f, 0.1f, "%.1f");
 
@@ -2909,7 +2927,7 @@ void CMenu::MainWindow()
 					{ "Glossy", 3 },
 					{ "Glow", 4 },
 					{ "Plastic", 5 }
-					});
+				});
 			}
 			GroupBoxEnd();
 
@@ -3022,7 +3040,7 @@ void CMenu::MainWindow()
 					{ "Crisp", 1 },
 					{ "Cartoony", 2 },
 					{ "Cartoony Alt", 3 }
-					});
+				});
 
 				SliderInt("Bloom Amount", CFG::Outlines_Bloom_Amount, 1, 10, 1);
 			}
@@ -3092,7 +3110,7 @@ void CMenu::MainWindow()
 			GroupBoxStart("Local", 150);
 			{
 				SliderFloat("Player FOV", CFG::Visuals_FOV_Override, 70.0f, 140.0f, 1.0f, "%.0f");
-
+				
 				// FOV Circle section
 				CheckBox("Aimbot FOV Circle", CFG::Visuals_Aimbot_FOV_Circle);
 				if (CFG::Visuals_Aimbot_FOV_Circle)
@@ -3116,7 +3134,7 @@ void CMenu::MainWindow()
 					{ "Screen Overlay", CFG::Visuals_Remove_Screen_Overlay },
 					{ "Screen Shake", CFG::Visuals_Remove_Screen_Shake },
 					{ "Screen Fade", CFG::Visuals_Remove_Screen_Fade }
-					});
+				});
 
 				SelectSingle("Removals Mode", CFG::Visuals_Removals_Mode, {
 					{ "Everyone", 0 },
@@ -3147,6 +3165,7 @@ void CMenu::MainWindow()
 					{ "Random (No Zap)", 8 }
 					});
 
+
 				SelectSingle("Movement Path Style", CFG::Visuals_Draw_Movement_Path_Style,
 					{
 						{ "Disabled", 0 },
@@ -3155,7 +3174,7 @@ void CMenu::MainWindow()
 						{ "Alt Line", 3 }
 					});
 
-				SelectSingle("Movement Path Style", CFG::Visuals_Draw_Predicted_Path_Style,
+				SelectSingle("Projectile Path Style", CFG::Visuals_Draw_Predicted_Path_Style,
 					{
 						{ "Disabled", 0 },
 						{ "Line", 1 },
@@ -3193,10 +3212,10 @@ void CMenu::MainWindow()
 				CheckBox("Don't Modulate Sky", CFG::Visuals_World_Modulation_No_Sky_Change);
 
 				SelectSingle("World Modulation Mode", CFG::Visuals_World_Modulation_Mode,
-					{
-						{ "Night Mode", 0 },
-						{ "Custom Color", 1 }
-					});
+				{
+					{ "Night Mode", 0 },
+					{ "Custom Color", 1 }
+				});
 
 				SliderFloat("Night Mode", CFG::Visuals_Night_Mode, 0.0f, 100.0f, 1.0f, "%.0f");
 
@@ -3204,7 +3223,7 @@ void CMenu::MainWindow()
 					{ "Original", 0 },
 					{ "Custom Color", 1 },
 					{ "Rainbow", 2 }
-					});
+				});
 
 				SliderFloat("Particles Rainbow Rate", CFG::Visuals_Particles_Rainbow_Rate, 1.0f, 10.0f, 1.0f, "%.0f");
 			}
@@ -3226,7 +3245,7 @@ void CMenu::MainWindow()
 					{ "Off", 0 },
 					{ "Rain", 1 },
 					{ "Light Rain", 2 }
-					});
+				});
 			}
 			GroupBoxEnd();
 
@@ -3287,7 +3306,7 @@ void CMenu::MainWindow()
 				CheckBox("Active", CFG::Visuals_Paint_Active);
 				InputKey("Key", CFG::Visuals_Paint_Key);
 				InputKey("Erase Key", CFG::Visuals_Paint_Erase_Key);
-				const char* pszFmt = CFG::Visuals_Paint_LifeTime <= 0.0f ? "inf" : "%.0fs";
+				const char *pszFmt = CFG::Visuals_Paint_LifeTime <= 0.0f ? "inf" : "%.0fs";
 				SliderFloat("Life Time", CFG::Visuals_Paint_LifeTime, 0.0f, 10.0f, 1.0f, pszFmt);
 				SliderInt("Bloom Amount", CFG::Visuals_Paint_Bloom_Amount, 3, 10, 1);
 			}
@@ -3324,7 +3343,7 @@ void CMenu::MainWindow()
 					{ "Cloaked", CFG::Viuals_SpyWarning_Ignore_Cloaked },
 					{ "Friends", CFG::Viuals_SpyWarning_Ignore_Friends },
 					{ "Invisible", CFG::Viuals_SpyWarning_Ignore_Invisible }
-					});
+				});
 			}
 			GroupBoxEnd();
 
@@ -3386,7 +3405,7 @@ void CMenu::MainWindow()
 				CheckBox("Menu Snow", CFG::Menu_Snow);
 			}
 			GroupBoxEnd();
-
+			
 			GroupBoxStart("Accent Secondary RGB", 150);
 			{
 				CheckBox("RGB Mode", CFG::Menu_Accent_Secondary_RGB);
@@ -3446,6 +3465,11 @@ void CMenu::MainWindow()
 			{
 				CheckBox("Outline Color by HP", CFG::Visuals_Enemy_Outline_HP_Based);
 				CheckBox("Materials Color by HP", CFG::Visuals_Enemy_Materials_HP_Based);
+				CheckBox("Custom Name Color", CFG::Misc_Enemy_Custom_Name_Color);
+				if (CFG::Misc_Enemy_Custom_Name_Color)
+				{
+					ColorPicker("Name Color", CFG::Color_Custom_Name);
+				}
 			}
 			GroupBoxEnd();
 
@@ -3483,7 +3507,7 @@ void CMenu::MainWindow()
 			int col = configVal / 100;
 			int order = configVal % 100;
 			return { static_cast<EGroupBoxColumn>(std::clamp(col, 0, 2)), order };
-			};
+		};
 
 		// Register Exploits tab GroupBoxes (only once)
 		static bool bExploitsInitialized = false;
@@ -3505,7 +3529,7 @@ void CMenu::MainWindow()
 			RegisterGroupBox("Exploits", "Region Selector", col5, ord5, 150, EGroupBoxSize::MEDIUM);
 			bExploitsInitialized = true;
 		}
-
+		
 		// Update GroupBox positions from config (in case config was loaded)
 		{
 			auto [col1, ord1] = LoadGroupBoxPosition(CFG::Menu_GroupBox_Exploits_Shifting);
@@ -3514,7 +3538,7 @@ void CMenu::MainWindow()
 			auto [col4, ord4] = LoadGroupBoxPosition(CFG::Menu_GroupBox_Exploits_NoSpread);
 			auto [col5, ord5] = LoadGroupBoxPosition(CFG::Menu_GroupBox_Exploits_RegionSelector);
 			auto [col6, ord6] = LoadGroupBoxPosition(CFG::Menu_GroupBox_Exploits_AntiAim);
-
+			
 			if (m_mapGroupBoxes.find("Exploits_Shifting") != m_mapGroupBoxes.end()) {
 				m_mapGroupBoxes["Exploits_Shifting"].m_nColumn = col1;
 				m_mapGroupBoxes["Exploits_Shifting"].m_nOrderInColumn = ord1;
@@ -3545,46 +3569,40 @@ void CMenu::MainWindow()
 		m_mapGroupBoxes["Exploits_Shifting"].m_fnRenderContent = [this]() {
 			InputKey("Recharge Key", CFG::Exploits_Shifting_Recharge_Key);
 			InputKey("Double Tap Key", CFG::Exploits_RapidFire_Key);
-
-			// Double Tap ticks: 2–22 normal, 23 = MAX
-			const int nMaxSlider = 23;
+			
+			// DT ticks slider: 2-22 normal, 23 = MAX (which is 24 without AA, 22 with AA)
+			const int nMaxSlider = CFG::Misc_AntiCheat_Enabled ? 8 : 23;
 			const bool bIsMax = (CFG::Exploits_RapidFire_Ticks >= 23);
-
-			std::string sTicksLabel = "Double Tap Ticks";
-			if (bIsMax)
+			std::string sTicksLabel = CFG::Misc_AntiCheat_Enabled ? "Safe Double Tap Ticks" : "Double Tap Ticks";
+			if (bIsMax && !CFG::Misc_AntiCheat_Enabled)
 				sTicksLabel += " (MAX)";
-
 			SliderInt(sTicksLabel.c_str(), CFG::Exploits_RapidFire_Ticks, 2, nMaxSlider, 1);
-
+			
 			SliderInt("Double Tap Delay Ticks", CFG::Exploits_RapidFire_Min_Ticks_Target_Same, 0, 5, 1);
 			CheckBox("Double Tap Antiwarp", CFG::Exploits_RapidFire_Antiwarp);
-
 			InputKey("Warp Key", CFG::Exploits_Warp_Key);
-
 			SelectSingle("Warp Mode", CFG::Exploits_Warp_Mode, {
 				{ "Slow", 0 }, { "Full", 1 }
-				});
-
+			});
 			SelectSingle("Warp Exploit (for 'Full')", CFG::Exploits_Warp_Exploit, {
 				{ "None", 0 }, { "Fake Peek", 1 }, { "0 Velocity", 2 }
-				});
-
+			});
 			CheckBox("Draw Indicator", CFG::Exploits_Shifting_Draw_Indicator);
-			};
+		};
 
 		m_mapGroupBoxes["Exploits_FakeLag"].m_fnRenderContent = [this]() {
 			CheckBox("Enabled (Adaptive)", CFG::Exploits_FakeLag_Enabled);
+			const int nMaxFakeLagTicks = CFG::Misc_AntiCheat_Enabled ? 8 : 21;
+			SliderInt(CFG::Misc_AntiCheat_Enabled ? "Safe Max Ticks" : "Max Ticks", 
+				CFG::Exploits_FakeLag_Max_Ticks, 1, nMaxFakeLagTicks, 1);
 			CheckBox("Only When Moving", CFG::Exploits_FakeLag_Only_Moving);
 			CheckBox("Activate on Sightline", CFG::Exploits_FakeLag_Activate_On_Sightline);
-
-			const int nMaxFakeLagTicks = 21;
-			SliderInt("Max Ticks", CFG::Exploits_FakeLag_Max_Ticks, 1, nMaxFakeLagTicks, 1);
-			};
+		};
 
 		m_mapGroupBoxes["Exploits_AntiAim"].m_fnRenderContent = [this]() {
 			CheckBox("Enabled", CFG::Exploits_AntiAim_Enabled);
 			CheckBox("Legit AA", CFG::Exploits_LegitAA_Enabled);
-
+			
 			if (!CFG::Exploits_LegitAA_Enabled)
 			{
 				SelectSingle("Real Pitch", CFG::Exploits_AntiAim_PitchReal, {
@@ -3594,14 +3612,14 @@ void CMenu::MainWindow()
 					{ "Zero", 3 },
 					{ "Jitter", 4 },
 					{ "Reverse Jitter", 5 }
-					});
+				});
 				SelectSingle("Fake Pitch", CFG::Exploits_AntiAim_PitchFake, {
 					{ "None", 0 },
 					{ "Up", 1 },
 					{ "Down", 2 },
 					{ "Jitter", 3 },
 					{ "Reverse Jitter", 4 }
-					});
+				});
 				SelectSingle("Real Yaw", CFG::Exploits_AntiAim_YawReal, {
 					{ "Forward", 0 },
 					{ "Left", 1 },
@@ -3610,7 +3628,7 @@ void CMenu::MainWindow()
 					{ "Edge", 4 },
 					{ "Jitter", 5 },
 					{ "Spin", 6 }
-					});
+				});
 				SelectSingle("Fake Yaw", CFG::Exploits_AntiAim_YawFake, {
 					{ "Forward", 0 },
 					{ "Left", 1 },
@@ -3619,15 +3637,15 @@ void CMenu::MainWindow()
 					{ "Edge", 4 },
 					{ "Jitter", 5 },
 					{ "Spin", 6 }
-					});
+				});
 				SelectSingle("Real Base", CFG::Exploits_AntiAim_RealYawBase, {
 					{ "View", 0 },
 					{ "Target", 1 }
-					});
+				});
 				SelectSingle("Fake Base", CFG::Exploits_AntiAim_FakeYawBase, {
 					{ "View", 0 },
 					{ "Target", 1 }
-					});
+				});
 				SliderFloat("Real Offset", CFG::Exploits_AntiAim_RealYawOffset, -180.0f, 180.0f, 5.0f, "%.0f");
 				SliderFloat("Fake Offset", CFG::Exploits_AntiAim_FakeYawOffset, -180.0f, 180.0f, 5.0f, "%.0f");
 				// Show yaw value sliders only for Edge/Jitter modes
@@ -3641,9 +3659,9 @@ void CMenu::MainWindow()
 				CheckBox("Anti-Overlap", CFG::Exploits_AntiAim_AntiOverlap);
 				CheckBox("Hide Pitch on Shot", CFG::Exploits_AntiAim_InvalidShootPitch);
 			}
-
+			
 			CheckBox("Min Walk", CFG::Exploits_AntiAim_MinWalk);
-			};
+		};
 
 		m_mapGroupBoxes["Exploits_Crithack"].m_fnRenderContent = [this]() {
 			InputKey("Key", CFG::Exploits_Crits_Force_Crit_Key);
@@ -3658,7 +3676,7 @@ void CMenu::MainWindow()
 					SelectSingle("Text Size", CFG::Visuals_Crit_Indicator_TextSize, {
 						{ "Small", 100 },
 						{ "Medium", 110 }
-						});
+					});
 				}
 				else
 				{
@@ -3667,12 +3685,12 @@ void CMenu::MainWindow()
 				}
 				CheckBox("Indicator Debug", CFG::Visuals_Crit_Indicator_Debug);
 			}
-			};
+		};
 
 		m_mapGroupBoxes["Exploits_No Spread"].m_fnRenderContent = [this]() {
 			CheckBox("Active", CFG::Exploits_SeedPred_Active);
 			CheckBox("Draw Indicator", CFG::Exploits_SeedPred_DrawIndicator);
-			};
+		};
 
 		m_mapGroupBoxes["Exploits_Region Selector"].m_fnRenderContent = [this]() {
 			CheckBox("Active", CFG::Exploits_Region_Selector_Active);
@@ -3685,7 +3703,7 @@ void CMenu::MainWindow()
 					{ "Los Angeles", CFG::Exploits_Region_LAX },
 					{ "Seattle", CFG::Exploits_Region_SEA },
 					{ "Virginia", CFG::Exploits_Region_IAD }
-					});
+				});
 				multiselect("EU Regions", RegionsEU, {
 					{ "Amsterdam", CFG::Exploits_Region_AMS },
 					{ "Frankfurt", CFG::Exploits_Region_FRA },
@@ -3696,13 +3714,13 @@ void CMenu::MainWindow()
 					{ "Stockholm", CFG::Exploits_Region_STO },
 					{ "Vienna", CFG::Exploits_Region_VIE },
 					{ "Warsaw", CFG::Exploits_Region_WAW }
-					});
+				});
 				multiselect("SA Regions", RegionsSA, {
 					{ "Buenos Aires", CFG::Exploits_Region_EZE },
 					{ "Lima", CFG::Exploits_Region_LIM },
 					{ "Santiago", CFG::Exploits_Region_SCL },
 					{ "Sao Paulo", CFG::Exploits_Region_GRU }
-					});
+				});
 				multiselect("Asia Regions", RegionsAsia, {
 					{ "Chennai", CFG::Exploits_Region_MAA },
 					{ "Dubai", CFG::Exploits_Region_DXB },
@@ -3711,18 +3729,18 @@ void CMenu::MainWindow()
 					{ "Seoul", CFG::Exploits_Region_SEO },
 					{ "Singapore", CFG::Exploits_Region_SGP },
 					{ "Tokyo", CFG::Exploits_Region_TYO }
-					});
+				});
 				multiselect("Other Regions", RegionsOther, {
 					{ "Sydney", CFG::Exploits_Region_SYD },
 					{ "Johannesburg", CFG::Exploits_Region_JNB }
-					});
+				});
 			}
-			};
+		};
 
 		// Render all draggable GroupBoxes
 		RenderDraggableGroupBoxes("Exploits", nContentX, nContentY, nContentW, nContentH);
 	}
-
+	
 	if (MainTab == EMainTabs::MISC)
 	{
 		int nContentX = m_nCursorX;
@@ -3735,7 +3753,7 @@ void CMenu::MainWindow()
 			int col = configVal / 100;
 			int order = configVal % 100;
 			return { static_cast<EGroupBoxColumn>(std::clamp(col, 0, 2)), order };
-			};
+		};
 
 		// Register Misc tab GroupBoxes (only once)
 		static bool bMiscInitialized = false;
@@ -3758,7 +3776,7 @@ void CMenu::MainWindow()
 			RegisterGroupBox("Misc", "Movement", col7, ord7, 160);
 			bMiscInitialized = true;
 		}
-
+		
 		// Update GroupBox positions from config (in case config was loaded)
 		{
 			auto [col1, ord1] = LoadGroupBoxPosition(CFG::Menu_GroupBox_Misc_Misc);
@@ -3768,7 +3786,7 @@ void CMenu::MainWindow()
 			auto [col5, ord5] = LoadGroupBoxPosition(CFG::Menu_GroupBox_Misc_Taunt);
 			auto [col6, ord6] = LoadGroupBoxPosition(CFG::Menu_GroupBox_Misc_Auto);
 			auto [col7, ord7] = LoadGroupBoxPosition(CFG::Menu_GroupBox_Misc_Movement);
-
+			
 			if (m_mapGroupBoxes.find("Misc_Misc") != m_mapGroupBoxes.end()) {
 				m_mapGroupBoxes["Misc_Misc"].m_nColumn = col1;
 				m_mapGroupBoxes["Misc_Misc"].m_nOrderInColumn = ord1;
@@ -3824,8 +3842,8 @@ void CMenu::MainWindow()
 					if (cmd->m_nFlags & FCVAR_CHEAT) cmd->m_nFlags &= ~FCVAR_CHEAT;
 				}
 			}
-			};
-
+		};
+		
 		m_mapGroupBoxes["Misc_Movement"].m_fnRenderContent = [this]() {
 			CheckBox("Bunnyhop", CFG::Misc_Bunnyhop);
 			CheckBox("Choke on Bunnyhop", CFG::Misc_Choke_On_Bhop);
@@ -3844,9 +3862,9 @@ void CMenu::MainWindow()
 			InputKey("Auto RJ Key", CFG::Misc_Auto_Rocket_Jump_Key);
 			SelectSingle("Auto RJ Mode", CFG::Misc_Auto_Rocket_Jump_Mode, {
 				{ "High", 0 }, { "Forward", 1 }, { "Dynamic", 2 }
-				});
+			});
 			InputKey("Auto FaN Key", CFG::Misc_AutoFaN_Key);
-			};
+		};
 
 		m_mapGroupBoxes["Misc_Game"].m_fnRenderContent = [this]() {
 			CheckBox("Network Fix", CFG::Misc_Ping_Reducer);
@@ -3856,6 +3874,46 @@ void CMenu::MainWindow()
 			CheckBox("Prediction Error Jitter Fix", CFG::Misc_Pred_Error_Jitter_Fix);
 			CheckBox("ComputeLightingOrigin Fix", CFG::Misc_ComputeLightingOrigin_Fix);
 			CheckBox("SetupBones Optimization", CFG::Misc_SetupBones_Optimization);
+			
+			// Anti-Cheat toggle with save/restore of fakelag and doubletap values
+			{
+				static bool s_bWasAntiCheatEnabled = CFG::Misc_AntiCheat_Enabled;
+				static int s_nSavedRapidFireTicks = 0;
+				static int s_nSavedFakeLagTicks = 0;
+				
+				const bool bOldValue = CFG::Misc_AntiCheat_Enabled;
+				CheckBox("Anti-Cheat Compatibility", CFG::Misc_AntiCheat_Enabled);
+				
+				// Detect toggle
+				if (CFG::Misc_AntiCheat_Enabled != bOldValue)
+				{
+					if (CFG::Misc_AntiCheat_Enabled)
+					{
+						// Turning ON - save current values and clamp
+						s_nSavedRapidFireTicks = CFG::Exploits_RapidFire_Ticks;
+						s_nSavedFakeLagTicks = CFG::Exploits_FakeLag_Max_Ticks;
+						
+						// Clamp to safe values
+						if (CFG::Exploits_RapidFire_Ticks > 8)
+							CFG::Exploits_RapidFire_Ticks = 8;
+						if (CFG::Exploits_FakeLag_Max_Ticks > 8)
+							CFG::Exploits_FakeLag_Max_Ticks = 8;
+					}
+					else
+					{
+						// Turning OFF - restore saved values
+						if (s_nSavedRapidFireTicks > 0)
+							CFG::Exploits_RapidFire_Ticks = s_nSavedRapidFireTicks;
+						if (s_nSavedFakeLagTicks > 0)
+							CFG::Exploits_FakeLag_Max_Ticks = s_nSavedFakeLagTicks;
+					}
+				}
+				
+				s_bWasAntiCheatEnabled = CFG::Misc_AntiCheat_Enabled;
+			}
+			
+			if (CFG::Misc_AntiCheat_Enabled)
+				CheckBox("Skip Crit Detection", CFG::Misc_AntiCheat_SkipCritDetection);
 			if (Button("Fix Invisible Players"))
 			{
 				// Record and stop demo to refresh client-side state
@@ -3869,26 +3927,35 @@ void CMenu::MainWindow()
 				// Also use record/stop trick to refresh client render state
 				I::EngineClient->ClientCmd_Unrestricted("record fix; stop");
 			}
-			};
+		};
 
 		m_mapGroupBoxes["Misc_Mann vs. Machine"].m_fnRenderContent = [this]() {
 			InputKey("Instant Respawn", CFG::Misc_MVM_Instant_Respawn_Key);
 			CheckBox("Instant Revive", CFG::Misc_MVM_Instant_Revive);
-			};
+		};
 
 		m_mapGroupBoxes["Misc_Chat"].m_fnRenderContent = [this]() {
 			CheckBox("Chat Spammer", CFG::Misc_Chat_Spammer_Active);
-			if (CFG::Misc_Chat_Spammer_Active)
-			{
-				InputText("Spam Text", "Enter message:", CFG::Misc_Chat_Spammer_Text);
-				SliderFloat("Interval", CFG::Misc_Chat_Spammer_Interval, 0.1f, 10.0f, 0.1f, "%.1fs");
-			}
 			CheckBox("Killsay", CFG::Misc_Chat_Killsay_Active);
-			if (CFG::Misc_Chat_Killsay_Active)
+			
+			if (CFG::Misc_Chat_Spammer_Active || CFG::Misc_Chat_Killsay_Active)
 			{
-				InputText("Killsay Text", "Enter message:", CFG::Misc_Chat_Killsay_Text);
+				if (CFG::Misc_Chat_Spammer_Active)
+				{
+					SliderFloat("Interval", CFG::Misc_Chat_Spammer_Interval, 0.1f, 10.0f, 0.1f, "%.1fs");
+				}
+				
+				if (CFG::Misc_Chat_Killsay_Active)
+				{
+					CheckBox("Tagged Only", CFG::Misc_Chat_Killsay_Tagged_Only);
+				}
+				
+				if (Button("Text Files"))
+				{
+					OpenChatTextFiles();
+				}
 			}
-			};
+		};
 
 		m_mapGroupBoxes["Misc_Taunt"].m_fnRenderContent = [this]() {
 			CheckBox("Taunt Slide", CFG::Misc_Taunt_Slide);
@@ -3897,7 +3964,7 @@ void CMenu::MainWindow()
 			SliderFloat("Taunt Spin Speed", CFG::Misc_Taunt_Spin_Speed, -50.0f, 50.0f, 1.0f, "%.0f");
 			CheckBox("Taunt Spin Sine", CFG::Misc_Taunt_Spin_Sine);
 			CheckBox("Fake Taunt", CFG::Misc_Fake_Taunt);
-			};
+		};
 
 		m_mapGroupBoxes["Misc_Auto"].m_fnRenderContent = [this]() {
 			CheckBox("Auto Casual Queue", CFG::Misc_Auto_Queue);
@@ -3909,17 +3976,17 @@ void CMenu::MainWindow()
 					SelectSingle("Class", CFG::Misc_Auto_Call_Medic_Low_HP_Class, {
 						{ "Scout", 0 }, { "Soldier", 1 }, { "Pyro", 2 }, { "Demoman", 3 },
 						{ "Heavy", 4 }, { "Engineer", 5 }, { "Sniper", 6 }, { "Spy", 7 }, { "Medic", 8 }
-						});
+					});
 					switch (CFG::Misc_Auto_Call_Medic_Low_HP_Class) {
-					case 0: SliderInt("HP Threshold", CFG::Misc_Auto_Call_Medic_HP_Scout, 10, 125, 5); break;
-					case 1: SliderInt("HP Threshold", CFG::Misc_Auto_Call_Medic_HP_Soldier, 10, 220, 5); break;
-					case 2: SliderInt("HP Threshold", CFG::Misc_Auto_Call_Medic_HP_Pyro, 10, 175, 5); break;
-					case 3: SliderInt("HP Threshold", CFG::Misc_Auto_Call_Medic_HP_Demoman, 10, 175, 5); break;
-					case 4: SliderInt("HP Threshold", CFG::Misc_Auto_Call_Medic_HP_Heavy, 10, 350, 5); break;
-					case 5: SliderInt("HP Threshold", CFG::Misc_Auto_Call_Medic_HP_Engineer, 10, 150, 5); break;
-					case 6: SliderInt("HP Threshold", CFG::Misc_Auto_Call_Medic_HP_Sniper, 10, 125, 5); break;
-					case 7: SliderInt("HP Threshold", CFG::Misc_Auto_Call_Medic_HP_Spy, 10, 125, 5); break;
-					case 8: SliderInt("HP Threshold", CFG::Misc_Auto_Call_Medic_HP_Medic, 10, 150, 5); break;
+						case 0: SliderInt("HP Threshold", CFG::Misc_Auto_Call_Medic_HP_Scout, 10, 125, 5); break;
+						case 1: SliderInt("HP Threshold", CFG::Misc_Auto_Call_Medic_HP_Soldier, 10, 220, 5); break;
+						case 2: SliderInt("HP Threshold", CFG::Misc_Auto_Call_Medic_HP_Pyro, 10, 175, 5); break;
+						case 3: SliderInt("HP Threshold", CFG::Misc_Auto_Call_Medic_HP_Demoman, 10, 175, 5); break;
+						case 4: SliderInt("HP Threshold", CFG::Misc_Auto_Call_Medic_HP_Heavy, 10, 350, 5); break;
+						case 5: SliderInt("HP Threshold", CFG::Misc_Auto_Call_Medic_HP_Engineer, 10, 150, 5); break;
+						case 6: SliderInt("HP Threshold", CFG::Misc_Auto_Call_Medic_HP_Sniper, 10, 125, 5); break;
+						case 7: SliderInt("HP Threshold", CFG::Misc_Auto_Call_Medic_HP_Spy, 10, 125, 5); break;
+						case 8: SliderInt("HP Threshold", CFG::Misc_Auto_Call_Medic_HP_Medic, 10, 150, 5); break;
 					}
 				}
 			}
@@ -3927,7 +3994,7 @@ void CMenu::MainWindow()
 			CheckBox("PD Only Warp", CFG::Misc_Projectile_Dodge_Only_Warp);
 			CheckBox("PD Use Warp", CFG::Misc_Projectile_Dodge_Use_Warp);
 			CheckBox("Disable DT While Airborne", CFG::Misc_Projectile_Dodge_Disable_DT_Airborne);
-			};
+		};
 
 		m_mapGroupBoxes["Misc_Triggerbot"].m_fnRenderContent = [this]() {
 			CheckBox("Master Switch", CFG::Triggerbot_Active);
@@ -3939,9 +4006,9 @@ void CMenu::MainWindow()
 					CheckBox("No Pop (Cycle Only)", CFG::Triggerbot_AutoVaccinator_NoPop);
 				SelectSingle("Pop For", CFG::Triggerbot_AutoVaccinator_Pop, {
 					{ "Everyone", 0 }, { "Friends Only", 1 }
-					});
+				});
 			}
-			};
+		};
 
 		// Render all draggable GroupBoxes
 		RenderDraggableGroupBoxes("Misc", nContentX, nContentY, nContentW, nContentH);
@@ -3953,24 +4020,24 @@ void CMenu::MainWindow()
 
 		// Helper function to get party color
 		auto GetPartyColor = [](int nPartyIndex) -> Color_t
+		{
+			switch (nPartyIndex)
 			{
-				switch (nPartyIndex)
-				{
-				case 1: return CFG::Color_Party_1;
-				case 2: return CFG::Color_Party_2;
-				case 3: return CFG::Color_Party_3;
-				case 4: return CFG::Color_Party_4;
-				case 5: return CFG::Color_Party_5;
-				case 6: return CFG::Color_Party_6;
-				case 7: return CFG::Color_Party_7;
-				case 8: return CFG::Color_Party_8;
-				case 9: return CFG::Color_Party_9;
-				case 10: return CFG::Color_Party_10;
-				case 11: return CFG::Color_Party_11;
-				case 12: return CFG::Color_Party_12;
-				default: return CFG::Menu_Text_Inactive;
-				}
-			};
+			case 1: return CFG::Color_Party_1;
+			case 2: return CFG::Color_Party_2;
+			case 3: return CFG::Color_Party_3;
+			case 4: return CFG::Color_Party_4;
+			case 5: return CFG::Color_Party_5;
+			case 6: return CFG::Color_Party_6;
+			case 7: return CFG::Color_Party_7;
+			case 8: return CFG::Color_Party_8;
+			case 9: return CFG::Color_Party_9;
+			case 10: return CFG::Color_Party_10;
+			case 11: return CFG::Color_Party_11;
+			case 12: return CFG::Color_Party_12;
+			default: return CFG::Menu_Text_Inactive;
+			}
+		};
 
 		if (I::EngineClient->IsConnected())
 		{
@@ -4158,14 +4225,14 @@ void CMenu::MainWindow()
 					// Draw ALERT box with red background (clickable)
 					int alertW = 45;
 					int alertH = H::Fonts->Get(EFonts::Menu).m_nTall + CFG::Menu_Spacing_Y - 1;
-
+					
 					bool bAlertHovered = IsHovered(m_nCursorX, m_nCursorY, alertW, alertH, nullptr);
 					Color_t alertBg = bAlertHovered ? Color_t{ 220, 60, 60, 255 } : Color_t{ 180, 40, 40, 255 };
-
+					
 					H::Draw->Rect(m_nCursorX, m_nCursorY, alertW, alertH, alertBg);
 					H::Draw->OutlinedRect(m_nCursorX, m_nCursorY, alertW, alertH, { 255, 80, 80, 255 });
 					H::Draw->String(H::Fonts->Get(EFonts::Menu), m_nCursorX + alertW / 2, m_nCursorY + alertH / 2 - 1, { 255, 255, 255, 255 }, POS_CENTERXY, "ALERT!");
-
+					
 					// Click on ALERT to view player details and dismiss alert
 					if (bAlertHovered && H::Input->IsPressed(VK_LBUTTON) && !m_bClickConsumed)
 					{
@@ -4192,7 +4259,7 @@ void CMenu::MainWindow()
 
 		int nCount = 0;
 
-		for (const auto& entry : std::filesystem::directory_iterator(configFolder))
+		for (const auto &entry : std::filesystem::directory_iterator(configFolder))
 		{
 			if (std::string(std::filesystem::path(entry).filename().string()).find(".json") == std::string_view::npos)
 				continue;
@@ -4210,18 +4277,18 @@ void CMenu::MainWindow()
 			if (InputText("Create New", "Enter a Name:", strInput))
 			{
 				bool bAlreadyExists = [&]() -> bool
+				{
+					for (const auto &entry : std::filesystem::directory_iterator(configFolder))
 					{
-						for (const auto& entry : std::filesystem::directory_iterator(configFolder))
-						{
-							if (std::string(std::filesystem::path(entry).filename().string()).find(".json") == std::string_view::npos)
-								continue;
+						if (std::string(std::filesystem::path(entry).filename().string()).find(".json") == std::string_view::npos)
+							continue;
 
-							if (!std::string(std::filesystem::path(entry).filename().string()).compare(strInput))
-								return true;
-						}
+						if (!std::string(std::filesystem::path(entry).filename().string()).compare(strInput))
+							return true;
+					}
 
-						return false;
-					}();
+					return false;
+				}();
 
 				if (!bAlreadyExists)
 				{
@@ -4229,7 +4296,7 @@ void CMenu::MainWindow()
 					Config::Save(configFolder / newFile);
 				}
 			}
-
+			
 			//can't do this nicely after getting rid of std::any..
 
 			/*auto anchor_x2{ anchor_x };
@@ -4261,7 +4328,7 @@ void CMenu::MainWindow()
 				{
 					m_nCursorY += CFG::Menu_Spacing_Y;
 
-					for (const auto& entry : std::filesystem::directory_iterator(configFolder))
+					for (const auto &entry : std::filesystem::directory_iterator(configFolder))
 					{
 						if (std::string(std::filesystem::path(entry).filename().string()).find(".json") == std::string_view::npos)
 							continue;
@@ -4317,7 +4384,7 @@ void CMenu::MainWindow()
 		// Legacy seonwdde configs on the right side
 		static std::string strLegacySelected = {};
 		const auto& legacyFolder = U::Storage->GetLegacyConfigFolder();
-
+		
 		if (U::Storage->HasLegacyConfigs())
 		{
 			// Save current position and move to right column
@@ -4325,7 +4392,7 @@ void CMenu::MainWindow()
 			int leftColumnY = m_nCursorY;
 			m_nCursorX += 330; // Move to right column
 			m_nCursorY = nConfigTabStartY; // Reset Y to top
-
+			
 			if (strLegacySelected.empty())
 			{
 				GroupBoxStart("SEOwnedDE (Migrate)", 150);
@@ -4364,7 +4431,7 @@ void CMenu::MainWindow()
 				}
 				GroupBoxEnd();
 			}
-
+			
 			// Restore position to left column
 			m_nCursorX = leftColumnX;
 			m_nCursorY = leftColumnY;
@@ -4378,37 +4445,37 @@ void CMenu::MainWindow()
 
 		// Autosave groupbox - positioned below the configs groupbox
 		m_nCursorY += CFG::Menu_Spacing_Y;
-
+		
 		GroupBoxStart("Autosave", 150);
 		{
 			m_nCursorY += CFG::Menu_Spacing_Y;
-
+			
 			// Load autosave on inject option (stored separately from config)
 			static bool bLoadOnInject = U::Storage->GetLoadAutosaveOnInject();
 			if (CheckBox("Load Latest on Inject", bLoadOnInject))
 			{
 				U::Storage->SetLoadAutosaveOnInject(bLoadOnInject);
 			}
-
+			
 			m_nCursorY += CFG::Menu_Spacing_Y;
-
+			
 			const auto& autosaveFolder = U::Storage->GetAutosaveFolder();
-
+			
 			// Display 5 autosave slots
 			for (int i = 1; i <= 5; i++)
 			{
 				std::string fileName = "autosave_" + std::to_string(i) + ".json";
 				auto path = autosaveFolder / fileName;
-
+				
 				std::string label;
 				if (i == 1)
 					label = "AUTOSAVE LATEST";
 				else
 					label = "AUTOSAVE " + std::to_string(i);
-
+				
 				// Check if file exists
 				bool bExists = std::filesystem::exists(path);
-
+				
 				if (bExists)
 				{
 					if (Button(label.c_str(), false, ((m_nLastGroupBoxW + 1) - (CFG::Menu_Spacing_X * 6))))
@@ -4430,11 +4497,11 @@ void CMenu::MainWindow()
 		// Unbind All button at bottom right
 		int savedX = m_nCursorX;
 		int savedY = m_nCursorY;
-
+		
 		// Position at bottom right of menu (moved more to the left)
 		m_nCursorX = CFG::Menu_Pos_X + CFG::Menu_Width - 130 - CFG::Menu_Spacing_X;
 		m_nCursorY = CFG::Menu_Pos_Y + CFG::Menu_Height - 30 - CFG::Menu_Spacing_Y;
-
+		
 		if (Button("Unbind All Keys", false, 120))
 		{
 			// Unbind all keybinds
@@ -4455,7 +4522,7 @@ void CMenu::MainWindow()
 			CFG::Exploits_Crits_Force_Crit_Key = 0;
 			CFG::Exploits_Crits_Force_Crit_Key_Melee = 0;
 		}
-
+		
 		m_nCursorX = savedX;
 		m_nCursorY = savedY;
 	}
@@ -4493,7 +4560,7 @@ void CMenu::MainWindow()
 		// Large avatar at top
 		const int nLargeAvatarSize = 64;
 		const bool bShowAvatars = I::SteamFriends && I::SteamUtils;
-
+		
 		int nAvatarX = m_nCursorX;
 		int nAvatarY = m_nCursorY;
 
@@ -4664,23 +4731,23 @@ void CMenu::MainWindow()
 			}
 
 			auto FormatTimeAgo = [](int64_t timestamp) -> std::string
-				{
-					if (timestamp <= 0)
-						return "Never";
-
-					auto now = std::chrono::duration_cast<std::chrono::seconds>(
-						std::chrono::system_clock::now().time_since_epoch()).count();
-					int64_t diff = now - timestamp;
-
-					if (diff < 60)
-						return "Just now";
-					else if (diff < 3600)
-						return std::to_string(diff / 60) + " min ago";
-					else if (diff < 86400)
-						return std::to_string(diff / 3600) + " hours ago";
-					else
-						return std::to_string(diff / 86400) + " days ago";
-				};
+			{
+				if (timestamp <= 0)
+					return "Never";
+				
+				auto now = std::chrono::duration_cast<std::chrono::seconds>(
+					std::chrono::system_clock::now().time_since_epoch()).count();
+				int64_t diff = now - timestamp;
+				
+				if (diff < 60)
+					return "Just now";
+				else if (diff < 3600)
+					return std::to_string(diff / 60) + " min ago";
+				else if (diff < 86400)
+					return std::to_string(diff / 3600) + " hours ago";
+				else
+					return std::to_string(diff / 86400) + " days ago";
+			};
 
 			// First seen
 			if (playerStats.FirstSeen > 0)
@@ -4907,18 +4974,18 @@ void CMenu::Snow()
 	}
 
 	auto GenerateSnowFlake = [](bool bFirstTime = false)
-		{
-			SnowFlake_t Out = {};
+	{
+		SnowFlake_t Out = {};
 
-			Out.m_flPosX = static_cast<float>(Utils::RandInt(-(H::Draw->GetScreenW() / 2), H::Draw->GetScreenW()));
-			Out.m_flPosY = static_cast<float>(Utils::RandInt(bFirstTime ? -(H::Draw->GetScreenH() * 2) : -100, -50));
-			Out.m_flFallSpeed = static_cast<float>(Utils::RandInt(100, 200));
-			Out.m_flDriftXSpeed = static_cast<float>(Utils::RandInt(10, 70));
-			Out.m_nAlpha = static_cast<byte>(Utils::RandInt(5, 255));
-			Out.m_nSize = Utils::RandInt(1, 2);
+		Out.m_flPosX = static_cast<float>(Utils::RandInt(-(H::Draw->GetScreenW() / 2), H::Draw->GetScreenW()));
+		Out.m_flPosY = static_cast<float>(Utils::RandInt(bFirstTime ? -(H::Draw->GetScreenH() * 2) : -100, -50));
+		Out.m_flFallSpeed = static_cast<float>(Utils::RandInt(100, 200));
+		Out.m_flDriftXSpeed = static_cast<float>(Utils::RandInt(10, 70));
+		Out.m_nAlpha = static_cast<byte>(Utils::RandInt(5, 255));
+		Out.m_nSize = Utils::RandInt(1, 2);
 
-			return Out;
-		};
+		return Out;
+	};
 
 	if (vecSnowFlakes.empty())
 	{
@@ -4928,7 +4995,7 @@ void CMenu::Snow()
 		}
 	}
 
-	for (auto& SnowFlake : vecSnowFlakes)
+	for (auto &SnowFlake : vecSnowFlakes)
 	{
 		if (SnowFlake.m_flPosY > H::Draw->GetScreenH() + 50)
 		{
@@ -4978,10 +5045,10 @@ void CMenu::Run()
 {
 	// Process delayed autosave load on inject
 	U::Storage->Update();
-
+	
 	// Process autosave (saves config after delay when changes are made)
 	ProcessAutosave();
-
+	
 	// Auto-check all players' sourcebans when connected (runs every frame but only checks new players)
 	CheckAllPlayersSourcebans();
 
@@ -5006,7 +5073,7 @@ void CMenu::Run()
 		{
 			for (int j = 0; j < 200; j++)
 			{
-				*reinterpret_cast<Color_t*>(m_pGradient.get() + j + i * 200) = ColorUtils::HSLToRGB(hue, sat, lum);
+				*reinterpret_cast<Color_t *>(m_pGradient.get() + j + i * 200) = ColorUtils::HSLToRGB(hue, sat, lum);
 				hue += 1.0f / 200.0f;
 			}
 
@@ -5015,7 +5082,7 @@ void CMenu::Run()
 		}
 
 		m_nColorPickerTextureId = I::MatSystemSurface->CreateNewTextureID(true);
-		I::MatSystemSurface->DrawSetTextureRGBAEx(m_nColorPickerTextureId, reinterpret_cast<const unsigned char*>(m_pGradient.get()), 200, 200, IMAGE_FORMAT_RGBA8888);
+		I::MatSystemSurface->DrawSetTextureRGBAEx(m_nColorPickerTextureId, reinterpret_cast<const unsigned char *>(m_pGradient.get()), 200, 200, IMAGE_FORMAT_RGBA8888);
 	}
 
 	if (H::Input->IsPressed(VK_INSERT) || H::Input->IsPressed(VK_F3))
@@ -5026,16 +5093,16 @@ void CMenu::Run()
 	float deltaTime = currentTime - m_flLastFrameTime;
 	if (deltaTime > 0.1f) deltaTime = 0.1f; // Cap delta time
 	m_flLastFrameTime = currentTime;
-
+	
 	m_animator.Update(deltaTime);
 	m_particles.Update(deltaTime);
-
+	
 	// Menu open/close animation
 	float targetOpenProgress = m_bOpen ? 1.0f : 0.0f;
 	float openSpeed = 6.0f;
 	m_flMenuOpenProgress += (targetOpenProgress - m_flMenuOpenProgress) * openSpeed * deltaTime;
 	m_flMenuOpenProgress = std::max(0.0f, std::min(1.0f, m_flMenuOpenProgress));
-
+	
 	// Clear states when menu closes
 	if (m_bWasOpen && !m_bOpen)
 	{
@@ -5203,9 +5270,9 @@ void CMenu::ProcessAutosave()
 {
 	if (!m_bConfigChanged)
 		return;
-
+	
 	float flCurrentTime = I::EngineClient->Time();
-
+	
 	// Wait for AUTOSAVE_DELAY seconds after last change before saving
 	if (flCurrentTime - m_flLastChangeTime >= AUTOSAVE_DELAY)
 	{
@@ -5221,7 +5288,7 @@ void CMenu::ProcessAutosave()
 void CMenu::RegisterGroupBox(const std::string& szTab, const std::string& szLabel, EGroupBoxColumn nDefaultColumn, int nOrder, int nWidth, EGroupBoxSize eSize)
 {
 	std::string szId = szTab + "_" + szLabel;
-
+	
 	if (m_mapGroupBoxes.find(szId) == m_mapGroupBoxes.end())
 	{
 		DraggableGroupBox_t gb;
@@ -5251,7 +5318,7 @@ EGroupBoxColumn CMenu::GetColumnFromMouseX(int nContentX, int nContentW)
 	int colSpacing = CFG::Menu_Spacing_X * 4;  // Match RenderDraggableGroupBoxes spacing
 	int col1End = nContentX + gbWidth + colSpacing;
 	int col2End = col1End + gbWidth + colSpacing;
-
+	
 	if (mx < col1End)
 		return EGroupBoxColumn::LEFT;
 	else if (mx < col2End)
@@ -5263,7 +5330,7 @@ EGroupBoxColumn CMenu::GetColumnFromMouseX(int nContentX, int nContentW)
 void CMenu::ReorderGroupBoxesInColumn(const std::string& szTab, EGroupBoxColumn nColumn)
 {
 	std::vector<std::string> boxesInColumn;
-
+	
 	for (auto& pair : m_mapGroupBoxes)
 	{
 		if (pair.second.m_szId.find(szTab + "_") == 0 && pair.second.m_nColumn == nColumn)
@@ -5271,12 +5338,12 @@ void CMenu::ReorderGroupBoxesInColumn(const std::string& szTab, EGroupBoxColumn 
 			boxesInColumn.push_back(pair.first);
 		}
 	}
-
+	
 	// Sort by order - use stable sort to maintain relative order for equal values
 	std::stable_sort(boxesInColumn.begin(), boxesInColumn.end(), [this](const std::string& a, const std::string& b) {
 		return m_mapGroupBoxes[a].m_nOrderInColumn < m_mapGroupBoxes[b].m_nOrderInColumn;
-		});
-
+	});
+	
 	// Reassign orders sequentially
 	for (int i = 0; i < static_cast<int>(boxesInColumn.size()); i++)
 	{
@@ -5288,22 +5355,22 @@ void CMenu::HandleGroupBoxDrag()
 {
 	if (!m_bIsDraggingGroupBox)
 		return;
-
+	
 	if (!H::Input->IsHeld(VK_LBUTTON))
 	{
 		// Drop the GroupBox
 		m_bIsDraggingGroupBox = false;
 		m_bShowDropZones = false;
-
+		
 		if (m_mapGroupBoxes.find(m_strDraggingGroupBox) != m_mapGroupBoxes.end())
 		{
 			auto& gb = m_mapGroupBoxes[m_strDraggingGroupBox];
 			EGroupBoxColumn oldColumn = gb.m_nColumn;
 			EGroupBoxColumn targetColumn = m_nHoveredDropColumn;
-
+			
 			// Find the tab name
 			std::string szTab = m_strDraggingGroupBox.substr(0, m_strDraggingGroupBox.find('_'));
-
+			
 			// Validation for Exploits tab using size categories
 			// Rules:
 			// - 1 big + 1 medium + 1 extrasmall allowed in 1 lane
@@ -5316,56 +5383,56 @@ void CMenu::HandleGroupBoxDrag()
 				int nMediumInTarget = 0;
 				int nSmallInTarget = 0;
 				int nExtraSmallInTarget = 0;
-
+				
 				for (auto& pair : m_mapGroupBoxes)
 				{
-					if (pair.first != m_strDraggingGroupBox &&
-						pair.second.m_szId.find("Exploits_") == 0 &&
-						pair.second.m_nColumn == targetColumn)
+					if (pair.first != m_strDraggingGroupBox && 
+					    pair.second.m_szId.find("Exploits_") == 0 && 
+					    pair.second.m_nColumn == targetColumn)
 					{
 						switch (pair.second.m_eSize)
 						{
-						case EGroupBoxSize::BIG: nBigInTarget++; break;
-						case EGroupBoxSize::MEDIUM: nMediumInTarget++; break;
-						case EGroupBoxSize::SMALL: nSmallInTarget++; break;
-						case EGroupBoxSize::EXTRA_SMALL: nExtraSmallInTarget++; break;
+							case EGroupBoxSize::BIG: nBigInTarget++; break;
+							case EGroupBoxSize::MEDIUM: nMediumInTarget++; break;
+							case EGroupBoxSize::SMALL: nSmallInTarget++; break;
+							case EGroupBoxSize::EXTRA_SMALL: nExtraSmallInTarget++; break;
 						}
 					}
 				}
-
+				
 				// Add the dragged box counts
 				int nNewBig = nBigInTarget + (gb.m_eSize == EGroupBoxSize::BIG ? 1 : 0);
 				int nNewMedium = nMediumInTarget + (gb.m_eSize == EGroupBoxSize::MEDIUM ? 1 : 0);
 				int nNewSmall = nSmallInTarget + (gb.m_eSize == EGroupBoxSize::SMALL ? 1 : 0);
 				int nNewExtraSmall = nExtraSmallInTarget + (gb.m_eSize == EGroupBoxSize::EXTRA_SMALL ? 1 : 0);
-
+				
 				// Check valid combinations:
 				// 1. 1 big + 1 medium + 1 extrasmall
 				// 2. 1 big + 1 extrasmall + 2 small
 				// 3. 2 medium + 1 small + 1 extrasmall (or 2 medium + 2 small with no extrasmall)
 				bool bValidPlacement = false;
-
+				
 				// Rule 1: 1 big + 1 medium + 1 extrasmall (no small)
 				if (nNewBig == 1 && nNewMedium <= 1 && nNewSmall == 0 && nNewExtraSmall <= 1)
 					bValidPlacement = true;
-
+				
 				// Rule 2: 1 big + 1 extrasmall + up to 2 small (no medium)
 				if (nNewBig == 1 && nNewMedium == 0 && nNewSmall <= 2 && nNewExtraSmall <= 1)
 					bValidPlacement = true;
-
+				
 				// Rule 3: 2 medium + 1 small + 1 extrasmall (no big)
 				if (nNewBig == 0 && nNewMedium <= 2 && nNewSmall <= 1 && nNewExtraSmall <= 1)
 					bValidPlacement = true;
-
+				
 				// Rule 3 variant: 2 medium + 1 small (no big, no extrasmall)
 				if (nNewBig == 0 && nNewMedium <= 2 && nNewSmall <= 1 && nNewExtraSmall == 0)
 					bValidPlacement = true;
-
+				
 				// Also allow empty or single-item columns
 				int totalInColumn = nNewBig + nNewMedium + nNewSmall + nNewExtraSmall;
 				if (totalInColumn <= 1)
 					bValidPlacement = true;
-
+				
 				if (!bValidPlacement)
 					targetColumn = oldColumn;
 			}
@@ -5376,30 +5443,30 @@ void CMenu::HandleGroupBoxDrag()
 				// Big sections: Game, Auto, Movement, Taunt, Misc
 				// Small sections: Chat, Mann vs. Machine
 				// Max per column: 3 big + 1 small, OR 2 big + 2 small
-
+				
 				auto isBigSection = [](const std::string& id) -> bool {
-					return id == "Misc_Game" || id == "Misc_Auto" || id == "Misc_Movement" ||
-						id == "Misc_Taunt" || id == "Misc_Misc" || id == "Misc_Chat";
-					};
-
+					return id == "Misc_Game" || id == "Misc_Auto" || id == "Misc_Movement" || 
+					       id == "Misc_Taunt" || id == "Misc_Misc" || id == "Misc_Chat";
+				};
+				
 				auto isSmallSection = [](const std::string& id) -> bool {
 					return id == "Misc_Mann vs. Machine";
-					};
-
+				};
+				
 				// Extra large sections - can't have all 3 in same column
 				auto isExtraLargeSection = [](const std::string& id) -> bool {
 					return id == "Misc_Misc" || id == "Misc_Auto" || id == "Misc_Movement";
-					};
-
+				};
+				
 				// Count big, small, and extra large sections in target column (excluding the dragged one)
 				int nBigInTarget = 0;
 				int nSmallInTarget = 0;
 				int nExtraLargeInTarget = 0;
 				for (auto& pair : m_mapGroupBoxes)
 				{
-					if (pair.first != m_strDraggingGroupBox &&
-						pair.second.m_szId.find("Misc_") == 0 &&
-						pair.second.m_nColumn == targetColumn)
+					if (pair.first != m_strDraggingGroupBox && 
+					    pair.second.m_szId.find("Misc_") == 0 && 
+					    pair.second.m_nColumn == targetColumn)
 					{
 						if (isBigSection(pair.first))
 							nBigInTarget++;
@@ -5409,16 +5476,16 @@ void CMenu::HandleGroupBoxDrag()
 							nExtraLargeInTarget++;
 					}
 				}
-
+				
 				// Check if adding this box would exceed limits
 				bool bDraggedIsBig = isBigSection(m_strDraggingGroupBox);
 				bool bDraggedIsSmall = isSmallSection(m_strDraggingGroupBox);
 				bool bDraggedIsExtraLarge = isExtraLargeSection(m_strDraggingGroupBox);
-
+				
 				int nNewBig = nBigInTarget + (bDraggedIsBig ? 1 : 0);
 				int nNewSmall = nSmallInTarget + (bDraggedIsSmall ? 1 : 0);
 				int nNewExtraLarge = nExtraLargeInTarget + (bDraggedIsExtraLarge ? 1 : 0);
-
+				
 				// Valid combinations per column:
 				// - Max 3 big + 1 small
 				// - OR 2 big + 2 small
@@ -5428,41 +5495,41 @@ void CMenu::HandleGroupBoxDrag()
 					bValidPlacement = true;
 				else if (nNewBig <= 2 && nNewSmall <= 2)
 					bValidPlacement = true;
-
+				
 				// Extra constraint: Misc, Auto, Movement can't all be in same column
 				if (nNewExtraLarge >= 3)
 					bValidPlacement = false;
-
+				
 				if (!bValidPlacement)
 					targetColumn = oldColumn;
 			}
-
+			
 			// Assign order based on mouse Y position
 			int my = H::Input->GetMouseY();
 			int insertionIndex = 0;
-
+			
 			// Collect all boxes in the target column (excluding the dragged one) and sort by order
 			std::vector<DraggableGroupBox_t*> boxesInColumn;
 			for (auto& pair : m_mapGroupBoxes)
 			{
-				if (pair.first != m_strDraggingGroupBox &&
-					pair.second.m_szId.find(szTab + "_") == 0 &&
+				if (pair.first != m_strDraggingGroupBox && 
+					pair.second.m_szId.find(szTab + "_") == 0 && 
 					pair.second.m_nColumn == targetColumn)
 				{
 					boxesInColumn.push_back(&pair.second);
 				}
 			}
-
+			
 			// Sort by current order
 			std::sort(boxesInColumn.begin(), boxesInColumn.end(), [](DraggableGroupBox_t* a, DraggableGroupBox_t* b) {
 				return a->m_nOrderInColumn < b->m_nOrderInColumn;
-				});
-
+			});
+			
 			// Calculate logical Y positions (where boxes would be without the dragged item)
 			// Use m_nDragContentY which is the consistent starting Y position from rendering
 			// This ensures the drop logic matches the visual indicator
 			int calcY = m_nDragContentY;
-
+			
 			// Find insertion index based on mouse Y against logical positions
 			// We compare against the BOTTOM of each box, not the middle
 			// This makes it easier to drop below an item
@@ -5471,17 +5538,17 @@ void CMenu::HandleGroupBoxDrag()
 			{
 				int boxHeight = boxesInColumn[i]->m_nHeight > 0 ? boxesInColumn[i]->m_nHeight : 80;
 				int boxBottomY = calcY + boxHeight;
-
+				
 				// If mouse is past the top half of this box, insert after it
 				int boxMidY = calcY + boxHeight / 2;
 				if (my > boxMidY)
 				{
 					insertionIndex = static_cast<int>(i) + 1;
 				}
-
+				
 				calcY += boxHeight + CFG::Menu_Spacing_Y;
 			}
-
+			
 			// Now rebuild the order for all boxes in the target column
 			// Insert the dragged box at the correct position
 			std::vector<std::string> newOrder;
@@ -5498,22 +5565,22 @@ void CMenu::HandleGroupBoxDrag()
 			{
 				newOrder.push_back(m_strDraggingGroupBox);
 			}
-
+			
 			// Assign sequential orders to all boxes in the new order
 			for (size_t i = 0; i < newOrder.size(); i++)
 			{
 				m_mapGroupBoxes[newOrder[i]].m_nOrderInColumn = static_cast<int>(i);
 			}
-
+			
 			// Update the dragged box's column
 			gb.m_nColumn = targetColumn;
-
+			
 			// Reorder the old column if it's different (to fill the gap)
 			if (oldColumn != targetColumn)
 			{
 				ReorderGroupBoxesInColumn(szTab, oldColumn);
 			}
-
+			
 			// Save ALL boxes' config values (not just the dragged one)
 			// This is necessary because reordering affects other boxes too
 			auto SaveGroupBoxConfig = [](const std::string& id, EGroupBoxColumn col, int order) {
@@ -5531,15 +5598,15 @@ void CMenu::HandleGroupBoxDrag()
 				else if (id == "Exploits_Crithack") CFG::Menu_GroupBox_Exploits_Crits = configValue;
 				else if (id == "Exploits_No Spread") CFG::Menu_GroupBox_Exploits_NoSpread = configValue;
 				else if (id == "Exploits_Region Selector") CFG::Menu_GroupBox_Exploits_RegionSelector = configValue;
-				};
-
+			};
+			
 			// Save config for all boxes in the target column
 			for (const auto& boxId : newOrder)
 			{
 				auto& box = m_mapGroupBoxes[boxId];
 				SaveGroupBoxConfig(boxId, box.m_nColumn, box.m_nOrderInColumn);
 			}
-
+			
 			// Also save config for boxes in the old column if different
 			if (oldColumn != targetColumn)
 			{
@@ -5552,7 +5619,7 @@ void CMenu::HandleGroupBoxDrag()
 				}
 			}
 		}
-
+		
 		m_strDraggingGroupBox.clear();
 	}
 }
@@ -5574,17 +5641,17 @@ void CMenu::RenderDraggableGroupBoxes(const std::string& szTab, int nContentX, i
 {
 	// Store content Y for drop calculations
 	m_nDragContentY = nContentY;
-
+	
 	// Handle ongoing drag
 	HandleGroupBoxDrag();
-
+	
 	// Update hovered column while dragging
 	if (m_bIsDraggingGroupBox)
 	{
 		m_nHoveredDropColumn = GetColumnFromMouseX(nContentX, nContentW);
 		m_bShowDropZones = true;
 	}
-
+	
 	// Collect GroupBoxes for this tab
 	std::vector<DraggableGroupBox_t*> tabBoxes;
 	for (auto& pair : m_mapGroupBoxes)
@@ -5594,47 +5661,47 @@ void CMenu::RenderDraggableGroupBoxes(const std::string& szTab, int nContentX, i
 			tabBoxes.push_back(&pair.second);
 		}
 	}
-
+	
 	// Sort by column then order
 	std::sort(tabBoxes.begin(), tabBoxes.end(), [](DraggableGroupBox_t* a, DraggableGroupBox_t* b) {
 		if (a->m_nColumn != b->m_nColumn)
 			return static_cast<int>(a->m_nColumn) < static_cast<int>(b->m_nColumn);
 		return a->m_nOrderInColumn < b->m_nOrderInColumn;
-		});
-
+	});
+	
 	// Column spacing: 150 width + increased spacing between columns
 	int gbWidth = 150;
 	int colSpacing = CFG::Menu_Spacing_X * 4;  // More spacing for middle/right columns
-	int columnX[3] = {
+	int columnX[3] = { 
 		nContentX,                           // LEFT column starts at content edge
 		nContentX + gbWidth + colSpacing,    // MIDDLE column (moved right)
 		nContentX + (gbWidth + colSpacing) * 2  // RIGHT column (moved right)
 	};
 	int columnY[3] = { nContentY, nContentY, nContentY };
-
+	
 	// Calculate insertion point while dragging
 	int insertionCol = -1;
 	int insertionOrder = -1;
 	int draggedBoxHeight = 0;
-
+	
 	if (m_bIsDraggingGroupBox)
 	{
 		int my = H::Input->GetMouseY();
 		insertionCol = static_cast<int>(m_nHoveredDropColumn);
 		insertionOrder = 0;
-
+		
 		// Get dragged box info
 		auto draggedIt = m_mapGroupBoxes.find(m_strDraggingGroupBox);
 		if (draggedIt != m_mapGroupBoxes.end())
 		{
 			draggedBoxHeight = draggedIt->second.m_nHeight > 0 ? draggedIt->second.m_nHeight : 80;
 		}
-
+		
 		// Collect boxes in target column (excluding dragged) and calculate their LOGICAL positions
 		// We need to calculate where each box WOULD be rendered if the dragged box wasn't there
 		std::vector<std::pair<int, int>> targetColumnBoxes; // order, calculated Y position
 		int calcY = nContentY;
-
+		
 		// Get boxes in target column sorted by order
 		std::vector<DraggableGroupBox_t*> sortedTargetBoxes;
 		for (auto* gb : tabBoxes)
@@ -5648,8 +5715,8 @@ void CMenu::RenderDraggableGroupBoxes(const std::string& szTab, int nContentX, i
 		}
 		std::sort(sortedTargetBoxes.begin(), sortedTargetBoxes.end(), [](DraggableGroupBox_t* a, DraggableGroupBox_t* b) {
 			return a->m_nOrderInColumn < b->m_nOrderInColumn;
-			});
-
+		});
+		
 		// Calculate logical positions (where they would be without the dragged item)
 		for (auto* gb : sortedTargetBoxes)
 		{
@@ -5658,7 +5725,7 @@ void CMenu::RenderDraggableGroupBoxes(const std::string& szTab, int nContentX, i
 			targetColumnBoxes.push_back({ gb->m_nOrderInColumn, boxMidY });
 			calcY += boxHeight + CFG::Menu_Spacing_Y;
 		}
-
+		
 		// Find insertion point based on mouse Y against logical positions
 		insertionOrder = 0;
 		for (size_t i = 0; i < targetColumnBoxes.size(); i++)
@@ -5669,22 +5736,22 @@ void CMenu::RenderDraggableGroupBoxes(const std::string& szTab, int nContentX, i
 			}
 		}
 	}
-
+	
 	// First pass: calculate positions and draw insertion placeholder
 	bool insertionDrawn = false;
 	int insertionY = nContentY;
-
+	
 	// Track logical index per column (excluding dragged item)
 	int logicalIndex[3] = { 0, 0, 0 };
-
+	
 	// Render each GroupBox
 	for (auto* gb : tabBoxes)
 	{
 		bool isDragging = (m_bIsDraggingGroupBox && m_strDraggingGroupBox == gb->m_szId);
-
+		
 		int col = static_cast<int>(gb->m_nColumn);
 		int boxX, boxY;
-
+		
 		if (isDragging)
 		{
 			// Follow mouse while dragging
@@ -5695,7 +5762,7 @@ void CMenu::RenderDraggableGroupBoxes(const std::string& szTab, int nContentX, i
 		{
 			boxX = columnX[col];
 			boxY = columnY[col];
-
+			
 			// If we're in the insertion column and at the insertion point, add space for the placeholder
 			if (m_bIsDraggingGroupBox && col == insertionCol && !insertionDrawn)
 			{
@@ -5706,14 +5773,14 @@ void CMenu::RenderDraggableGroupBoxes(const std::string& szTab, int nContentX, i
 					insertionY = boxY;
 					Color_t placeholderColor = { 128, 128, 128, 50 };
 					H::Draw->Rect(boxX, boxY, gbWidth, draggedBoxHeight, placeholderColor);
-
+					
 					// Draw border around placeholder
 					Color_t borderColor = { 150, 150, 150, 80 };
 					H::Draw->Line(boxX, boxY, boxX + gbWidth, boxY, borderColor);
 					H::Draw->Line(boxX, boxY + draggedBoxHeight, boxX + gbWidth, boxY + draggedBoxHeight, borderColor);
 					H::Draw->Line(boxX, boxY, boxX, boxY + draggedBoxHeight, borderColor);
 					H::Draw->Line(boxX + gbWidth, boxY, boxX + gbWidth, boxY + draggedBoxHeight, borderColor);
-
+					
 					// Shift this box and all subsequent boxes down
 					boxY += draggedBoxHeight + CFG::Menu_Spacing_Y;
 					columnY[col] = boxY;
@@ -5721,15 +5788,15 @@ void CMenu::RenderDraggableGroupBoxes(const std::string& szTab, int nContentX, i
 				}
 			}
 		}
-
+		
 		// Store render position for drop detection
 		gb->m_nRenderX = boxX;
 		gb->m_nRenderY = boxY;
-
+		
 		// Set cursor position for GroupBox rendering
 		m_nCursorX = boxX;
 		m_nCursorY = boxY;
-
+		
 		// Check if header is being dragged
 		// Drag area is a small strip at the very top of the GroupBox header (above the title)
 		// Made smaller and further from options to avoid accidental drags
@@ -5738,7 +5805,7 @@ void CMenu::RenderDraggableGroupBoxes(const std::string& szTab, int nContentX, i
 		int dragHandleW = 147;  // Increased width to 160
 		int dragHandleX = boxX + 3;  // Moved 10 pixels to the right
 		bool headerHovered = IsHoveredSimple(dragHandleX, dragHandleY, dragHandleW, dragHandleH);
-
+		
 		if (headerHovered && H::Input->IsPressed(VK_LBUTTON) && !m_bClickConsumed && !m_bIsDraggingGroupBox)
 		{
 			m_bIsDraggingGroupBox = true;
@@ -5747,32 +5814,32 @@ void CMenu::RenderDraggableGroupBoxes(const std::string& szTab, int nContentX, i
 			m_nDragOffsetY = H::Input->GetMouseY() - boxY;
 			m_bClickConsumed = true;
 		}
-
+		
 		int startY = m_nCursorY;
-
+		
 		// Draw drag handle indicator on hover (when not dragging)
 		if (headerHovered && !m_bIsDraggingGroupBox)
 		{
 			Color_t handleColor = { CFG::Menu_Accent_Primary.r, CFG::Menu_Accent_Primary.g, CFG::Menu_Accent_Primary.b, 60 };
 			H::Draw->Rect(dragHandleX, dragHandleY, dragHandleW, dragHandleH, handleColor);
 		}
-
+		
 		// Draw shadow when dragging
 		if (isDragging)
 		{
 			Color_t shadowColor = { 0, 0, 0, 40 };
 			H::Draw->Rect(boxX + 3, boxY + 3, gb->m_nWidth, gb->m_nHeight > 0 ? gb->m_nHeight : 100, shadowColor);
 		}
-
+		
 		// Render GroupBox content
 		GroupBoxStart(gb->m_szLabel.c_str(), gb->m_nWidth);
 		if (gb->m_fnRenderContent)
 			gb->m_fnRenderContent();
 		GroupBoxEnd();
-
+		
 		// Calculate height
 		gb->m_nHeight = m_nCursorY - startY + CFG::Menu_Spacing_Y * 2;
-
+		
 		// Update column Y for next box (only if not dragging this one)
 		if (!isDragging)
 		{
@@ -5781,16 +5848,16 @@ void CMenu::RenderDraggableGroupBoxes(const std::string& szTab, int nContentX, i
 			logicalIndex[col]++;
 		}
 	}
-
+	
 	// If insertion point is at the end of the column (after all boxes), draw placeholder there
 	if (m_bIsDraggingGroupBox && !insertionDrawn && insertionCol >= 0)
 	{
 		int boxX = columnX[insertionCol];
 		int boxY = columnY[insertionCol];
-
+		
 		Color_t placeholderColor = { 128, 128, 128, 50 };
 		H::Draw->Rect(boxX, boxY, gbWidth, draggedBoxHeight, placeholderColor);
-
+		
 		Color_t borderColor = { 150, 150, 150, 80 };
 		H::Draw->Line(boxX, boxY, boxX + gbWidth, boxY, borderColor);
 		H::Draw->Line(boxX, boxY + draggedBoxHeight, boxX + gbWidth, boxY + draggedBoxHeight, borderColor);

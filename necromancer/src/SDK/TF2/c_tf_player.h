@@ -221,6 +221,7 @@ public:
 	}
 
 	bool IsPlayerOnSteamFriendsList();
+	const char* GetWeaponName();
 
 	bool InCond(const ETFCond cond)
 	{

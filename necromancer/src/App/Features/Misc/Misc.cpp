@@ -1,7 +1,7 @@
 #include "Misc.h"
 
 #include "../CFG.h"
-//#include "AntiCheatCompat/AntiCheatCompat.h"
+#include "AntiCheatCompat/AntiCheatCompat.h"
 #include "../Aimbot/AimbotMelee/AimbotMelee.h"
 
 void CMisc::Bunnyhop(CUserCmd* pCmd)
@@ -36,11 +36,10 @@ void CMisc::Bunnyhop(CUserCmd* pCmd)
 		}
 
 		// Anti-cheat compatibility: limit consecutive bhops to 9
-/*		if (CFG::Misc_AntiCheat_Enabled && F::AntiCheatCompat->ShouldLimitBhop(iBhopCount, bGrounded, bLastGrounded, bJumping))
+		if (CFG::Misc_AntiCheat_Enabled && F::AntiCheatCompat->ShouldLimitBhop(iBhopCount, bGrounded, bLastGrounded, bJumping))
 		{
 			pCmd->buttons &= ~IN_JUMP;
 		}
-*/
 
 		bLastGrounded = bGrounded;
 	}
@@ -305,6 +304,10 @@ void CMisc::FastAccelerate(CUserCmd* pCmd)
 	
 	// Check if the appropriate feature is enabled based on duck state
 	if (bIsDucking ? !CFG::Misc_Duck_Speed : !CFG::Misc_Fast_Accelerate)
+		return;
+
+	// Skip if anti-cheat compatibility is enabled
+	if (CFG::Misc_AntiCheat_Enabled)
 		return;
 
 	// Skip on attack, doubletap, speedhack, recharge, anti-aim, or every other tick

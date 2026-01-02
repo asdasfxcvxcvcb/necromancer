@@ -640,6 +640,10 @@ void CAimbotMelee::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeap
 					Aim(pCmd, pLocal, pWeapon, target.AngleTo);
 				}
 
+				// Anti-cheat compatibility: skip tick count manipulation
+				if (CFG::Misc_AntiCheat_Enabled)
+					return;
+
 				// Set tick_count for backtrack when the melee smack happens (bIsFiring)
 				// Melee has a swing delay - the hit detection happens AFTER you press attack
 				// The server checks the hit at the smack time, so we set tick_count then

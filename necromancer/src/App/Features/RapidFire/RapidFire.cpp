@@ -35,7 +35,11 @@ bool CRapidFire::ShouldStart(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
 	// Calculate effective ticks needed
 	// If slider is at 23 (MAX), use all available ticks but require minimum 2
 	int nEffectiveTicks;
-	if (CFG::Exploits_RapidFire_Ticks >= 23)
+	if (CFG::Misc_AntiCheat_Enabled)
+	{
+		nEffectiveTicks = std::min(CFG::Exploits_RapidFire_Ticks, 8);
+	}
+	else if (CFG::Exploits_RapidFire_Ticks >= 23)
 	{
 		// MAX mode - require at least 2 ticks to do anything useful
 		if (Shifting::nAvailableTicks < 2)

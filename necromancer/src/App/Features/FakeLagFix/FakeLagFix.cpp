@@ -6,6 +6,21 @@ bool CFakeLagFix::ShouldShoot(C_TFPlayer* pTarget)
 	if (!CFG::Aimbot_Hitscan_FakeLagFix || !pTarget)
 		return true;
 
+	// Skip FakeLagFix for rapid-fire weapons (SMG, pistol, minigun)
+	// These weapons fire too fast for fakelag fix to be useful
+	const auto pWeapon = H::Entities->GetWeapon();
+	if (pWeapon)
+	{
+		const int nWeaponID = pWeapon->GetWeaponID();
+		if (nWeaponID == TF_WEAPON_SMG ||
+			nWeaponID == TF_WEAPON_PISTOL ||
+			nWeaponID == TF_WEAPON_PISTOL_SCOUT ||
+			nWeaponID == TF_WEAPON_MINIGUN)
+		{
+			return true; // Always allow shooting for these weapons
+		}
+	}
+
 	// Calculate how many ticks they choked
 	const int nChokedTicks = GetChokedTicks(pTarget);
 

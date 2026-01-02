@@ -1248,18 +1248,52 @@ namespace Vars
             namespace DeltaModeEnum { enum { Average = 0, Max = 1 }; }
             namespace MovesimFrictionFlagsEnum { enum { RunReduce = 1 << 0, CalculateIncrease = 1 << 1 }; }
             
-            // Dynamic wrappers that read from CFG
+            struct HitboxesWrapper { int get() const { 
+                return (CFG::Aimbot_Amalgam_Projectile_Hitbox_Auto ? HitboxesEnum::Auto : 0) |
+                       (CFG::Aimbot_Amalgam_Projectile_Hitbox_Head ? HitboxesEnum::Head : 0) |
+                       (CFG::Aimbot_Amalgam_Projectile_Hitbox_Body ? HitboxesEnum::Body : 0) |
+                       (CFG::Aimbot_Amalgam_Projectile_Hitbox_Feet ? HitboxesEnum::Feet : 0) |
+                       (CFG::Aimbot_Amalgam_Projectile_Hitbox_BodyaimLethal ? HitboxesEnum::BodyaimIfLethal : 0) |
+                       (CFG::Aimbot_Amalgam_Projectile_Hitbox_PrioritizeFeet ? HitboxesEnum::PrioritizeFeet : 0);
+            } __declspec(property(get=get)) int Value; } inline Hitboxes;
             struct ModifiersWrapper { int get() const { 
+                return (CFG::Aimbot_Amalgam_Projectile_Mod_PrimeTime ? ModifiersEnum::UsePrimeTime : 0) |
+                       (CFG::Aimbot_Amalgam_Projectile_Mod_ChargeWeapon ? ModifiersEnum::ChargeWeapon : 0);
             } __declspec(property(get=get)) int Value; } inline Modifiers;
             struct MaxSimulationTimeWrapper { float get() const { return CFG::Aimbot_Projectile_Max_Simulation_Time; } __declspec(property(get=get)) float Value; } inline MaxSimulationTime;
+            struct HitChanceWrapper { float get() const { return static_cast<float>(CFG::Aimbot_Amalgam_Projectile_HitChance); } __declspec(property(get=get)) float Value; } inline HitChance;
+            struct SplashRadiusWrapper { float get() const { return static_cast<float>(CFG::Aimbot_Amalgam_Projectile_SplashRadius); } __declspec(property(get=get)) float Value; } inline SplashRadius;
             struct { float Value = 0.f; } inline AutoRelease; // Disabled - kept for compatibility
+            struct { int Value = CFG::Aimbot_Projectile_Ground_Samples; } inline GroundSamples;
+            struct { int Value = CFG::Aimbot_Projectile_Air_Samples; } inline AirSamples;
+            struct { float Value = CFG::Aimbot_Projectile_Ground_Straight_Fuzzy; } inline GroundStraightFuzzyValue;
+            struct { float Value = CFG::Aimbot_Projectile_Air_Straight_Fuzzy; } inline AirStraightFuzzyValue;
+            struct { int Value = CFG::Aimbot_Projectile_Ground_Max_Changes; } inline GroundMaxChanges;
+            struct { int Value = CFG::Aimbot_Projectile_Air_Max_Changes; } inline AirMaxChanges;
+            struct { int Value = CFG::Aimbot_Projectile_Ground_Max_Change_Time; } inline GroundMaxChangeTime;
+            struct { int Value = CFG::Aimbot_Projectile_Air_Max_Change_Time; } inline AirMaxChangeTime;
+            struct { float Value = CFG::Aimbot_Projectile_Ground_Low_Min_Distance; } inline GroundLowMinimumDistance;
+            struct { float Value = CFG::Aimbot_Projectile_Ground_Low_Min_Samples; } inline GroundLowMinimumSamples;
+            struct { float Value = CFG::Aimbot_Projectile_Ground_High_Min_Distance; } inline GroundHighMinimumDistance;
+            struct { float Value = CFG::Aimbot_Projectile_Ground_High_Min_Samples; } inline GroundHighMinimumSamples;
+            struct { float Value = CFG::Aimbot_Projectile_Air_Low_Min_Distance; } inline AirLowMinimumDistance;
+            struct { float Value = CFG::Aimbot_Projectile_Air_Low_Min_Samples; } inline AirLowMinimumSamples;
+            struct { float Value = CFG::Aimbot_Projectile_Air_High_Min_Distance; } inline AirHighMinimumDistance;
+            struct { float Value = CFG::Aimbot_Projectile_Air_High_Min_Samples; } inline AirHighMinimumSamples;
+            struct { int Value = CFG::Aimbot_Projectile_Delta_Count; } inline DeltaCount;
+            struct { int Value = CFG::Aimbot_Projectile_Delta_Mode; } inline DeltaMode;
+            struct { int Value = CFG::Aimbot_Projectile_Friction_Flags; } inline MovesimFrictionFlags;
             struct { float Value = 5.f; } inline VerticalShift;
+            struct SplashPointsDirectWrapper { int get() const { return CFG::Aimbot_Amalgam_Projectile_SplashPoints; } __declspec(property(get=get)) int Value; } inline SplashPointsDirect;
+            struct SplashPointsArcWrapper { int get() const { return CFG::Aimbot_Amalgam_Projectile_SplashPoints; } __declspec(property(get=get)) int Value; } inline SplashPointsArc;
             struct { int Value = 100; } inline SplashCountDirect;
             struct { int Value = 5; } inline SplashCountArc;
             struct { float Value = -1.f; } inline SplashRotateX;
             struct { float Value = -1.f; } inline SplashRotateY;
             struct { int Value = 10; } inline SplashTraceInterval;
             struct { int Value = 1; } inline SplashNormalSkip;
+            struct { int Value = SplashModeEnum::Multi; } inline SplashMode;
+            struct RocketSplashModeWrapper { int get() const { return CFG::Aimbot_Amalgam_Projectile_RocketSplashMode; } __declspec(property(get=get)) int Value; } inline RocketSplashMode;
             struct { bool Value = true; } inline SplashGrates;
             struct { float Value = 0.f; } inline DragOverride;
             struct { float Value = 0.f; } inline TimeOverride;
@@ -1270,6 +1304,10 @@ namespace Vars
             struct { float Value = 5.f; } inline HuntsmanClamp;
             struct { bool Value = false; } inline HuntsmanPullPoint;
             struct { int Value = 5; } inline VelocityAverageCount;
+            struct NeckbreakerWrapper { bool get() const { return CFG::Aimbot_Projectile_Neckbreaker; } __declspec(property(get=get)) bool Value; } inline Neckbreaker;
+            struct NeckbreakerStepWrapper { int get() const { return CFG::Aimbot_Projectile_NeckbreakerStep; } __declspec(property(get=get)) int Value; } inline NeckbreakerStep;
+            struct MidpointAimWrapper { bool get() const { return CFG::Aimbot_Projectile_Midpoint_Aim; } __declspec(property(get=get)) bool Value; } inline MidpointAim;
+            struct MidpointMaxDistanceWrapper { float get() const { return CFG::Aimbot_Projectile_Midpoint_Max_Distance; } __declspec(property(get=get)) float Value; } inline MidpointMaxDistance;
         }
         
         namespace Healing
@@ -1297,6 +1335,7 @@ namespace Vars
     namespace Misc
     {
         namespace Movement { struct { bool Value = CFG::Misc_Bunnyhop; } inline Bunnyhop; }
+        namespace Game { struct { bool Value = CFG::Misc_AntiCheat_Enabled; } inline AntiCheatCompatibility; }
     }
     
     namespace Visuals
@@ -1481,6 +1520,8 @@ namespace F {
         // Update stored path (called each frame)
         void Store(bool bFrameStageNotify = true)
         {
+            if (!Vars::Visuals::Simulation::RealPath.Value)
+                return;
             
             int iLag = 1;
             if (bFrameStageNotify)
@@ -1494,7 +1535,13 @@ namespace F {
                 return;
             else if (m_tPath.m_vPath.size() >= m_iSize || m_tPath.m_flTime < I::GlobalVars->curtime)
             {
-
+                // Path complete - add to storage
+                if (m_tPath.m_tColor = Vars::Colors::RealPath.Value, m_tPath.m_bZBuffer = true; m_tPath.m_tColor.a)
+                    G::PathStorage.push_back({ m_tPath.m_vPath, m_tPath.m_flTime, m_tPath.m_tColor, m_tPath.m_iStyle, m_tPath.m_bZBuffer });
+                if (m_tPath.m_tColor = Vars::Colors::RealPathIgnoreZ.Value, m_tPath.m_bZBuffer = false; m_tPath.m_tColor.a)
+                    G::PathStorage.push_back({ m_tPath.m_vPath, m_tPath.m_flTime, m_tPath.m_tColor, m_tPath.m_iStyle, m_tPath.m_bZBuffer });
+                m_tPath = {};
+                return;
             }
             
             // Find player by user ID

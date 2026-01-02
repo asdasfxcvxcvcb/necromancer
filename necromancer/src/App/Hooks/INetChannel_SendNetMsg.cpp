@@ -1,6 +1,6 @@
 #include "../../SDK/SDK.h"
 #include "../Features/LagRecords/LagRecords.h"
-//#include "../Features/Misc/AntiCheatCompat/AntiCheatCompat.h"
+#include "../Features/Misc/AntiCheatCompat/AntiCheatCompat.h"
 #include "../Features/NetworkFix/NetworkFix.h"
 #include "../Features/CFG.h"
 
@@ -83,7 +83,7 @@ MAKE_HOOK(INetChannel_SendNetMsg, Signatures::INetChannel_SendNetMsg.Get(), bool
 					sprintf_s(localCvar->Value, "%f", F::NetworkFix->m_flLastCmdRate);
 				}
 				// Anti-cheat: clamp to minimum 10 to avoid detection
-//				if (CFG::Misc_AntiCheat_Enabled)
+				if (CFG::Misc_AntiCheat_Enabled)
 				{
 					try {
 						float flValue = std::stof(localCvar->Value);
@@ -102,7 +102,7 @@ MAKE_HOOK(INetChannel_SendNetMsg, Signatures::INetChannel_SendNetMsg.Get(), bool
 				
 			case FNV1A::Hash32Const("cl_interp"):
 				// Anti-cheat: clamp interp to max 0.1
-//				if (CFG::Misc_AntiCheat_Enabled)
+				if (CFG::Misc_AntiCheat_Enabled)
 				{
 					try {
 						float flValue = std::stof(localCvar->Value);
@@ -120,9 +120,9 @@ MAKE_HOOK(INetChannel_SendNetMsg, Signatures::INetChannel_SendNetMsg.Get(), bool
 		}
 		
 		// Anti-cheat compatibility: validate and clamp network cvars
-//		if (CFG::Misc_AntiCheat_Enabled)
+		if (CFG::Misc_AntiCheat_Enabled)
 		{
-//			F::AntiCheatCompat->ValidateNetworkCvars(pMsg);
+			F::AntiCheatCompat->ValidateNetworkCvars(pMsg);
 		}
 	}
 	
@@ -150,7 +150,7 @@ MAKE_HOOK(INetChannel_SendNetMsg, Signatures::INetChannel_SendNetMsg.Get(), bool
 						{
 							float flValue = F::NetworkFix->m_flLastCmdRate;
 							// Anti-cheat: clamp to minimum 10
-//							if (CFG::Misc_AntiCheat_Enabled)
+							if (CFG::Misc_AntiCheat_Enabled)
 								flValue = std::max(flValue, 10.0f);
 							sprintf_s(szSpoofValue, "%f", flValue);
 							bSpoofed = true;
@@ -168,7 +168,7 @@ MAKE_HOOK(INetChannel_SendNetMsg, Signatures::INetChannel_SendNetMsg.Get(), bool
 						
 					case FNV1A::Hash32Const("cl_interp"):
 						// Anti-cheat: clamp interp
-//						if (CFG::Misc_AntiCheat_Enabled)
+						if (CFG::Misc_AntiCheat_Enabled)
 						{
 							try {
 								float flValue = std::stof(pConVar->GetString());
@@ -193,9 +193,9 @@ MAKE_HOOK(INetChannel_SendNetMsg, Signatures::INetChannel_SendNetMsg.Get(), bool
 		}
 		
 		// Also run anti-cheat spoof if enabled
-//		if (CFG::Misc_AntiCheat_Enabled)
+		if (CFG::Misc_AntiCheat_Enabled)
 		{
-//			F::AntiCheatCompat->SpoofCvarResponse(&msg);
+			F::AntiCheatCompat->SpoofCvarResponse(&msg);
 		}
 	}
 	

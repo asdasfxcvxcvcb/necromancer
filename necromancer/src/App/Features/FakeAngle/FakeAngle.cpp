@@ -346,7 +346,19 @@ float CFakeAngle::GetPitch(float flCurPitch)
 
 void CFakeAngle::FakeShotAngles(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd)
 {
+	// Require main anti-aim toggle to be enabled
+	if (!CFG::Exploits_AntiAim_Enabled)
+		return;
+	
+	// Don't use with Legit AA - it has its own approach
+	if (CFG::Exploits_LegitAA_Enabled)
+		return;
+	
 	if (!CFG::Exploits_AntiAim_InvalidShootPitch || G::Attacking != 1 || pLocal->GetMoveType() != MOVETYPE_WALK)
+		return;
+	
+	// Don't use with anti-cheat compat - causes detection
+	if (CFG::Misc_AntiCheat_Enabled)
 		return;
 	
 	if (!pWeapon)
@@ -464,6 +476,10 @@ void CFakeAngle::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon
 	
 	// Apply angles to cmd
 	Vec3 vCmdAngles = { vAngles.x, vAngles.y, 0.0f };
+	
+	// Only clamp cmd angles when anti-cheat compatibility is enabled (like Amalgam)
+	if (CFG::Misc_AntiCheat_Enabled)
+		Math::ClampAngles(vCmdAngles);
 	
 	// Fix movement using the angles we're applying
 	// Use clamped pitch for movement fix to avoid issues

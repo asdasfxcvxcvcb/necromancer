@@ -552,7 +552,8 @@ bool CAimbotHitscan::ShouldAim(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWea
 	if (CFG::Aimbot_Hitscan_Aim_Type == 1 && (!IsFiring(pCmd, pWeapon) || !pWeapon->HasPrimaryAmmoForShot()))
 		return false;
 
-	if (CFG::Aimbot_Hitscan_Aim_Type == 2)
+	// Smooth and Triggerbot share the same ShouldAim behavior
+	if (CFG::Aimbot_Hitscan_Aim_Type == 2 || CFG::Aimbot_Hitscan_Aim_Type == 3)
 	{
 		const int nWeaponID = pWeapon->GetWeaponID();
 		if (nWeaponID == TF_WEAPON_SNIPERRIFLE || nWeaponID == TF_WEAPON_SNIPERRIFLE_CLASSIC || nWeaponID == TF_WEAPON_SNIPERRIFLE_DECAP)
@@ -611,13 +612,34 @@ void CAimbotHitscan::Aim(CUserCmd* pCmd, C_TFPlayer* pLocal, const Vec3& vAngles
 		// Smooth
 		case 2:
 		{
-			Vec3 vDelta = vAngleTo - pCmd->viewangles;
+			// Use ENGINE view angles, not cmd angles
+			// This is critical because anti-aim modifies pCmd->viewangles AFTER aimbot
+			// We need to smooth from what the player actually sees (engine angles)
+			Vec3 vCurrentAngles = I::EngineClient->GetViewAngles();
+			Vec3 vDelta = vAngleTo - vCurrentAngles;
 			Math::ClampAngles(vDelta);
 
 			// Apply smoothing
 			if (vDelta.Length() > 0.0f && CFG::Aimbot_Hitscan_Smoothing > 0.f)
-				pCmd->viewangles += vDelta / CFG::Aimbot_Hitscan_Smoothing;
+			{
+				Vec3 vNewAngles = vCurrentAngles + vDelta / CFG::Aimbot_Hitscan_Smoothing;
+				Math::ClampAngles(vNewAngles);
+				pCmd->viewangles = vNewAngles;
+				
+				// Store smooth aim angles for restoration at end of CreateMove
+				// This prevents AA from overwriting our view with the original angles
+				G::vSmoothAimAngles = vNewAngles;
+				G::bUseSmoothAimAngles = true;
+			}
 
+			break;
+		}
+
+		// Triggerbot - same as smooth with smoothing at 0 (no angle adjustment)
+		case 3:
+		{
+			// Smooth at 0 does nothing because the condition (Smoothing > 0) is false
+			// So triggerbot just doesn't modify angles at all
 			break;
 		}
 
@@ -632,7 +654,8 @@ bool CAimbotHitscan::ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWe
 
 	// Smart Shotgun Damage Prediction - CHECK FIRST before hitchance
 	// This ensures RapidFire won't start if smart shotgun would block the shot
-	if (CFG::Aimbot_Hitscan_Smart_Shotgun && target.Entity && target.Entity->GetClassId() == ETFClassIds::CTFPlayer)
+	// SKIP during rapid fire shifting - once the burst starts, all shots fire regardless
+	if (CFG::Aimbot_Hitscan_Smart_Shotgun && !Shifting::bShiftingRapidFire && target.Entity && target.Entity->GetClassId() == ETFClassIds::CTFPlayer)
 	{
 		const int wid = pWeapon->GetWeaponID();
 		const bool bIsShotgun = (
@@ -681,7 +704,8 @@ bool CAimbotHitscan::ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWe
 	// Hitchance check - calculate if we meet the required hit probability
 	// NOTE: Minigun uses tapfire delay system instead of hitchance blocking
 	// The tapfire delay is checked later and scales with distance + hitchance slider
-	if (CFG::Aimbot_Hitscan_Hitchance > 0 && target.Entity && pWeapon->GetWeaponID() != TF_WEAPON_MINIGUN)
+	// SKIP during rapid fire shifting - once the burst starts, all shots fire regardless
+	if (CFG::Aimbot_Hitscan_Hitchance > 0 && !Shifting::bShiftingRapidFire && target.Entity && pWeapon->GetWeaponID() != TF_WEAPON_MINIGUN)
 	{
 		// Get hitbox radius based on target type
 		float flHitboxRadius = 12.0f; // Default for players (head ~24 units diameter)
@@ -820,7 +844,9 @@ bool CAimbotHitscan::ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWe
 		}
 	}
 
-	if (CFG::Aimbot_Hitscan_Advanced_Smooth_AutoShoot && CFG::Aimbot_Hitscan_Aim_Type == 2)
+	// Smooth autoshoot check OR Triggerbot - only fire when crosshair is on target
+	// Triggerbot is essentially smooth with smoothing=0, so it always needs this check
+	if ((CFG::Aimbot_Hitscan_Advanced_Smooth_AutoShoot && CFG::Aimbot_Hitscan_Aim_Type == 2) || CFG::Aimbot_Hitscan_Aim_Type == 3)
 	{
 		Vec3 vForward = {};
 		Math::AngleVectors(pCmd->viewangles, &vForward);
@@ -831,19 +857,93 @@ bool CAimbotHitscan::ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWe
 		{
 			const auto pPlayer = target.Entity->As<C_TFPlayer>();
 
-			if (!target.LagRecord)
+			const bool bTriggerbotMode = CFG::Aimbot_Hitscan_Aim_Type == 3;
+
+			// Triggerbot: use stricter center-of-hitbox check to avoid edge shots
+			// This ensures we're not just grazing the edge of the hitbox
+			if (bTriggerbotMode && target.AimedHitbox == HITBOX_HEAD)
 			{
 				int nHitHitbox = -1;
 
 				if (!H::AimUtils->TraceEntityBullet(pPlayer, vTraceStart, vTraceEnd, &nHitHitbox))
 					return false;
 
+				if (nHitHitbox != HITBOX_HEAD)
+					return false;
+
+				// Additional check: make sure we're hitting closer to the center of the hitbox
+				// Use the same RayToOBB check that smooth autoshoot uses, but with smaller bounds
+				Vec3 vMins = {}, vMaxs = {}, vCenter = {};
+				matrix3x4_t matrix = {};
+				pPlayer->GetHitboxInfo(nHitHitbox, &vCenter, &vMins, &vMaxs, &matrix);
+
+				// Hardcoded per-class head hitbox scale (height and width)
+				float flScaleH = 0.94f, flScaleW = 0.94f;
+				switch (pPlayer->m_iClass())
+				{
+					case TF_CLASS_SCOUT:
+						flScaleH = 0.95f;
+						flScaleW = 0.95f;
+						break;
+					case TF_CLASS_SOLDIER:
+						flScaleH = 0.22f;
+						flScaleW = 0.70f;
+						break;
+					case TF_CLASS_PYRO:
+						flScaleH = 0.69f;
+						flScaleW = 0.69f;
+						break;
+					case TF_CLASS_DEMOMAN:
+						flScaleH = 0.86f;
+						flScaleW = 0.81f;
+						break;
+					case TF_CLASS_HEAVYWEAPONS:
+						flScaleH = 0.60f;
+						flScaleW = 0.25f;
+						break;
+					case TF_CLASS_ENGINEER:
+						flScaleH = 0.91f;
+						flScaleW = 0.88f;
+						break;
+					case TF_CLASS_MEDIC:
+						flScaleH = 0.95f;
+						flScaleW = 0.95f;
+						break;
+					case TF_CLASS_SNIPER:
+						flScaleH = 0.92f;
+						flScaleW = 0.69f;
+						break;
+					case TF_CLASS_SPY:
+						flScaleH = 0.64f;
+						flScaleW = 0.50f;
+						break;
+				}
+
+				// Apply height scale to Z axis, width scale to X/Y axes
+				vMins.x *= flScaleW;
+				vMins.y *= flScaleW;
+				vMins.z *= flScaleH;
+				vMaxs.x *= flScaleW;
+				vMaxs.y *= flScaleW;
+				vMaxs.z *= flScaleH;
+
+				if (!Math::RayToOBB(vTraceStart, vForward, vCenter, vMins, vMaxs, matrix))
+					return false;
+			}
+			else if (!target.LagRecord)
+			{
+				int nHitHitbox = -1;
+
+				if (!H::AimUtils->TraceEntityBullet(pPlayer, vTraceStart, vTraceEnd, &nHitHitbox))
+					return false;
+
+				// For both triggerbot and smooth autoshoot: if aiming for head, require head hit
 				if (target.AimedHitbox == HITBOX_HEAD)
 				{
 					if (nHitHitbox != HITBOX_HEAD)
 						return false;
 
-					if (!target.WasMultiPointed)
+					if (!bTriggerbotMode && !target.WasMultiPointed)
 					{
 						Vec3 vMins = {}, vMaxs = {}, vCenter = {};
 						matrix3x4_t matrix = {};
@@ -870,6 +970,7 @@ bool CAimbotHitscan::ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWe
 					return false;
 				}
 
+				// For both triggerbot and smooth autoshoot: if aiming for head, require head hit
 				if (target.AimedHitbox == HITBOX_HEAD)
 				{
 					if (nHitHitbox != HITBOX_HEAD)
@@ -878,16 +979,19 @@ bool CAimbotHitscan::ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWe
 						return false;
 					}
 
-					Vec3 vMins = {}, vMaxs = {}, vCenter = {};
-					SDKUtils::GetHitboxInfoFromMatrix(pPlayer, nHitHitbox, const_cast<matrix3x4_t*>(target.LagRecord->BoneMatrix), &vCenter, &vMins, &vMaxs);
-
-					vMins *= 0.5f;
-					vMaxs *= 0.5f;
-
-					if (!Math::RayToOBB(vTraceStart, vForward, vCenter, vMins, vMaxs, *target.LagRecord->BoneMatrix))
+					if (!bTriggerbotMode && !target.WasMultiPointed)
 					{
-						F::LagRecordMatrixHelper->Restore();
-						return false;
+						Vec3 vMins = {}, vMaxs = {}, vCenter = {};
+						SDKUtils::GetHitboxInfoFromMatrix(pPlayer, nHitHitbox, const_cast<matrix3x4_t*>(target.LagRecord->BoneMatrix), &vCenter, &vMins, &vMaxs);
+
+						vMins *= 0.5f;
+						vMaxs *= 0.5f;
+
+						if (!Math::RayToOBB(vTraceStart, vForward, vCenter, vMins, vMaxs, *target.LagRecord->BoneMatrix))
+						{
+							F::LagRecordMatrixHelper->Restore();
+							return false;
+						}
 					}
 				}
 
@@ -947,8 +1051,11 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 	if (!CFG::Aimbot_Hitscan_Active)
 		return;
 
-	if (CFG::Aimbot_Hitscan_Sort == 0)
+	// Set FOV for circle drawing - but not for triggerbot (no FOV circle needed)
+	if (CFG::Aimbot_Hitscan_Sort == 0 && CFG::Aimbot_Hitscan_Aim_Type != 3)
 		G::flAimbotFOV = CFG::Aimbot_Hitscan_FOV;
+	else if (CFG::Aimbot_Hitscan_Aim_Type == 3)
+		G::flAimbotFOV = 0.0f; // Disable FOV circle for triggerbot
 
 	// Allow aimbot to run during rapid fire shifting to recalculate angles for each tick
 	// Skip only during warp shifting (not rapid fire)
@@ -1006,34 +1113,15 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 				}
 			}
 
-			// During rapid fire shifting, still check hitchance but skip other ShouldFire checks
+			// During rapid fire shifting, ALWAYS fire - hitchance/smart shotgun were already checked
+			// when the burst started. Once committed to a rapid fire burst, all shots fire.
 			bool bShouldFire = false;
 			if (bRapidFireShifting)
 			{
-				// During rapid fire, only check hitchance (other checks were done in ShouldStart)
-				if (CFG::Aimbot_Hitscan_Hitchance > 0)
-				{
-					float flHitboxRadius = 12.0f;
-					if (target.Entity->GetClassId() == ETFClassIds::CTFPlayer)
-					{
-						if (target.AimedHitbox == HITBOX_HEAD)
-							flHitboxRadius = 10.0f;
-						else
-							flHitboxRadius = 16.0f;
-					}
-					else if (target.Entity->GetClassId() == ETFClassIds::CObjectSentrygun ||
-							 target.Entity->GetClassId() == ETFClassIds::CObjectDispenser ||
-							 target.Entity->GetClassId() == ETFClassIds::CObjectTeleporter)
-						flHitboxRadius = 24.0f;
-
-					const Vec3 vShootPos = pLocal->GetShootPos();
-					const float flHitchance = F::Hitchance->Calculate(pLocal, pWeapon, vShootPos, target.Position, flHitboxRadius, true, 2);
-					bShouldFire = (flHitchance >= static_cast<float>(CFG::Aimbot_Hitscan_Hitchance));
-				}
-				else
-				{
-					bShouldFire = true; // No hitchance requirement
-				}
+				// Rapid fire burst already started - commit to all shots
+				// The initial hitchance and smart shotgun checks were done in ShouldStart/ShouldFire
+				// before the burst began. Don't re-check and potentially skip shots mid-burst.
+				bShouldFire = true;
 			}
 			else
 			{
@@ -1067,8 +1155,17 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 
 				// Set tick_count for lag compensation
 				if (bIsFiring && target.Entity->GetClassId() == ETFClassIds::CTFPlayer)
-				{	
-					if (CFG::Misc_Accuracy_Improvements)
+				{
+					if (CFG::Misc_AntiCheat_Enabled)
+					{
+						// Anti-cheat compatibility: match Amalgam's behavior
+						// In Amalgam, CreateMove() returns early when anti-cheat is enabled,
+						// which means tick_count is NOT adjusted for fake interp.
+						// We still need to set tick_count for the backtrack record though.
+						// Use just the lerp value, don't add fake interp (matching Amalgam's skip)
+						pCmd->tick_count = TIME_TO_TICKS(target.SimulationTime + SDKUtils::GetLerp());
+					}
+					else if (CFG::Misc_Accuracy_Improvements)
 					{
 						pCmd->tick_count = TIME_TO_TICKS(target.SimulationTime + SDKUtils::GetLerp());
 					}
