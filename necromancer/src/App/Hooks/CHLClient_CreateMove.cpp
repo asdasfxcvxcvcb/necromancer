@@ -319,9 +319,9 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 				*pSendPacket = false;
 		}
 
+		F::Misc->CrouchWhileAirborne(pCmd);
 		F::Misc->AutoMedigun(pCmd);
 		F::Aimbot->Run(pCmd);
-		F::Misc->CrouchWhileAirborne(pCmd);
 
 		// IMPORTANT: Update G::Attacking AFTER aimbot runs
 		// Aimbot may have added IN_ATTACK, so we need to re-check
