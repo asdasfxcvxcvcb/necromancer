@@ -1537,38 +1537,30 @@ void CMenu::MainWindow()
 	int offsetX = (CFG::Menu_Width - scaledW) / 2;
 	int offsetY = (CFG::Menu_Height - scaledH) / 2;
 	
-	// Background with fade
+	int menuX = CFG::Menu_Pos_X + offsetX;
+	int menuY = CFG::Menu_Pos_Y + offsetY;
+	
+	// ========== 30% BLUR EFFECT ==========
+	// Simple blur simulation - offset rectangles at low opacity
+	Color_t blurColor = { 0, 0, 0, static_cast<byte>(25 * (alpha / 255.0f)) }; // 30% strength
+	for (int i = 3; i >= 1; i--)
+	{
+		H::Draw->Rect(menuX - i, menuY - i, scaledW + i * 2, scaledH + i * 2, blurColor);
+	}
+	
+	// Main background
 	Color_t bgColor = CFG::Menu_Background;
 	bgColor.a = static_cast<byte>((bgColor.a / 255.0f) * alpha);
-	H::Draw->Rect(
-		CFG::Menu_Pos_X + offsetX,
-		CFG::Menu_Pos_Y + offsetY,
-		scaledW,
-		scaledH,
-		bgColor
-	);
+	H::Draw->Rect(menuX, menuY, scaledW, scaledH, bgColor);
 	
 	// Border with accent primary color
 	Color_t borderColor = CFG::Menu_Accent_Primary;
 	borderColor.a = alpha;
-	
-	H::Draw->OutlinedRect(
-		CFG::Menu_Pos_X + offsetX,
-		CFG::Menu_Pos_Y + offsetY,
-		scaledW,
-		scaledH,
-		borderColor
-	);
+	H::Draw->OutlinedRect(menuX, menuY, scaledW, scaledH, borderColor);
 	
 	// Drag bar line
 	int dragBarY = static_cast<int>((CFG::Menu_Drag_Bar_Height - 1) * scale);
-	H::Draw->Line(
-		CFG::Menu_Pos_X + offsetX,
-		CFG::Menu_Pos_Y + offsetY + dragBarY,
-		CFG::Menu_Pos_X + offsetX + scaledW - 1,
-		CFG::Menu_Pos_Y + offsetY + dragBarY,
-		borderColor
-	);
+	H::Draw->Line(menuX, menuY + dragBarY, menuX + scaledW - 1, menuY + dragBarY, borderColor);
 	
 	// Only render content if menu is mostly open
 	if (m_flMenuOpenProgress < 0.3f)

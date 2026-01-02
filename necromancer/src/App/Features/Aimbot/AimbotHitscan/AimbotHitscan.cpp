@@ -632,7 +632,8 @@ bool CAimbotHitscan::ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWe
 
 	// Smart Shotgun Damage Prediction - CHECK FIRST before hitchance
 	// This ensures RapidFire won't start if smart shotgun would block the shot
-	if (CFG::Aimbot_Hitscan_Smart_Shotgun && target.Entity && target.Entity->GetClassId() == ETFClassIds::CTFPlayer)
+	// SKIP during rapid fire shifting - once the burst starts, all shots fire regardless
+	if (CFG::Aimbot_Hitscan_Smart_Shotgun && !Shifting::bShiftingRapidFire && target.Entity && target.Entity->GetClassId() == ETFClassIds::CTFPlayer)
 	{
 		const int wid = pWeapon->GetWeaponID();
 		const bool bIsShotgun = (
@@ -681,7 +682,8 @@ bool CAimbotHitscan::ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWe
 	// Hitchance check - calculate if we meet the required hit probability
 	// NOTE: Minigun uses tapfire delay system instead of hitchance blocking
 	// The tapfire delay is checked later and scales with distance + hitchance slider
-	if (CFG::Aimbot_Hitscan_Hitchance > 0 && target.Entity && pWeapon->GetWeaponID() != TF_WEAPON_MINIGUN)
+	// SKIP during rapid fire shifting - once the burst starts, all shots fire regardless
+	if (CFG::Aimbot_Hitscan_Hitchance > 0 && !Shifting::bShiftingRapidFire && target.Entity && pWeapon->GetWeaponID() != TF_WEAPON_MINIGUN)
 	{
 		// Get hitbox radius based on target type
 		float flHitboxRadius = 12.0f; // Default for players (head ~24 units diameter)
@@ -1006,34 +1008,15 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 				}
 			}
 
-			// During rapid fire shifting, still check hitchance but skip other ShouldFire checks
+			// During rapid fire shifting, ALWAYS fire - hitchance/smart shotgun were already checked
+			// when the burst started. Once committed to a rapid fire burst, all shots fire.
 			bool bShouldFire = false;
 			if (bRapidFireShifting)
 			{
-				// During rapid fire, only check hitchance (other checks were done in ShouldStart)
-				if (CFG::Aimbot_Hitscan_Hitchance > 0)
-				{
-					float flHitboxRadius = 12.0f;
-					if (target.Entity->GetClassId() == ETFClassIds::CTFPlayer)
-					{
-						if (target.AimedHitbox == HITBOX_HEAD)
-							flHitboxRadius = 10.0f;
-						else
-							flHitboxRadius = 16.0f;
-					}
-					else if (target.Entity->GetClassId() == ETFClassIds::CObjectSentrygun ||
-							 target.Entity->GetClassId() == ETFClassIds::CObjectDispenser ||
-							 target.Entity->GetClassId() == ETFClassIds::CObjectTeleporter)
-						flHitboxRadius = 24.0f;
-
-					const Vec3 vShootPos = pLocal->GetShootPos();
-					const float flHitchance = F::Hitchance->Calculate(pLocal, pWeapon, vShootPos, target.Position, flHitboxRadius, true, 2);
-					bShouldFire = (flHitchance >= static_cast<float>(CFG::Aimbot_Hitscan_Hitchance));
-				}
-				else
-				{
-					bShouldFire = true; // No hitchance requirement
-				}
+				// Rapid fire burst already started - commit to all shots
+				// The initial hitchance and smart shotgun checks were done in ShouldStart/ShouldFire
+				// before the burst began. Don't re-check and potentially skip shots mid-burst.
+				bShouldFire = true;
 			}
 			else
 			{
