@@ -364,6 +364,7 @@ namespace CFG
 	CFGVAR(Visuals_Crit_Indicator_TextSize, 100); // Percentage: 100-200
 	CFGVAR(Visuals_Crit_Indicator_Debug, false);
 	CFGVAR(Visuals_Draw_Movement_Path_Style, 1); //0 Off 1 Line 2 Separators 3 Spaced 4 Arrows 5 Boxes (Amalgam-style)
+	CFGVAR(Visuals_Draw_Predicted_Path_Style, 1); //0 Off 1 Line 2 Separators 3 Spaced 4 Arrows 5 Boxes (Amalgam-style)
 	
 	// Amalgam Simulation Visuals
 	CFGVAR(Visuals_Simulation_Movement_Style, 1); // 0=Off, 1=Line, 2=Dashed, 3=Arrows

@@ -3154,6 +3154,14 @@ void CMenu::MainWindow()
 						{ "Dashed Line", 2 },
 						{ "Alt Line", 3 }
 					});
+
+				SelectSingle("Movement Path Style", CFG::Visuals_Draw_Predicted_Path_Style,
+					{
+						{ "Disabled", 0 },
+						{ "Line", 1 },
+						{ "Dashed Line", 2 },
+						{ "Alt Line", 3 }
+					});
 			}
 			GroupBoxEnd();
 
@@ -3427,7 +3435,7 @@ void CMenu::MainWindow()
 				ColorPicker("Prop Modulation", CFG::Color_Props);
 				ColorPicker("Movement Sim", CFG::Color_Simulation_Movement);
 				ColorPicker("Projectile Sim", CFG::Color_Simulation_Projectile);
-				ColorPicker("Trajectory", CFG::Color_Trajectory);
+//				ColorPicker("Trajectory", CFG::Color_Trajectory);
 				ColorPicker("FakeLag", CFG::Color_FakeLag);
 				ColorPicker("Fake Model", CFG::Color_FakeModel);
 				ColorPicker("Lag Record", CFG::Color_LagRecord);
@@ -3538,15 +3546,29 @@ void CMenu::MainWindow()
 			InputKey("Recharge Key", CFG::Exploits_Shifting_Recharge_Key);
 			InputKey("Double Tap Key", CFG::Exploits_RapidFire_Key);
 
+			// Double Tap ticks: 2–22 normal, 23 = MAX
+			const int nMaxSlider = 23;
+			const bool bIsMax = (CFG::Exploits_RapidFire_Ticks >= 23);
+
+			std::string sTicksLabel = "Double Tap Ticks";
+			if (bIsMax)
+				sTicksLabel += " (MAX)";
+
+			SliderInt(sTicksLabel.c_str(), CFG::Exploits_RapidFire_Ticks, 2, nMaxSlider, 1);
+
 			SliderInt("Double Tap Delay Ticks", CFG::Exploits_RapidFire_Min_Ticks_Target_Same, 0, 5, 1);
 			CheckBox("Double Tap Antiwarp", CFG::Exploits_RapidFire_Antiwarp);
+
 			InputKey("Warp Key", CFG::Exploits_Warp_Key);
+
 			SelectSingle("Warp Mode", CFG::Exploits_Warp_Mode, {
 				{ "Slow", 0 }, { "Full", 1 }
 				});
+
 			SelectSingle("Warp Exploit (for 'Full')", CFG::Exploits_Warp_Exploit, {
 				{ "None", 0 }, { "Fake Peek", 1 }, { "0 Velocity", 2 }
 				});
+
 			CheckBox("Draw Indicator", CFG::Exploits_Shifting_Draw_Indicator);
 			};
 
@@ -3554,6 +3576,9 @@ void CMenu::MainWindow()
 			CheckBox("Enabled (Adaptive)", CFG::Exploits_FakeLag_Enabled);
 			CheckBox("Only When Moving", CFG::Exploits_FakeLag_Only_Moving);
 			CheckBox("Activate on Sightline", CFG::Exploits_FakeLag_Activate_On_Sightline);
+
+			const int nMaxFakeLagTicks = 21;
+			SliderInt("Max Ticks", CFG::Exploits_FakeLag_Max_Ticks, 1, nMaxFakeLagTicks, 1);
 			};
 
 		m_mapGroupBoxes["Exploits_AntiAim"].m_fnRenderContent = [this]() {

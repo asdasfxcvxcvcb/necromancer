@@ -7,90 +7,121 @@
 void DrawProjPath(const CUserCmd* pCmd, float time)
 {
 	if (!pCmd || !G::bFiring)
-	{
 		return;
-	}
 
 	const auto pLocal = H::Entities->GetLocal();
 	if (!pLocal || pLocal->deadflag())
-	{
 		return;
-	}
 
 	const auto pWeapon = H::Entities->GetWeapon();
 	if (!pWeapon)
-	{
 		return;
-	}
 
-	ProjectileInfo info = {};
+	ProjectileInfo info{};
 	if (!F::ProjectileSim->GetInfo(pLocal, pWeapon, pCmd->viewangles, info))
-	{
 		return;
-	}
 
 	if (!F::ProjectileSim->Init(info))
-	{
 		return;
-	}
 
-	for (auto n = 0; n < TIME_TO_TICKS(time); n++)
+	const auto& col = CFG::Color_Simulation_Projectile; // this method is so unorthodox
+	const int r = col.r, g = col.g, b = col.b;
+
+	std::vector<Vec3> vPath;
+	vPath.reserve(TIME_TO_TICKS(time) + 1);
+
+	vPath.push_back(F::ProjectileSim->GetOrigin());
+
+	for (int n = 0; n < TIME_TO_TICKS(time); n++)
 	{
-		auto pre{ F::ProjectileSim->GetOrigin() };
-
 		F::ProjectileSim->RunTick();
-
-		auto post{ F::ProjectileSim->GetOrigin() };
-
-		I::DebugOverlay->AddLineOverlay(pre, post, 255, 255, 255, false, 10.0f);
+		vPath.push_back(F::ProjectileSim->GetOrigin());
 	}
-}
 
-void DrawMovePath(const std::vector<Vec3>& vPath)
-{
-	// Line
-	if (CFG::Visuals_Draw_Movement_Path_Style == 1)
+	if (CFG::Visuals_Draw_Predicted_Path_Style == 1)
 	{
 		for (size_t n = 1; n < vPath.size(); n++)
 		{
-			I::DebugOverlay->AddLineOverlay(vPath[n], vPath[n - 1], 255, 255, 255, false, 10.0f);
+			I::DebugOverlay->AddLineOverlay(vPath[n], vPath[n - 1], r, g, b, false, 10.0f);
 		}
 	}
-
-	// Dashed
-	if (CFG::Visuals_Draw_Movement_Path_Style == 2)
+	else if (CFG::Visuals_Draw_Predicted_Path_Style == 2)
 	{
 		for (size_t n = 1; n < vPath.size(); n++)
 		{
 			if (n % 2 == 0)
-			{
 				continue;
-			}
 
-			I::DebugOverlay->AddLineOverlay(vPath[n], vPath[n - 1], 255, 255, 255, false, 10.0f);
+			I::DebugOverlay->AddLineOverlay(vPath[n], vPath[n - 1], r, g, b, false, 10.0f);
 		}
 	}
-
-	// Alternative line
-	if (CFG::Visuals_Draw_Movement_Path_Style == 3)
+	else if (CFG::Visuals_Draw_Predicted_Path_Style == 3)
 	{
 		for (size_t n = 1; n < vPath.size(); n++)
 		{
 			if (n != 1)
 			{
 				Vec3 right{};
+				Math::AngleVectors(
+					Math::CalcAngle(vPath[n], vPath[n - 1]),
+					nullptr, &right, nullptr
+				);
 
-				Math::AngleVectors(Math::CalcAngle(vPath[n], vPath[n - 1]), nullptr, &right, nullptr);
-
-				const Vec3& start{ vPath[n - 1] };
-				const Vec3 endL{ vPath[n - 1] + (right * 5.0f) };
-				const Vec3 endR{ vPath[n - 1] - (right * 5.0f) };
-
-				I::DebugOverlay->AddLineOverlay(start, endL, 255, 255, 255, false, 10.0f);
-				I::DebugOverlay->AddLineOverlay(start, endR, 255, 255, 255, false, 10.0f);
+				const Vec3& start = vPath[n - 1];
+				I::DebugOverlay->AddLineOverlay(start, start + right * 5.0f, r, g, b, false, 10.0f);
+				I::DebugOverlay->AddLineOverlay(start, start - right * 5.0f, r, g, b, false, 10.0f);
 			}
 
-			I::DebugOverlay->AddLineOverlay(vPath[n], vPath[n - 1], 255, 255, 255, false, 10.0f);
+			I::DebugOverlay->AddLineOverlay(vPath[n], vPath[n - 1], r, g, b, false, 10.0f);
+		}
+	}
+}
+
+void DrawMovePath(const std::vector<Vec3>& vPath)
+{
+	const auto& col = CFG::Color_Simulation_Movement; // this method is so unorthodox
+	const int r = col.r, g = col.g, b = col.b;
+
+	// Line
+	if (CFG::Visuals_Draw_Movement_Path_Style == 1)
+	{
+		for (size_t n = 1; n < vPath.size(); n++)
+		{
+			I::DebugOverlay->AddLineOverlay(vPath[n], vPath[n - 1], r, g, b, false, 10.0f);
+		}
+	}
+
+	// Dashed
+	else if (CFG::Visuals_Draw_Movement_Path_Style == 2)
+	{
+		for (size_t n = 1; n < vPath.size(); n++)
+		{
+			if (n % 2 == 0)
+				continue;
+
+			I::DebugOverlay->AddLineOverlay(vPath[n], vPath[n - 1], r, g, b, false, 10.0f);
+		}
+	}
+
+	// Alternative
+	else if (CFG::Visuals_Draw_Movement_Path_Style == 3)
+	{
+		for (size_t n = 1; n < vPath.size(); n++)
+		{
+			if (n != 1)
+			{
+				Vec3 right{};
+				Math::AngleVectors(
+					Math::CalcAngle(vPath[n], vPath[n - 1]),
+					nullptr, &right, nullptr
+				);
+
+				const Vec3& start = vPath[n - 1];
+				I::DebugOverlay->AddLineOverlay(start, start + right * 5.0f, r, g, b, false, 10.0f);
+				I::DebugOverlay->AddLineOverlay(start, start - right * 5.0f, r, g, b, false, 10.0f);
+			}
+
+			I::DebugOverlay->AddLineOverlay(vPath[n], vPath[n - 1], r, g, b, false, 10.0f);
 		}
 	}
 }
@@ -739,8 +770,9 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 						auto isRocketLauncher{ pWeapon->GetWeaponID() == TF_WEAPON_ROCKETLAUNCHER };
 						auto isDirectHit{ pWeapon->GetWeaponID() == TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT };
 						auto isAirStrike{ pWeapon->m_iItemDefinitionIndex() == Soldier_m_TheAirStrike };
+						auto isSticky = pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER;
 
-						if (!isRocketLauncher && !isDirectHit && !isAirStrike)
+						if (!isRocketLauncher && !isDirectHit && !isAirStrike && !isSticky)
 						{
 							return false;
 						}
@@ -756,6 +788,11 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 						if (isAirStrike)
 						{
 							radius = 130.0f;
+						}
+
+						if (isSticky)
+						{
+							radius = 146.0f;
 						}
 
 						std::vector<Vec3> potential{};
@@ -793,24 +830,47 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 
 							trace_t trace = {};
 							CTraceFilterWorldCustom filter = {};
+							trace_t grateTrace{};
+							CTraceFilterWorldCustom grateFilter{};
+							H::AimUtils->Trace(trace.endpos, point, CONTENTS_GRATE, &grateFilter, &grateTrace);
+
+							Vec3 hull_min = { -4.0f, -4.0f, -4.0f };
+							Vec3 hull_max = { 4.0f,  4.0f,  4.0f };
+
+							if (pWeapon && isSticky)
+							{
+								hull_min = { -6.0f, -6.0f, -6.0f };
+								hull_max = { 6.0f,  6.0f,  6.0f };
+							}
 
 							H::AimUtils->TraceHull
 							(
 								GetOffsetShootPos(pLocal, pWeapon, pCmd),
 								point,
-								{ -4.0f, -4.0f, -4.0f },
-								{ 4.0f, 4.0f, 4.0f },
+								hull_min,
+								hull_max,
 								MASK_SOLID,
 								&filter,
 								&trace
 							);
 
-							if (trace.fraction < 0.9f || trace.startsolid || trace.allsolid)
+							if (pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)
 							{
-								continue;
+								if (!CanArcReach(vLocalPos, point, target.AngleTo, target.TimeToTarget, target.Entity))
+									continue;
+							}
+							else
+							{
+								if (trace.fraction < 0.9f || trace.startsolid || trace.allsolid)
+									continue;
 							}
 
 							H::AimUtils->Trace(trace.endpos, point, MASK_SOLID, &filter, &trace);
+
+							if (grateTrace.fraction < 1.0f)
+							{
+								return true;
+							}
 
 							if (trace.fraction < 1.0f)
 							{
@@ -889,8 +949,9 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 				const auto isRocketLauncher{ pWeapon->GetWeaponID() == TF_WEAPON_ROCKETLAUNCHER };
 				const auto isDirectHit{ pWeapon->GetWeaponID() == TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT };
 				const auto isAirStrike{ pWeapon->m_iItemDefinitionIndex() == Soldier_m_TheAirStrike };
+				const auto isSticky = pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER;
 
-				if (!isRocketLauncher && !isDirectHit && !isAirStrike)
+				if (!isRocketLauncher && !isDirectHit && !isAirStrike && !isSticky)
 				{
 					return false;
 				}
@@ -903,6 +964,11 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 				if (isAirStrike)
 				{
 					radius = 130.0f;
+				}
+
+				if (isSticky)
+				{
+					radius = 130.0f; // 146/142 is unstable
 				}
 
 				std::vector<Vec3> potential{};
@@ -945,24 +1011,47 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 
 					trace_t trace = {};
 					CTraceFilterWorldCustom filter = {};
+					trace_t grateTrace{};
+					CTraceFilterWorldCustom grateFilter{};
+					H::AimUtils->Trace(trace.endpos, point, CONTENTS_GRATE, &grateFilter, &grateTrace);
+
+					Vec3 hull_min = { -4.0f, -4.0f, -4.0f };
+					Vec3 hull_max = { 4.0f,  4.0f,  4.0f };
+
+					if (pWeapon && isSticky)
+					{
+						hull_min = { -6.0f, -6.0f, -6.0f };
+						hull_max = { 6.0f,  6.0f,  6.0f };
+					}
 
 					H::AimUtils->TraceHull
 					(
 						GetOffsetShootPos(pLocal, pWeapon, pCmd),
 						point,
-						{ -4.0f, -4.0f, -4.0f },
-						{ 4.0f, 4.0f, 4.0f },
+						hull_min,
+						hull_max,
 						MASK_SOLID,
 						&filter,
 						&trace
 					);
 
-					if (trace.fraction < 0.9f || trace.startsolid || trace.allsolid)
+					if (pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)
 					{
-						continue;
+						if (!CanArcReach(vLocalPos, point, target.AngleTo, target.TimeToTarget, target.Entity))
+							continue;
+					}
+					else
+					{
+						if (trace.fraction < 0.9f || trace.startsolid || trace.allsolid)
+							continue;
 					}
 
 					H::AimUtils->Trace(trace.endpos, point, MASK_SOLID, &filter, &trace);
+
+					if (grateTrace.fraction < 1.0f)
+					{
+						return true;
+					}
 
 					if (trace.fraction < 1.0f)
 					{
@@ -1338,7 +1427,7 @@ void CAimbotProjectile::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* 
 			{
 				I::DebugOverlay->ClearAllOverlays();
 
-				//drawProjPath(pCmd, Target.TimeToTarget);
+				DrawProjPath(pCmd, target.TimeToTarget);
 				DrawMovePath(m_TargetPath);
 				m_TargetPath.clear();
 			}
