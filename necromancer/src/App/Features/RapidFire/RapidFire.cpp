@@ -140,6 +140,28 @@ bool CRapidFire::ShouldExitCreateMove(CUserCmd* pCmd)
 	// Only handle rapid fire shifting, not warp shifting
 	if (Shifting::bShiftingRapidFire)
 	{
+		// Recalculate angle on every tick
+		bool bRecalculateAngle = true;
+		
+		if (bRecalculateAngle)
+		{
+			// Don't exit early - let CreateMove and aimbot run to recalculate angle
+			// But still set up the command basics
+			pCmd->buttons |= IN_ATTACK;
+			G::bFiring = true;
+			G::bSilentAngles = m_bShiftSilentAngles;
+			
+			// Apply anti-warp if enabled and started on ground
+			if (CFG::Exploits_RapidFire_Antiwarp && m_bStartedShiftOnGround)
+			{
+				const float flTicks = std::max(14.f, std::min(24.f, static_cast<float>(CFG::Exploits_RapidFire_Ticks)));
+				const float flScale = Math::RemapValClamped(flTicks, 14.f, 24.f, 0.605f, 1.f);
+				SDKUtils::WalkTo(pCmd, pLocal->m_vecOrigin(), m_vShiftStart, flScale);
+			}
+			
+			return false; // Let aimbot recalculate
+		}
+		
 		// Replay the saved command exactly - don't recalculate angles
 		// The aimbot already calculated the correct angles on the first tick
 		m_ShiftCmd.command_number = pCmd->command_number;

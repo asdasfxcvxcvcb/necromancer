@@ -519,11 +519,16 @@ bool CAimbotHitscan::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, cons
 				{
 					F::LagRecordMatrixHelper->Set(target.LagRecord);
 
-					const bool bTraceResult = H::AimUtils->TraceEntityBullet(target.Entity, vLocalPos, target.Position);
+					int nHitHitbox = -1;
+					const bool bTraceResult = H::AimUtils->TraceEntityBullet(target.Entity, vLocalPos, target.Position, &nHitHitbox);
 
 					F::LagRecordMatrixHelper->Restore();
 
 					if (!bTraceResult)
+						continue;
+
+					// For lag records aiming at head, verify we actually hit the head hitbox
+					if (target.AimedHitbox == HITBOX_HEAD && nHitHitbox != HITBOX_HEAD)
 						continue;
 				}
 
@@ -588,6 +593,23 @@ bool CAimbotHitscan::ShouldAim(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWea
 void CAimbotHitscan::Aim(CUserCmd* pCmd, C_TFPlayer* pLocal, const Vec3& vAngles)
 {
 	Vec3 vAngleTo = vAngles - pLocal->m_vecPunchAngle();
+	
+	// When airborne and aiming at body (not head), aim slightly lower to compensate for view position
+	// Scale the adjustment based on pitch - steeper angles (looking down more) need less adjustment
+	if (!(pLocal->m_fFlags() & FL_ONGROUND))
+	{
+		const auto pWeapon = H::Entities->GetWeapon();
+		if (pWeapon && GetAimHitbox(pWeapon) != HITBOX_HEAD)
+		{
+			// Use pitch to estimate distance - flatter angles = farther targets
+			// At pitch 0 (horizontal), target is far - use small adjustment
+			// At pitch 45+ (looking down), target is close - use larger adjustment
+			float flPitchAbs = fabsf(vAngleTo.x);
+			float flAdjustment = Math::RemapValClamped(flPitchAbs, 0.0f, 45.0f, 0.5f, 3.0f);
+			vAngleTo.x += flAdjustment; // Pitch down (positive = down)
+		}
+	}
+	
 	Math::ClampAngles(vAngleTo);
 
 	// During rapid fire shifting, always use silent aim to set angles for each tick
@@ -611,11 +633,10 @@ void CAimbotHitscan::Aim(CUserCmd* pCmd, C_TFPlayer* pLocal, const Vec3& vAngles
 		// Silent (only set angles on the EXACT tick when firing)
 		case 1:
 		{
-			// CRITICAL: Only set angles when ACTUALLY firing this tick
-			// G::bFiring is set BEFORE this function is called in Run()
-			// We must only modify angles on the exact firing tick to avoid view jitter
-			// Using G::bFiring ensures we only snap on the shot tick, not while holding attack
-			if (G::bFiring)
+			// Set angles whenever IN_ATTACK is set, not just when G::bFiring is true
+			// G::bFiring requires G::bCanPrimaryAttack which may be false even when we're
+			// pressing attack. We need to set angles on the tick the shot actually fires.
+			if (pCmd->buttons & IN_ATTACK)
 			{
 				H::AimUtils->FixMovement(pCmd, vAngleTo);
 				pCmd->viewangles = vAngleTo;
@@ -768,7 +789,8 @@ bool CAimbotHitscan::ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWe
 	}
 
 	// FakeLag Fix - only shoot when target unchokes (their position is accurate)
-	if (CFG::Aimbot_Hitscan_FakeLagFix && target.Entity && target.Entity->GetClassId() == ETFClassIds::CTFPlayer)
+	// SKIP during rapid fire shifting - once the burst starts, all shots fire regardless
+	if (CFG::Aimbot_Hitscan_FakeLagFix && !Shifting::bShiftingRapidFire && target.Entity && target.Entity->GetClassId() == ETFClassIds::CTFPlayer)
 	{
 		const auto pTarget = target.Entity->As<C_TFPlayer>();
 		if (pTarget && !F::FakeLagFix->ShouldShoot(pTarget))

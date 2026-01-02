@@ -456,6 +456,8 @@ namespace Shifting
 	inline bool bRapidFireWantShift = false;
 	inline bool bShiftingWarp = false;
 	inline bool bShiftingRapidFire = false;  // True when shifting for rapid fire (not warp)
+	inline int nCurrentShiftTick = 0;        // Current tick index during rapid fire shift (0-indexed)
+	inline int nTotalShiftTicks = 0;         // Total ticks being shifted
 
 	// Saved command state (from Amalgam)
 	inline CUserCmd SavedCmd = {};
@@ -478,6 +480,8 @@ namespace Shifting
 		bRapidFireWantShift = false;
 		bShiftingWarp = false;
 		bShiftingRapidFire = false;
+		nCurrentShiftTick = 0;
+		nTotalShiftTicks = 0;
 		// Reset saved command state
 		bHasSavedCmd = false;
 		bSavedAngles = false;

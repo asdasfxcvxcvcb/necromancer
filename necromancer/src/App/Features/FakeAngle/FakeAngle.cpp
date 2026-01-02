@@ -81,8 +81,23 @@ bool CFakeAngle::ShouldRun(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd
 		return false;
 	
 	// Don't anti-aim when attacking
+	// G::Attacking can be 0, 1, or 2:
+	// 0 = not attacking (or can't attack yet)
+	// 1 = attacking this tick
+	// 2 = attack queued (reloading)
+	// We should also check IN_ATTACK directly because G::Attacking might be 0
+	// even when holding attack (weapon on cooldown between shots)
 	if (G::Attacking == 1 || G::bFiring || G::bSilentAngles || G::bPSilentAngles)
 		return false;
+	
+	// Also don't anti-aim if we're holding attack with a hitscan weapon
+	// This prevents the second shot issue where anti-aim overwrites aimbot angles
+	if (pCmd && (pCmd->buttons & IN_ATTACK) && pWeapon)
+	{
+		EWeaponType eType = H::AimUtils->GetWeaponType(pWeapon);
+		if (eType == EWeaponType::HITSCAN)
+			return false;
+	}
 	
 	// Don't anti-aim during rapid fire shifting
 	if (Shifting::bShiftingRapidFire || Shifting::bRapidFireWantShift)

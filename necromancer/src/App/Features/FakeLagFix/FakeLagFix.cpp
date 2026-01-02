@@ -24,10 +24,11 @@ bool CFakeLagFix::ShouldShoot(C_TFPlayer* pTarget)
 	// Calculate how many ticks they choked
 	const int nChokedTicks = GetChokedTicks(pTarget);
 
-	// If they're not choking (1-2 ticks = normal), shoot
-	// If they just unchoked (sent update with choked ticks), shoot - their position is now accurate
-	// The key insight: when simtime updates, that's when we have their real position
-	return nChokedTicks >= 1; // They just sent an update, shoot now
+	// nChokedTicks >= 1 means they just sent an update (simtime changed) - their position is fresh, shoot now
+	// nChokedTicks == 0 means no simtime change this tick - they're either idle or we're waiting for update
+	// For idle targets (standing still), simtime won't change, so we should still allow shooting
+	// The key is: only block when we KNOW they're fakelagging (high choke count in previous frames)
+	return nChokedTicks >= 1;
 }
 
 int CFakeLagFix::GetChokedTicks(C_TFPlayer* pPlayer)

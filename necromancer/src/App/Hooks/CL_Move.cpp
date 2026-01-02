@@ -130,12 +130,18 @@ MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 			nTicks = std::min(nTicks, Shifting::nAvailableTicks);
 		}
 		
+		// Store total ticks for angle recalculation logic
+		Shifting::nTotalShiftTicks = nTicks;
+		
 		for (int n = 0; n < nTicks; n++)
 		{
+			Shifting::nCurrentShiftTick = n;
 			callOriginal(n == nTicks - 1);
 			Shifting::nAvailableTicks--;
 		}
 
+		Shifting::nCurrentShiftTick = 0;
+		Shifting::nTotalShiftTicks = 0;
 		Shifting::bShifting = false;
 		Shifting::bShiftingRapidFire = false;
 		return;
