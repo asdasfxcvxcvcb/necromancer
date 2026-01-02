@@ -137,7 +137,7 @@ void CAntiCheatCompat::ValidateNetworkCvars(void* pMsg)
 			float flValue = std::strtof(pCvar->Value, &end);
 
 			if (pCvar->Value != end) {
-				int iValue = static_cast<int>(std::stof(pCvar->Value));
+				int iValue = static_cast<int>(flValue);
 				iValue = std::max(iValue, 10);
 				strncpy_s(pCvar->Value, std::to_string(iValue).c_str(), MAX_OSPATH);
 				m_iSentCmdrate = iValue;
