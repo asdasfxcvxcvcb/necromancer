@@ -2486,7 +2486,6 @@ void CMenu::MainWindow()
 			{
 				CheckBox("Active", CFG::Triggerbot_AutoAirblast_Active);
 				CheckBox("Aim Assist", CFG::Triggerbot_AutoAirblast_Aim_Assist);
-				CheckBox("Aimbot Support (BETA)", CFG::Triggerbot_AutoAirblast_Aimbot_Support);
 
 				SelectSingle("Mode", CFG::Triggerbot_AutoAirblast_Mode,
 				{
