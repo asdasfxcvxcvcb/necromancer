@@ -108,6 +108,18 @@ void CRapidFire::Run(CUserCmd* pCmd, bool* pSendPacket)
 		m_ShiftCmd = *pCmd;
 		m_bShiftSilentAngles = G::bSilentAngles || G::bPSilentAngles;
 		m_bSetCommand = false;
+		
+		// Save target info for angle recalculation during shift
+		m_nSavedTargetIndex = G::nTargetIndex;
+		m_flSavedSimTime = 0.0f;
+		if (m_nSavedTargetIndex > 0)
+		{
+			if (auto pTarget = I::ClientEntityList->GetClientEntity(m_nSavedTargetIndex))
+			{
+				if (auto pPlayer = pTarget->As<C_TFPlayer>())
+					m_flSavedSimTime = pPlayer->m_flSimulationTime();
+			}
+		}
 
 		// Save shift start position and ground state
 		m_vShiftStart = pLocal->m_vecOrigin();
@@ -140,30 +152,7 @@ bool CRapidFire::ShouldExitCreateMove(CUserCmd* pCmd)
 	// Only handle rapid fire shifting, not warp shifting
 	if (Shifting::bShiftingRapidFire)
 	{
-		// Recalculate angle on every tick
-		bool bRecalculateAngle = true;
-		
-		if (bRecalculateAngle)
-		{
-			// Don't exit early - let CreateMove and aimbot run to recalculate angle
-			// But still set up the command basics
-			pCmd->buttons |= IN_ATTACK;
-			G::bFiring = true;
-			G::bSilentAngles = m_bShiftSilentAngles;
-			
-			// Apply anti-warp if enabled and started on ground
-			if (CFG::Exploits_RapidFire_Antiwarp && m_bStartedShiftOnGround)
-			{
-				const float flTicks = std::max(14.f, std::min(24.f, static_cast<float>(CFG::Exploits_RapidFire_Ticks)));
-				const float flScale = Math::RemapValClamped(flTicks, 14.f, 24.f, 0.605f, 1.f);
-				SDKUtils::WalkTo(pCmd, pLocal->m_vecOrigin(), m_vShiftStart, flScale);
-			}
-			
-			return false; // Let aimbot recalculate
-		}
-		
-		// Replay the saved command exactly - don't recalculate angles
-		// The aimbot already calculated the correct angles on the first tick
+		// Replay the saved command exactly first
 		m_ShiftCmd.command_number = pCmd->command_number;
 		
 		// Copy the entire saved command
@@ -171,6 +160,42 @@ bool CRapidFire::ShouldExitCreateMove(CUserCmd* pCmd)
 		
 		// Ensure attack button is set
 		pCmd->buttons |= IN_ATTACK;
+		
+		// Recalculate angles to track moving targets
+		if (m_nSavedTargetIndex > 0)
+		{
+			if (auto pTarget = I::ClientEntityList->GetClientEntity(m_nSavedTargetIndex))
+			{
+				if (auto pPlayer = pTarget->As<C_TFPlayer>())
+				{
+					if (!pPlayer->deadflag())
+					{
+						// Get current hitbox position
+						const auto pWeapon = H::Entities->GetWeapon();
+						int nHitbox = HITBOX_PELVIS; // Default to body
+						if (pWeapon)
+						{
+							// Use head for headshot-capable weapons
+							if (H::AimUtils->IsWeaponCapableOfHeadshot(pWeapon))
+								nHitbox = HITBOX_HEAD;
+						}
+						
+						Vec3 vTargetPos = pPlayer->GetHitboxPos(nHitbox);
+						Vec3 vLocalPos = pLocal->GetShootPos();
+						Vec3 vAngleTo = Math::CalcAngle(vLocalPos, vTargetPos);
+						vAngleTo -= pLocal->m_vecPunchAngle();
+						Math::ClampAngles(vAngleTo);
+						
+						// Update viewangles with recalculated angle
+						if (m_bShiftSilentAngles)
+						{
+							H::AimUtils->FixMovement(pCmd, vAngleTo);
+						}
+						pCmd->viewangles = vAngleTo;
+					}
+				}
+			}
+		}
 		
 		// Apply anti-warp if enabled and started on ground
 		if (CFG::Exploits_RapidFire_Antiwarp && m_bStartedShiftOnGround)
@@ -184,7 +209,7 @@ bool CRapidFire::ShouldExitCreateMove(CUserCmd* pCmd)
 		G::bFiring = true;
 		G::bSilentAngles = m_bShiftSilentAngles;
 		
-		// Return true to exit CreateMove early - we don't need aimbot to recalculate
+		// Return true to exit CreateMove early - we handle everything here
 		return true;
 	}
 

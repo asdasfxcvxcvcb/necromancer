@@ -10,6 +10,10 @@ class CRapidFire
 
 	Vec3 m_vShiftStart = {};
 	bool m_bStartedShiftOnGround = false;
+	
+	// For angle recalculation during DT
+	int m_nSavedTargetIndex = -1;
+	float m_flSavedSimTime = 0.0f;
 
 	bool ShouldStart(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon);
 
