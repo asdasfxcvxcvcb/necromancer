@@ -3953,6 +3953,12 @@ void CMenu::MainWindow()
 				{
 					OpenChatTextFiles();
 				}
+				
+				if (Button("Refresh"))
+				{
+					ReloadChatSpammerMessages();
+					ReloadKillsayMessages();
+				}
 			}
 		};
 

@@ -594,22 +594,7 @@ void CAimbotHitscan::Aim(CUserCmd* pCmd, C_TFPlayer* pLocal, const Vec3& vAngles
 {
 	Vec3 vAngleTo = vAngles - pLocal->m_vecPunchAngle();
 	
-	// When airborne and aiming at body (not head), aim slightly lower to compensate for view position
-	// Scale the adjustment based on pitch - steeper angles (looking down more) need less adjustment
-	if (!(pLocal->m_fFlags() & FL_ONGROUND))
-	{
-		const auto pWeapon = H::Entities->GetWeapon();
-		if (pWeapon && GetAimHitbox(pWeapon) != HITBOX_HEAD)
-		{
-			// Use pitch to estimate distance - flatter angles = farther targets
-			// At pitch 0 (horizontal), target is far - use small adjustment
-			// At pitch 45+ (looking down), target is close - use larger adjustment
-			float flPitchAbs = fabsf(vAngleTo.x);
-			float flAdjustment = Math::RemapValClamped(flPitchAbs, 0.0f, 45.0f, 0.5f, 3.0f);
-			vAngleTo.x += flAdjustment; // Pitch down (positive = down)
-		}
-	}
-	
+
 	Math::ClampAngles(vAngleTo);
 
 	// During rapid fire shifting, always use silent aim to set angles for each tick
