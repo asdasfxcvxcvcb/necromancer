@@ -58,11 +58,12 @@ void CMisc::CrouchWhileAirborne(CUserCmd* pCmd)
 		// Don't crouch while projectile aimbot is actively aiming
 		// This prevents messing up the shoot position calculation
 		// G::nTargetIndex is set by aimbot when it has a valid target
+		// NOTE: Hitscan aimbot now properly accounts for duck state via GetPredictedShootPos()
 		if (G::nTargetIndex > 0)
 		{
-			// Check if we're using a projectile weapon
 			if (const auto pWeapon = H::Entities->GetWeapon())
 			{
+				// Skip for projectile weapons - they need consistent shoot position
 				switch (pWeapon->GetWeaponID())
 				{
 				case TF_WEAPON_ROCKETLAUNCHER:

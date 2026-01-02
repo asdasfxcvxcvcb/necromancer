@@ -9,6 +9,28 @@
 #include "../../Hitchance/Hitchance.h"
 #include <algorithm>
 
+// Get the predicted shoot position accounting for duck state in the command
+// This is critical for CrouchWhileAirborne - the command may have IN_DUCK set
+// but the entity's current state doesn't reflect that yet
+static Vec3 GetPredictedShootPos(C_TFPlayer* pLocal, const CUserCmd* pCmd)
+{
+	Vec3 vShootPos = pLocal->GetShootPos();
+	
+	const bool bCurrentlyDucking = (pLocal->m_fFlags() & FL_DUCKING) != 0;
+	const bool bWantsToDuck = (pCmd->buttons & IN_DUCK) != 0;
+	const bool bOnGround = (pLocal->m_fFlags() & FL_ONGROUND) != 0;
+	
+	// When airborne, ducking is instant (no transition time)
+	// If CrouchWhileAirborne set IN_DUCK but FL_DUCKING isn't set yet, we need to predict
+	// TF2 view heights: standing = 68, ducking = 45, difference = 23 units
+	if (bWantsToDuck && !bCurrentlyDucking && !bOnGround)
+	{
+		vShootPos.z -= 10.0f;
+	}
+	
+	return vShootPos;
+}
+
 // Check if weapon is a sniper rifle or ambassador (can headshot)
 bool CAimbotHitscan::IsHeadshotCapableWeapon(C_TFWeaponBase* pWeapon)
 {
@@ -69,7 +91,7 @@ int CAimbotHitscan::GetAimHitbox(C_TFWeaponBase* pWeapon)
 	}
 }
 
-bool CAimbotHitscan::ScanHead(C_TFPlayer* pLocal, HitscanTarget_t& target)
+bool CAimbotHitscan::ScanHead(C_TFPlayer* pLocal, const CUserCmd* pCmd, HitscanTarget_t& target)
 {
 	if (!CFG::Aimbot_Hitscan_Scan_Head)
 		return false;
@@ -105,7 +127,7 @@ bool CAimbotHitscan::ScanHead(C_TFPlayer* pLocal, HitscanTarget_t& target)
 		Vec3((vMins.x + vMaxs.x) * 0.5f, vMins.y * 0.7f, (vMins.z + vMaxs.z) * 0.5f)
 	};
 
-	const Vec3 vLocalPos = pLocal->GetShootPos();
+	const Vec3 vLocalPos = GetPredictedShootPos(pLocal, pCmd);
 	for (const auto& vPoint : vPoints)
 	{
 		Vec3 vTransformed = {};
@@ -129,7 +151,7 @@ bool CAimbotHitscan::ScanHead(C_TFPlayer* pLocal, HitscanTarget_t& target)
 	return false;
 }
 
-bool CAimbotHitscan::ScanBody(C_TFPlayer* pLocal, HitscanTarget_t& target)
+bool CAimbotHitscan::ScanBody(C_TFPlayer* pLocal, const CUserCmd* pCmd, HitscanTarget_t& target)
 {
 	const bool bScanningBody = CFG::Aimbot_Hitscan_Scan_Body;
 	const bool bScaningArms = CFG::Aimbot_Hitscan_Scan_Arms;
@@ -142,7 +164,7 @@ bool CAimbotHitscan::ScanBody(C_TFPlayer* pLocal, HitscanTarget_t& target)
 	if (!pPlayer)
 		return false;
 
-	const Vec3 vLocalPos = pLocal->GetShootPos();
+	const Vec3 vLocalPos = GetPredictedShootPos(pLocal, pCmd);
 	for (int n = 1; n < pPlayer->GetNumOfHitboxes(); n++)
 	{
 		if (n == target.AimedHitbox)
@@ -173,7 +195,7 @@ bool CAimbotHitscan::ScanBody(C_TFPlayer* pLocal, HitscanTarget_t& target)
 	return false;
 }
 
-bool CAimbotHitscan::ScanBuilding(C_TFPlayer* pLocal, HitscanTarget_t& target)
+bool CAimbotHitscan::ScanBuilding(C_TFPlayer* pLocal, const CUserCmd* pCmd, HitscanTarget_t& target)
 {
 	if (!CFG::Aimbot_Hitscan_Scan_Buildings)
 		return false;
@@ -182,7 +204,7 @@ bool CAimbotHitscan::ScanBuilding(C_TFPlayer* pLocal, HitscanTarget_t& target)
 	if (!pObject)
 		return false;
 
-	const Vec3 vLocalPos = pLocal->GetShootPos();
+	const Vec3 vLocalPos = GetPredictedShootPos(pLocal, pCmd);
 
 	if (pObject->GetClassId() == ETFClassIds::CObjectSentrygun)
 	{
@@ -233,9 +255,9 @@ bool CAimbotHitscan::ScanBuilding(C_TFPlayer* pLocal, HitscanTarget_t& target)
 	return false;
 }
 
-bool CAimbotHitscan::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, HitscanTarget_t& outTarget)
+bool CAimbotHitscan::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, const CUserCmd* pCmd, HitscanTarget_t& outTarget)
 {
-	const Vec3 vLocalPos = pLocal->GetShootPos();
+	const Vec3 vLocalPos = GetPredictedShootPos(pLocal, pCmd);
 	const Vec3 vLocalAngles = I::EngineClient->GetViewAngles();
 
 	m_vecTargets.clear();
@@ -285,13 +307,7 @@ bool CAimbotHitscan::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, Hits
 					
 					int nStartRecord = 1;
 					int nEndRecord = nRecords;
-
-					// Avoid last backtrack tick during doubletap - it can be unstable (from Amalgam)
-					const bool bDoubletap = F::RapidFire->GetTicks(pWeapon) > 0;
-					if (bDoubletap && nEndRecord > 1)
-					{
-						nEndRecord--;
-					}
+					const bool bDoubletap = Shifting::bShiftingRapidFire || Shifting::bRapidFireWantShift;
 					
 					// When fake latency is 0 and using sniper rifle: add original model as valid target alongside backtrack
 					if (!bFakeLatencyActive && bIsSniper && bIsSniperRifle)
@@ -476,13 +492,13 @@ bool CAimbotHitscan::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, Hits
 					{
 						if (target.AimedHitbox == HITBOX_HEAD)
 						{
-							if (!ScanHead(pLocal, target))
+							if (!ScanHead(pLocal, pCmd, target))
 								continue;
 						}
 
 						else if (target.AimedHitbox == HITBOX_PELVIS)
 						{
-							if (!ScanBody(pLocal, target))
+							if (!ScanBody(pLocal, pCmd, target))
 								continue;
 						}
 
@@ -495,7 +511,7 @@ bool CAimbotHitscan::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, Hits
 					else
 					{
 						if (nHitHitbox != target.AimedHitbox && target.AimedHitbox == HITBOX_HEAD)
-							ScanHead(pLocal, target);
+							ScanHead(pLocal, pCmd, target);
 					}
 				}
 
@@ -520,7 +536,7 @@ bool CAimbotHitscan::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, Hits
 			{
 				if (!H::AimUtils->TraceEntityBullet(target.Entity, vLocalPos, target.Position))
 				{
-					if (!ScanBuilding(pLocal, target))
+					if (!ScanBuilding(pLocal, pCmd, target))
 						continue;
 				}
 
@@ -1067,7 +1083,7 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 	const bool isFiring = bRapidFireShifting ? true : IsFiring(pCmd, pWeapon);
 
 	HitscanTarget_t target = {};
-	if (GetTarget(pLocal, pWeapon, target) && target.Entity)
+	if (GetTarget(pLocal, pWeapon, pCmd, target) && target.Entity)
 	{
 		G::nTargetIndexEarly = target.Entity->entindex();
 

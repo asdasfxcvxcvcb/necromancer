@@ -15,10 +15,10 @@ class CAimbotHitscan
 	std::vector<HitscanTarget_t> m_vecTargets = {};
 
 	int GetAimHitbox(C_TFWeaponBase* pWeapon);
-	bool ScanHead(C_TFPlayer* pLocal, HitscanTarget_t& target);
-	bool ScanBody(C_TFPlayer* pLocal, HitscanTarget_t& target);
-	bool ScanBuilding(C_TFPlayer* pLocal, HitscanTarget_t& target);
-	bool GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, HitscanTarget_t& outTarget);
+	bool ScanHead(C_TFPlayer* pLocal, const CUserCmd* pCmd, HitscanTarget_t& target);
+	bool ScanBody(C_TFPlayer* pLocal, const CUserCmd* pCmd, HitscanTarget_t& target);
+	bool ScanBuilding(C_TFPlayer* pLocal, const CUserCmd* pCmd, HitscanTarget_t& target);
+	bool GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, const CUserCmd* pCmd, HitscanTarget_t& outTarget);
 	bool ShouldAim(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon);
 	void Aim(CUserCmd* pCmd, C_TFPlayer* pLocal, const Vec3& vAngles);
 	bool ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, const HitscanTarget_t& target);

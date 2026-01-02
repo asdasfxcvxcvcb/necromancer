@@ -343,9 +343,14 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 				*pSendPacket = false;
 		}
 
+		// IMPORTANT: CrouchWhileAirborne MUST run BEFORE aimbot!
+		// Crouching changes the shoot position (eye height drops ~20 units).
+		// If aimbot calculates angles first, then crouch is added after,
+		// the shot will come from a different position than expected = miss.
+		F::Misc->CrouchWhileAirborne(pCmd);
+
 		F::Misc->AutoMedigun(pCmd);
 		F::Aimbot->Run(pCmd);
-		F::Misc->CrouchWhileAirborne(pCmd);
 
 		// IMPORTANT: Update G::Attacking AFTER aimbot runs
 		// Aimbot may have added IN_ATTACK, so we need to re-check
