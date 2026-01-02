@@ -552,7 +552,8 @@ bool CAimbotHitscan::ShouldAim(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWea
 	if (CFG::Aimbot_Hitscan_Aim_Type == 1 && (!IsFiring(pCmd, pWeapon) || !pWeapon->HasPrimaryAmmoForShot()))
 		return false;
 
-	if (CFG::Aimbot_Hitscan_Aim_Type == 2)
+	// Smooth and Triggerbot share the same ShouldAim behavior
+	if (CFG::Aimbot_Hitscan_Aim_Type == 2 || CFG::Aimbot_Hitscan_Aim_Type == 3)
 	{
 		const int nWeaponID = pWeapon->GetWeaponID();
 		if (nWeaponID == TF_WEAPON_SNIPERRIFLE || nWeaponID == TF_WEAPON_SNIPERRIFLE_CLASSIC || nWeaponID == TF_WEAPON_SNIPERRIFLE_DECAP)
@@ -631,6 +632,14 @@ void CAimbotHitscan::Aim(CUserCmd* pCmd, C_TFPlayer* pLocal, const Vec3& vAngles
 				G::bUseSmoothAimAngles = true;
 			}
 
+			break;
+		}
+
+		// Triggerbot - same as smooth with smoothing at 0 (no angle adjustment)
+		case 3:
+		{
+			// Smooth at 0 does nothing because the condition (Smoothing > 0) is false
+			// So triggerbot just doesn't modify angles at all
 			break;
 		}
 
@@ -835,7 +844,9 @@ bool CAimbotHitscan::ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWe
 		}
 	}
 
-	if (CFG::Aimbot_Hitscan_Advanced_Smooth_AutoShoot && CFG::Aimbot_Hitscan_Aim_Type == 2)
+	// Smooth autoshoot check OR Triggerbot - only fire when crosshair is on target
+	// Triggerbot is essentially smooth with smoothing=0, so it always needs this check
+	if ((CFG::Aimbot_Hitscan_Advanced_Smooth_AutoShoot && CFG::Aimbot_Hitscan_Aim_Type == 2) || CFG::Aimbot_Hitscan_Aim_Type == 3)
 	{
 		Vec3 vForward = {};
 		Math::AngleVectors(pCmd->viewangles, &vForward);
@@ -846,19 +857,93 @@ bool CAimbotHitscan::ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWe
 		{
 			const auto pPlayer = target.Entity->As<C_TFPlayer>();
 
-			if (!target.LagRecord)
+			const bool bTriggerbotMode = CFG::Aimbot_Hitscan_Aim_Type == 3;
+
+			// Triggerbot: use stricter center-of-hitbox check to avoid edge shots
+			// This ensures we're not just grazing the edge of the hitbox
+			if (bTriggerbotMode && target.AimedHitbox == HITBOX_HEAD)
 			{
 				int nHitHitbox = -1;
 
 				if (!H::AimUtils->TraceEntityBullet(pPlayer, vTraceStart, vTraceEnd, &nHitHitbox))
 					return false;
 
+				if (nHitHitbox != HITBOX_HEAD)
+					return false;
+
+				// Additional check: make sure we're hitting closer to the center of the hitbox
+				// Use the same RayToOBB check that smooth autoshoot uses, but with smaller bounds
+				Vec3 vMins = {}, vMaxs = {}, vCenter = {};
+				matrix3x4_t matrix = {};
+				pPlayer->GetHitboxInfo(nHitHitbox, &vCenter, &vMins, &vMaxs, &matrix);
+
+				// Hardcoded per-class head hitbox scale (height and width)
+				float flScaleH = 0.94f, flScaleW = 0.94f;
+				switch (pPlayer->m_iClass())
+				{
+					case TF_CLASS_SCOUT:
+						flScaleH = 0.95f;
+						flScaleW = 0.95f;
+						break;
+					case TF_CLASS_SOLDIER:
+						flScaleH = 0.22f;
+						flScaleW = 0.70f;
+						break;
+					case TF_CLASS_PYRO:
+						flScaleH = 0.69f;
+						flScaleW = 0.69f;
+						break;
+					case TF_CLASS_DEMOMAN:
+						flScaleH = 0.86f;
+						flScaleW = 0.81f;
+						break;
+					case TF_CLASS_HEAVYWEAPONS:
+						flScaleH = 0.60f;
+						flScaleW = 0.25f;
+						break;
+					case TF_CLASS_ENGINEER:
+						flScaleH = 0.91f;
+						flScaleW = 0.88f;
+						break;
+					case TF_CLASS_MEDIC:
+						flScaleH = 0.95f;
+						flScaleW = 0.95f;
+						break;
+					case TF_CLASS_SNIPER:
+						flScaleH = 0.92f;
+						flScaleW = 0.69f;
+						break;
+					case TF_CLASS_SPY:
+						flScaleH = 0.64f;
+						flScaleW = 0.50f;
+						break;
+				}
+
+				// Apply height scale to Z axis, width scale to X/Y axes
+				vMins.x *= flScaleW;
+				vMins.y *= flScaleW;
+				vMins.z *= flScaleH;
+				vMaxs.x *= flScaleW;
+				vMaxs.y *= flScaleW;
+				vMaxs.z *= flScaleH;
+
+				if (!Math::RayToOBB(vTraceStart, vForward, vCenter, vMins, vMaxs, matrix))
+					return false;
+			}
+			else if (!target.LagRecord)
+			{
+				int nHitHitbox = -1;
+
+				if (!H::AimUtils->TraceEntityBullet(pPlayer, vTraceStart, vTraceEnd, &nHitHitbox))
+					return false;
+
+				// For both triggerbot and smooth autoshoot: if aiming for head, require head hit
 				if (target.AimedHitbox == HITBOX_HEAD)
 				{
 					if (nHitHitbox != HITBOX_HEAD)
 						return false;
 
-					if (!target.WasMultiPointed)
+					if (!bTriggerbotMode && !target.WasMultiPointed)
 					{
 						Vec3 vMins = {}, vMaxs = {}, vCenter = {};
 						matrix3x4_t matrix = {};
@@ -885,6 +970,7 @@ bool CAimbotHitscan::ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWe
 					return false;
 				}
 
+				// For both triggerbot and smooth autoshoot: if aiming for head, require head hit
 				if (target.AimedHitbox == HITBOX_HEAD)
 				{
 					if (nHitHitbox != HITBOX_HEAD)
@@ -893,16 +979,19 @@ bool CAimbotHitscan::ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWe
 						return false;
 					}
 
-					Vec3 vMins = {}, vMaxs = {}, vCenter = {};
-					SDKUtils::GetHitboxInfoFromMatrix(pPlayer, nHitHitbox, const_cast<matrix3x4_t*>(target.LagRecord->BoneMatrix), &vCenter, &vMins, &vMaxs);
-
-					vMins *= 0.5f;
-					vMaxs *= 0.5f;
-
-					if (!Math::RayToOBB(vTraceStart, vForward, vCenter, vMins, vMaxs, *target.LagRecord->BoneMatrix))
+					if (!bTriggerbotMode && !target.WasMultiPointed)
 					{
-						F::LagRecordMatrixHelper->Restore();
-						return false;
+						Vec3 vMins = {}, vMaxs = {}, vCenter = {};
+						SDKUtils::GetHitboxInfoFromMatrix(pPlayer, nHitHitbox, const_cast<matrix3x4_t*>(target.LagRecord->BoneMatrix), &vCenter, &vMins, &vMaxs);
+
+						vMins *= 0.5f;
+						vMaxs *= 0.5f;
+
+						if (!Math::RayToOBB(vTraceStart, vForward, vCenter, vMins, vMaxs, *target.LagRecord->BoneMatrix))
+						{
+							F::LagRecordMatrixHelper->Restore();
+							return false;
+						}
 					}
 				}
 
@@ -962,8 +1051,11 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 	if (!CFG::Aimbot_Hitscan_Active)
 		return;
 
-	if (CFG::Aimbot_Hitscan_Sort == 0)
+	// Set FOV for circle drawing - but not for triggerbot (no FOV circle needed)
+	if (CFG::Aimbot_Hitscan_Sort == 0 && CFG::Aimbot_Hitscan_Aim_Type != 3)
 		G::flAimbotFOV = CFG::Aimbot_Hitscan_FOV;
+	else if (CFG::Aimbot_Hitscan_Aim_Type == 3)
+		G::flAimbotFOV = 0.0f; // Disable FOV circle for triggerbot
 
 	// Allow aimbot to run during rapid fire shifting to recalculate angles for each tick
 	// Skip only during warp shifting (not rapid fire)

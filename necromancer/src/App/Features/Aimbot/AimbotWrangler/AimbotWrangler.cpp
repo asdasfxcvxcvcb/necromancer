@@ -582,6 +582,12 @@ void CAimbotWrangler::Aim(CUserCmd* pCmd, C_TFPlayer* pLocal, const Vec3& vAngle
 			break;
 		}
 		
+		// Triggerbot - same as smooth with smoothing=0 (no angle adjustment)
+		case 3:
+		{
+			break;
+		}
+		
 		default: break;
 	}
 }

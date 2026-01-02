@@ -19,7 +19,7 @@ namespace CFG
 	CFGVAR(Aimbot_Hitscan_Active, false);
 	CFGVAR(Aimbot_Hitscan_Target_LagRecords, true);
 	CFGVAR(Aimbot_Hitscan_Target_Stickies, true);
-	CFGVAR(Aimbot_Hitscan_Aim_Type, 1); //0 Normal 1 Silent 2 Smooth
+	CFGVAR(Aimbot_Hitscan_Aim_Type, 1); //0 Normal 1 Silent 2 Smooth 3 Triggerbot
 	CFGVAR(Aimbot_Hitscan_Sort, 0); //0 FOV 1 Distance
 	CFGVAR(Aimbot_Hitscan_Hitbox, 2); //0 Head 1 Body 2 Auto 3 Switch
 	CFGVAR(Aimbot_Hitscan_Switch_Key, 0); // Key to toggle head/body for sniper/ambassador

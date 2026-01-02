@@ -2359,11 +2359,31 @@ void CMenu::MainWindow()
 				CheckBox("Smart Shotgun (Beta)", CFG::Aimbot_Hitscan_Smart_Shotgun);
 				CheckBox("FakeLag Fix", CFG::Aimbot_Hitscan_FakeLagFix);
 
+				// Track previous aim type to backup/restore FOV when switching to/from triggerbot
+				static int nPrevAimType = CFG::Aimbot_Hitscan_Aim_Type;
+				static float flBackupFOV = CFG::Aimbot_Hitscan_FOV;
+
 				SelectSingle("Aim Type", CFG::Aimbot_Hitscan_Aim_Type, {
 					{ "Normal", 0 },
 					{ "Silent", 1 },
-					{ "Smooth", 2 }
+					{ "Smooth", 2 },
+					{ "Triggerbot", 3 }
 				});
+
+				// Handle FOV backup/restore when aim type changes
+				if (CFG::Aimbot_Hitscan_Aim_Type != nPrevAimType)
+				{
+					if (CFG::Aimbot_Hitscan_Aim_Type == 3) // Switched TO triggerbot
+					{
+						flBackupFOV = CFG::Aimbot_Hitscan_FOV; // Backup current FOV
+						CFG::Aimbot_Hitscan_FOV = 10.0f; // Set FOV to 10
+					}
+					else if (nPrevAimType == 3) // Switched FROM triggerbot
+					{
+						CFG::Aimbot_Hitscan_FOV = flBackupFOV; // Restore FOV
+					}
+					nPrevAimType = CFG::Aimbot_Hitscan_Aim_Type;
+				}
 
 				SelectSingle("Hitbox", CFG::Aimbot_Hitscan_Hitbox, {
 					{ "Head", 0 },
@@ -2390,8 +2410,14 @@ void CMenu::MainWindow()
 					{ "Buildings", CFG::Aimbot_Hitscan_Scan_Buildings }
 					});
 
-				SliderFloat("FOV", CFG::Aimbot_Hitscan_FOV, 1.0f, 180.0f, 1.0f, "%.0f");
-				SliderFloat("Smoothing", CFG::Aimbot_Hitscan_Smoothing, 0.0f, 20.0f, 0.5f, "%.1f");
+				if (CFG::Aimbot_Hitscan_Aim_Type != 3) // Hide FOV for Triggerbot
+				{
+					SliderFloat("FOV", CFG::Aimbot_Hitscan_FOV, 1.0f, 180.0f, 1.0f, "%.0f");
+				}
+				if (CFG::Aimbot_Hitscan_Aim_Type == 2) // Only show smoothing for Smooth aim type
+				{
+					SliderFloat("Smoothing", CFG::Aimbot_Hitscan_Smoothing, 1.5f, 20.0f, 0.5f, "%.1f");
+				}
 				SliderFloat("Fake Latency", CFG::Aimbot_Hitscan_Fake_Latency, 0.0f, 600.0f, 10.0f, "%.0f ms");
 				SliderInt("Hitchance", CFG::Aimbot_Hitscan_Hitchance, 0, 100, 1);
 			}
