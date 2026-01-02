@@ -513,11 +513,18 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 	// Silent aim handling
 	if (G::bSilentAngles || G::bPSilentAngles)
 	{
-		Vec3 vRestoreAngles = vOldAngles;
+		// Use smooth aim angles if smooth aimbot is active, otherwise use original angles
+		Vec3 vRestoreAngles = G::bUseSmoothAimAngles ? G::vSmoothAimAngles : vOldAngles;
 		I::EngineClient->SetViewAngles(vRestoreAngles);
 		I::Prediction->SetLocalViewAngles(vRestoreAngles);
+		
+		// Reset smooth aim flag for next tick
+		G::bUseSmoothAimAngles = false;
 		return false;
 	}
+	
+	// Reset smooth aim flag for next tick
+	G::bUseSmoothAimAngles = false;
 
 	return CALL_ORIGINAL(ecx, flInputSampleTime, pCmd);
 }

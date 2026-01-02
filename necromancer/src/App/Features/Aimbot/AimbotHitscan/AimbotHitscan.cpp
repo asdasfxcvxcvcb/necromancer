@@ -611,12 +611,25 @@ void CAimbotHitscan::Aim(CUserCmd* pCmd, C_TFPlayer* pLocal, const Vec3& vAngles
 		// Smooth
 		case 2:
 		{
-			Vec3 vDelta = vAngleTo - pCmd->viewangles;
+			// Use ENGINE view angles, not cmd angles
+			// This is critical because anti-aim modifies pCmd->viewangles AFTER aimbot
+			// We need to smooth from what the player actually sees (engine angles)
+			Vec3 vCurrentAngles = I::EngineClient->GetViewAngles();
+			Vec3 vDelta = vAngleTo - vCurrentAngles;
 			Math::ClampAngles(vDelta);
 
 			// Apply smoothing
 			if (vDelta.Length() > 0.0f && CFG::Aimbot_Hitscan_Smoothing > 0.f)
-				pCmd->viewangles += vDelta / CFG::Aimbot_Hitscan_Smoothing;
+			{
+				Vec3 vNewAngles = vCurrentAngles + vDelta / CFG::Aimbot_Hitscan_Smoothing;
+				Math::ClampAngles(vNewAngles);
+				pCmd->viewangles = vNewAngles;
+				
+				// Store smooth aim angles for restoration at end of CreateMove
+				// This prevents AA from overwriting our view with the original angles
+				G::vSmoothAimAngles = vNewAngles;
+				G::bUseSmoothAimAngles = true;
+			}
 
 			break;
 		}
