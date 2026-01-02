@@ -346,7 +346,19 @@ float CFakeAngle::GetPitch(float flCurPitch)
 
 void CFakeAngle::FakeShotAngles(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd)
 {
+	// Require main anti-aim toggle to be enabled
+	if (!CFG::Exploits_AntiAim_Enabled)
+		return;
+	
+	// Don't use with Legit AA - it has its own approach
+	if (CFG::Exploits_LegitAA_Enabled)
+		return;
+	
 	if (!CFG::Exploits_AntiAim_InvalidShootPitch || G::Attacking != 1 || pLocal->GetMoveType() != MOVETYPE_WALK)
+		return;
+	
+	// Don't use with anti-cheat compat - causes detection
+	if (CFG::Misc_AntiCheat_Enabled)
 		return;
 	
 	if (!pWeapon)

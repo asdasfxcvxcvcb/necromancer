@@ -114,6 +114,7 @@ void CAntiCheatCompat::ValidateNetworkCvars(void* pMsg)
 		return;
 
 	auto pSetConVar = reinterpret_cast<NET_SetConVar*>(pMsg);
+	char* end = nullptr;
 
 	for (int i = 0; i < pSetConVar->m_ConVars.Count(); i++)
 	{
@@ -122,30 +123,35 @@ void CAntiCheatCompat::ValidateNetworkCvars(void* pMsg)
 		// cl_interp: clamp to max 0.1 and track sent value
 		if (strcmp(pCvar->Name, "cl_interp") == 0)
 		{
-			try {
-				float flValue = std::stof(pCvar->Value);
+			float flValue = std::strtof(pCvar->Value, &end);
+			if (end != pCvar->Value)
+			{
 				flValue = std::min(flValue, 0.1f);
 				strncpy_s(pCvar->Value, std::to_string(flValue).c_str(), MAX_OSPATH);
 				m_flSentInterp = flValue;
-			} catch (...) {}
+			}
 		}
 		// cl_cmdrate: clamp to min 10 and track sent value
 		else if (strcmp(pCvar->Name, "cl_cmdrate") == 0)
 		{
-			try {
-				int iValue = static_cast<int>(std::stof(pCvar->Value));
+			float flValue = std::strtof(pCvar->Value, &end);
+			if (end != pCvar->Value)
+			{
+				int iValue = static_cast<int>(flValue);
 				iValue = std::max(iValue, 10);
 				strncpy_s(pCvar->Value, std::to_string(iValue).c_str(), MAX_OSPATH);
 				m_iSentCmdrate = iValue;
-			} catch (...) {}
+			}
 		}
 		// cl_updaterate: track sent value
 		else if (strcmp(pCvar->Name, "cl_updaterate") == 0)
 		{
-			try {
-				int iValue = static_cast<int>(std::stof(pCvar->Value));
+			float flValue = std::strtof(pCvar->Value, &end);
+			if (end != pCvar->Value)
+			{
+				int iValue = static_cast<int>(flValue);
 				m_iSentUpdaterate = iValue;
-			} catch (...) {}
+			}
 		}
 		// cl_interp_ratio and cl_interpolate: force to 1
 		else if (strcmp(pCvar->Name, "cl_interp_ratio") == 0 || strcmp(pCvar->Name, "cl_interpolate") == 0)
