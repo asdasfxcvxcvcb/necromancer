@@ -2431,10 +2431,10 @@ void CMenu::MainWindow()
 				CheckBox("Active", CFG::Aimbot_Projectile_Active);
 				CheckBox("No Spread", CFG::Aimbot_Projectile_NoSpread);
 				CheckBox("Auto Double Donk", CFG::Aimbot_Projectile_Auto_Double_Donk);
-				CheckBox("Advanced Head Aim", CFG::Aimbot_Projectile_Advanced_Head_Aim);
+//				CheckBox("Advanced Head Aim", CFG::Aimbot_Projectile_Advanced_Head_Aim);
 				CheckBox("Ground Strafe Prediction", CFG::Aimbot_Projectile_Ground_Strafe_Prediction);
 				CheckBox("Air Strafe Prediction", CFG::Aimbot_Projectile_Air_Strafe_Prediction);
-				CheckBox("BBOX Multipoint", CFG::Aimbot_Projectile_BBOX_Multipoint);
+//				CheckBox("BBOX Multipoint", CFG::Aimbot_Projectile_BBOX_Multipoint);
 				SelectSingle("Splashbot", CFG::Aimbot_Projectile_Rocket_Splash,
 					{
 						{ "Disabled", 0 },
