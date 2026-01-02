@@ -247,15 +247,37 @@ void CESP::Run()
 	if (!pLocal)
 		return;
 
+    const int nLocalTeam = pLocal->m_iTeamNum();
+
+    const auto Font_Cond = H::Fonts->Get(EFonts::ESP_CONDS);
+    const auto Font_Cond_Tall = Font_Cond.m_nTall;
+    cosnt auto Font_Small = H::Fonts->Get(EFonts::ESP_SMALL);
+    const auto Font_Small_Tall = Font_Small.m_nTall;
+
 	float flOriginalAlpha = I::MatSystemSurface->DrawGetAlphaMultiplier();
+    const auto ScreenH = H::Draw->GetScreenH();
+	const int nScreenCenterX = H::Draw->GetScreenW() / 2;
+	const int nScreenCenterY = ScreenH / 2;
+
+    auto nFromY = [&]() -> int
+	{
+		switch (CFG::ESP_Tracer_From)
+		{
+			case 0: return 0;
+			case 1: return nScreenCenterX;
+			case 2: return ScreenH;
+			default: return 0;
+			}
+	};
 
 	if (CFG::ESP_Players_Active)
 	{
 		I::MatSystemSurface->DrawSetAlphaMultiplier(CFG::ESP_Players_Alpha);
 		
 		// Cache expensive checks
-		const int nLocalTeam = pLocal->m_iTeamNum();
+		
 		const bool bThirdPerson = I::Input->CAM_IsThirdPerson();
+		const auto Font_ESP_Tall = H::Fonts->Get(EFonts::ESP).m_nTall;
 
 		for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PLAYERS_ALL))
 		{
@@ -272,26 +294,27 @@ void CESP::Run()
 			if ((CFG::ESP_Players_Ignore_Local && bIsLocal) || (!bThirdPerson && bIsLocal))
 				continue;
 
+			const int iPlayerIndex = pPlayer->entindex();
+
+			PlayerPriority playerPriority = {};
+			if (!F::Players->GetInfo(iPlayerIndex, playerPriority)) continue;
+
+			const bool bIsFriend = pPlayer->IsPlayerOnSteamFriendsList();
+			const int iPlayerClass = pPlayer->m_iClass();
+
 			if (!bIsLocal)
 			{
 				// Early invisibility check before expensive operations
 				if (CFG::ESP_Players_Ignore_Invisible && pPlayer->m_flInvisibility() >= 1.0f)
 					continue;
-				
-				const bool bIsFriend = pPlayer->IsPlayerOnSteamFriendsList();
 
 				if (CFG::ESP_Players_Ignore_Friends && bIsFriend)
 					continue;
 
 				// Check if player is tagged (Cheater/RetardLegit/Ignored)
 				bool bIsTagged = false;
-				if (!CFG::ESP_Players_Ignore_Tagged)
-				{
-					PlayerPriority playerPriority = {};
-					if (F::Players->GetInfo(pPlayer->entindex(), playerPriority))
-					{
-						bIsTagged = playerPriority.Cheater || playerPriority.RetardLegit || playerPriority.Ignored;
-					}
+				if (!CFG::ESP_Players_Ignore_Tagged) {
+					bIsTagged = playerPriority.Cheater || playerPriority.RetardLegit || playerPriority.Ignored;
 				}
 
 				// Skip team/enemy filtering if player is tagged (and not ignoring tagged)
@@ -301,7 +324,7 @@ void CESP::Run()
 					
 					if (CFG::ESP_Players_Ignore_Teammates && nPlayerTeam == nLocalTeam)
 					{
-						if (!CFG::ESP_Players_Show_Teammate_Medics || pPlayer->m_iClass() != TF_CLASS_MEDIC)
+						if (!CFG::ESP_Players_Show_Teammate_Medics || iPlayerClass != TF_CLASS_MEDIC)
 							continue;
 					}
 
@@ -312,13 +335,12 @@ void CESP::Run()
 
 			int x = 0, y = 0, w = 0, h = 0;
 
+			auto entColor = F::VisualUtils->GetEntityColor(pLocal, pPlayer);
+			
 			if (!GetDrawBounds(pPlayer, x, y, w, h))
 			{
 				if (CFG::ESP_Players_Arrows && pPlayer != pLocal && !pLocal->deadflag())
 				{
-					int nScreenCenterX = H::Draw->GetScreenW() / 2;
-					int nScreenCenterY = H::Draw->GetScreenH() / 2;
-
 					Vec3 vScreen = {}, vPlayerWSC = pPlayer->GetCenter();
 					H::Draw->ScreenPosition(vPlayerWSC, vScreen);
 
@@ -341,13 +363,12 @@ void CESP::Run()
 
 					Math::RotateTriangle(vPoints, vAngle.y);
 
-					H::Draw->FilledTriangle(vPoints, F::VisualUtils->GetEntityColor(pLocal, pPlayer));
+					H::Draw->FilledTriangle(vPoints, entColor);
 				}
 
 				continue;
 			}
 
-			auto entColor = F::VisualUtils->GetEntityColor(pLocal, pPlayer);
 			auto healthColor = F::VisualUtils->GetHealthColor(pPlayer->m_iHealth(), pPlayer->GetMaxHealth());
 			auto textColor = CFG::ESP_Text_Color == 0 ? entColor : CFG::Color_ESP_Text;
 
@@ -357,17 +378,6 @@ void CESP::Run()
 			{
 				if (!bIsLocal)
 				{
-					auto nFromY = [&]() -> int
-					{
-						switch (CFG::ESP_Tracer_From)
-						{
-						case 0: return 0;
-						case 1: return H::Draw->GetScreenH() / 2;
-						case 2: return H::Draw->GetScreenH();
-						default: return 0;
-						}
-					};
-
 					auto nToY = [&]() -> int
 					{
 						switch (CFG::ESP_Tracer_To)
@@ -379,7 +389,7 @@ void CESP::Run()
 						}
 					};
 
-					H::Draw->Line(H::Draw->GetScreenW() / 2, nFromY(), x + (w / 2), nToY(), entColor);
+					H::Draw->Line(nScreenCenterX, nFromY(), x + (w / 2), nToY(), entColor);
 				}
 			}
 
@@ -390,30 +400,19 @@ void CESP::Run()
 
 			if (CFG::ESP_Players_Weapon_Name)
 			{
-				const auto& font = H::Fonts->Get(EFonts::ESP_CONDS);
-
 				Color_t weaponColor = textColor;
-
+				
 				if (CFG::Misc_Enemy_Custom_Name_Color)
-				{
 					weaponColor = CFG::Color_Custom_Name;
-				}
-				else
-				{
-					PlayerPriority playerPriority = {};
-					if (F::Players->GetInfo(pPlayer->entindex(), playerPriority))
-					{
-						if (playerPriority.Cheater)
-							weaponColor = CFG::Color_Cheater;
-						else if (playerPriority.RetardLegit)
-							weaponColor = CFG::Color_RetardLegit;
-						else if (playerPriority.Ignored)
-							weaponColor = CFG::Color_Friend;
-					}
-				}
+				else if (playerPriority.Cheater)
+					weaponColor = CFG::Color_Cheater;
+				else if (playerPriority.RetardLegit)
+					weaponColor = CFG::Color_RetardLegit;
+				else if (playerPriority.Ignored)
+					weaponColor = CFG::Color_Friend;
 
 				H::Draw->String(
-					font,
+					Font_Cond,
 					x + (w / 2),
 					y + h + font.m_nTall,
 					weaponColor,
@@ -426,35 +425,24 @@ void CESP::Run()
 			{
 				player_info_t PlayerInfo = {};
 
-				if (I::EngineClient->GetPlayerInfo(pPlayer->entindex(), &PlayerInfo))
+				if (I::EngineClient->GetPlayerInfo(iPlayerIndex, &PlayerInfo))
 				{
 					// Determine name color
 					Color_t nameColor = textColor;
 					
-					// If custom name color is enabled, use it for all players
 					if (CFG::Misc_Enemy_Custom_Name_Color)
-					{
 						nameColor = CFG::Color_Custom_Name;
-					}
-					else
-					{
-						// Check for player tags and use appropriate color
-						PlayerPriority playerPriority = {};
-						if (F::Players->GetInfo(pPlayer->entindex(), playerPriority))
-						{
-							if (playerPriority.Cheater)
-								nameColor = CFG::Color_Cheater;
-							else if (playerPriority.RetardLegit)
-								nameColor = CFG::Color_RetardLegit;
-							else if (playerPriority.Ignored)
-								nameColor = CFG::Color_Friend;
-						}
-					}
+					else if (playerPriority.Cheater)
+						nameColor = CFG::Color_Cheater;
+					else if (playerPriority.RetardLegit)
+						nameColor = CFG::Color_RetardLegit;
+					else if (playerPriority.Ignored)
+						nameColor = CFG::Color_Friend;
 
 					H::Draw->String(
-						H::Fonts->Get(EFonts::ESP_SMALL),
+						Font_Small,
 						x + (w / 2),
-						(y - (H::Fonts->Get(EFonts::ESP_SMALL).m_nTall - 1)) - SPACING_Y,
+						(y - (Font_Small_Tall - 1)) - SPACING_Y,
 						nameColor,
 						POS_CENTERX,
 						Utils::ConvertUtf8ToWide(PlayerInfo.name).c_str()
@@ -466,19 +454,16 @@ void CESP::Run()
 			if (CFG::ESP_Players_Tags)
 			{
 				int tagOffset = 0;
-				int fontTall = H::Fonts->Get(EFonts::ESP_SMALL).m_nTall;
+				int fontTall = Font_Small_Tall;
 				int baseY = CFG::ESP_Players_Name
 					? (y - fontTall - SPACING_Y) - fontTall - SPACING_Y
 					: (y - fontTall - SPACING_Y);
 
-				PlayerPriority playerPriority = {};
-				F::Players->GetInfo(pPlayer->entindex(), playerPriority);
-
 				// Draw Friend tag
-				if (pPlayer->IsPlayerOnSteamFriendsList())
+				if (bIsFriend)
 				{
 					H::Draw->String(
-						H::Fonts->Get(EFonts::ESP_SMALL),
+						Font_Small,
 						x + (w / 2),
 						baseY - tagOffset,
 						CFG::Color_Friend,
@@ -492,7 +477,7 @@ void CESP::Run()
 				if (playerPriority.Cheater)
 				{
 					H::Draw->String(
-						H::Fonts->Get(EFonts::ESP_SMALL),
+						Font_Small,
 						x + (w / 2),
 						baseY - tagOffset,
 						CFG::Color_Cheater,
@@ -506,7 +491,7 @@ void CESP::Run()
 				if (playerPriority.RetardLegit)
 				{
 					H::Draw->String(
-						H::Fonts->Get(EFonts::ESP_SMALL),
+						Font_Small,
 						x + (w / 2),
 						baseY - tagOffset,
 						CFG::Color_RetardLegit,
@@ -520,7 +505,7 @@ void CESP::Run()
 				if (playerPriority.Ignored)
 				{
 					H::Draw->String(
-						H::Fonts->Get(EFonts::ESP_SMALL),
+						Font_Small,
 						x + (w / 2),
 						baseY - tagOffset,
 						CFG::Color_Friend,
@@ -533,12 +518,10 @@ void CESP::Run()
 
 			if (CFG::ESP_Players_Class)
 			{
-
-
 				H::Draw->String(
-					H::Fonts->Get(EFonts::ESP_SMALL),
+					Font_Small,
 					x + w + SPACING_X,
-					y + (H::Fonts->Get(EFonts::ESP_SMALL).m_nTall * nTextOffsetY++),
+					y + (Font_Small_Tall * nTextOffsetY++),
 					textColor,
 					POS_DEFAULT,
 					"%hs",
@@ -548,14 +531,14 @@ void CESP::Run()
 
 			if (CFG::ESP_Players_Class_Icon)
 			{
-				static constexpr int CLASS_ICON_SIZE = 18;
+				constexpr int CLASS_ICON_SIZE = 18;
 
 				H::Draw->Texture(
 					x + (w / 2),
-					CFG::ESP_Players_Name ? ((y - (H::Fonts->Get(EFonts::ESP).m_nTall - 1)) - SPACING_Y) - CLASS_ICON_SIZE : y - (CLASS_ICON_SIZE + SPACING_Y),
+					CFG::ESP_Players_Name ? ((y - (Font_ESP_Tall - 1)) - SPACING_Y) - CLASS_ICON_SIZE : y - (CLASS_ICON_SIZE + SPACING_Y),
 					CLASS_ICON_SIZE,
 					CLASS_ICON_SIZE,
-					F::VisualUtils->GetClassIcon(pPlayer->m_iClass()),
+					F::VisualUtils->GetClassIcon(iPlayerClass),
 					POS_CENTERX
 				);
 			}
@@ -563,9 +546,9 @@ void CESP::Run()
 			if (CFG::ESP_Players_Health && !pPlayer->InCond(TF_COND_HALLOWEEN_GHOST_MODE))
 			{
 				H::Draw->String(
-					H::Fonts->Get(EFonts::ESP_SMALL),
+					Font_Small,
 					x + w + SPACING_X,
-					y + (H::Fonts->Get(EFonts::ESP_SMALL).m_nTall * nTextOffsetY++),
+					y + (Font_Small_Tall * nTextOffsetY++),
 					healthColor,
 					POS_DEFAULT,
 					"%d",
@@ -583,7 +566,7 @@ void CESP::Run()
 					if (flHealth > flMaxHealth)
 						flMaxHealth = flHealth;
 
-					static constexpr int BAR_WIDTH = 2;
+					constexpr int BAR_WIDTH = 2;
 					int nBarX = x - ((BAR_WIDTH * 2) + 1);
 					int nFillH = static_cast<int>(Math::RemapValClamped(flHealth, 0.0f, flMaxHealth, 0.0f, static_cast<float>(h)));
 
@@ -592,33 +575,26 @@ void CESP::Run()
 				}
 			}
 
-			if (CFG::ESP_Players_Uber)
+			if (iPlayerClass == TF_CLASS_MEDIC)
 			{
-				if (pPlayer->m_iClass() == TF_CLASS_MEDIC)
+				if (auto pWeapon = pPlayer->GetWeaponFromSlot(1))
 				{
-					if (auto pWeapon = pPlayer->GetWeaponFromSlot(1))
+					auto pMedigun = pWeapon->As<C_WeaponMedigun>();
+					const float flChargeLevel = pMedigun->m_flChargeLevel();
+					if (CFG::ESP_Players_Uber)
 					{
 						H::Draw->String(
-							H::Fonts->Get(EFonts::ESP_SMALL),
+							Font_Small,
 							x + w + SPACING_X,
-							y + (H::Fonts->Get(EFonts::ESP_SMALL).m_nTall * nTextOffsetY++),
+							y + (Font_Small_Tall * nTextOffsetY++),
 							CFG::Color_Uber,
 							POS_DEFAULT,
-							"%d%%", static_cast<int>(pWeapon->As<C_WeaponMedigun>()->m_flChargeLevel() * 100.0f)
+							"%d%%", static_cast<int>(flChargeLevel) * 100
 						);
 					}
-				}
-			}
-
-			if (CFG::ESP_Players_UberBar)
-			{
-				if (pPlayer->m_iClass() == TF_CLASS_MEDIC)
-				{
-					if (auto pWeapon = pPlayer->GetWeaponFromSlot(1))
+					if (CFG::ESP_Players_UberBar)
 					{
-						auto pMedigun = pWeapon->As<C_WeaponMedigun>();
-
-						if (auto flCharge = pMedigun->m_flChargeLevel())
+						if (float flCharge = flChargeLevel)
 						{
 							int nBarH = 2;
 							int nDrawY = y + h + nBarH + 1;
@@ -629,6 +605,7 @@ void CESP::Run()
 
 							if (pMedigun->m_iItemDefinitionIndex() == Medic_s_TheVaccinator)
 							{
+								//what the hell is this
 								if (flCharge >= 0.25f)
 									H::Draw->Rect(x + static_cast<int>(static_cast<float>(w) * 0.25f) - 1, nDrawY, 2, nBarH, CFG::Color_ESP_Outline);
 
@@ -637,6 +614,9 @@ void CESP::Run()
 
 								if (flCharge >= 0.75f)
 									H::Draw->Rect(x + static_cast<int>(static_cast<float>(w) * 0.75f) - 1, nDrawY, 2, nBarH, CFG::Color_ESP_Outline);
+
+								//maybe this is better?
+								//H::Draw->Rect(x + static_cast<int>(static_cast<float>(w) * flCharge) - 1, nDrawY, 2, nBarH, CFG::Color_ESP_Outline);
 							}
 						}
 					}
@@ -655,97 +635,97 @@ void CESP::Run()
 					nTextOffsetY += 1;
 
 				int drawX = x + w + SPACING_X;
-				int tall = H::Fonts->Get(EFonts::ESP_CONDS).m_nTall;
+				int tall = Font_Cond_Tall;
 
 				Color_t color = CFG::Color_Conds;
 
 				if (pPlayer->IsZoomed())
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "ZOOM");
+					H::Draw->String(Font_Cond, drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "ZOOM");
 
 				if (pPlayer->IsInvisible())
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "INVIS");
+					H::Draw->String(Font_Cond, drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "INVIS");
 
 				if (pPlayer->m_bFeignDeathReady())
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "DEADRINGER");
+					H::Draw->String(Font_Cond, drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "DEADRINGER");
 
 				if (pPlayer->IsInvulnerable())
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "INVULN");
+					H::Draw->String(Font_Cond, drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "INVULN");
 
 				if (pPlayer->IsCritBoosted())
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "CRIT");
+					H::Draw->String(Font_Cond, drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "CRIT");
 
 				if (pPlayer->IsMiniCritBoosted())
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "MINICRIT");
+					H::Draw->String(Font_Cond, drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "MINICRIT");
 
 				if (pPlayer->IsMarked())
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "MARKED");
+					H::Draw->String(Font_Cond, drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "MARKED");
 
 				if (pPlayer->InCond(TF_COND_MAD_MILK))
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "MILK");
+					H::Draw->String(Font_Cond, drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "MILK");
 
 				if (pPlayer->InCond(TF_COND_TAUNTING) || (pPlayer == pLocal && G::bStartedFakeTaunt))
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "TAUNT");
+					H::Draw->String(Font_Cond, drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "TAUNT");
 
 				if (pPlayer->InCond(TF_COND_DISGUISED))
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "DISGUISE");
+					H::Draw->String(Font_Cond, drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "DISGUISE");
 
 				if (pPlayer->InCond(TF_COND_BURNING) || pPlayer->InCond(TF_COND_BURNING_PYRO))
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "BURNING");
+					H::Draw->String(Font_Cond, drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "BURNING");
 
 				if (pPlayer->InCond(TF_COND_OFFENSEBUFF))
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "BANNER");
+					H::Draw->String(Font_Cond, drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "BANNER");
 
 				if (pPlayer->InCond(TF_COND_DEFENSEBUFF))
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "BACKUP");
+					H::Draw->String(Font_Cond, drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "BACKUP");
 
 				if (pPlayer->InCond(TF_COND_REGENONDAMAGEBUFF))
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "CONCH");
+					H::Draw->String(Font_Cond, drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "CONCH");
 
 				if (!pPlayer->InCond(TF_COND_MEDIGUN_UBER_BULLET_RESIST))
 				{
 					if (pPlayer->InCond(TF_COND_MEDIGUN_SMALL_BULLET_RESIST))
-						H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "BULLET(RES)");
+						H::Draw->String(Font_Cond, drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "BULLET(RES)");
 				}
 				else
 				{
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "BULLET(UBER)");
+					H::Draw->String(Font_Cond, drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "BULLET(UBER)");
 				}
 
 				if (!pPlayer->InCond(TF_COND_MEDIGUN_UBER_BLAST_RESIST))
 				{
 					if (pPlayer->InCond(TF_COND_MEDIGUN_SMALL_BLAST_RESIST))
-						H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "EXPLOSION(RES)");
+						H::Draw->String(Font_Cond, drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "EXPLOSION(RES)");
 				}
 				else
 				{
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "EXPLOSION(UBER)");
+					H::Draw->String(Font_Cond, drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "EXPLOSION(UBER)");
 				}
 
 				if (!pPlayer->InCond(TF_COND_MEDIGUN_UBER_FIRE_RESIST))
 				{
 					if (pPlayer->InCond(TF_COND_MEDIGUN_SMALL_FIRE_RESIST))
-						H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "FIRE(RES)");
+						H::Draw->String(Font_Cond, drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "FIRE(RES)");
 				}
 				else
 				{
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "FIRE(UBER)");
+					H::Draw->String(Font_Cond, drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "FIRE(UBER)");
 				}
 			}
 
 			// F2P and Party tags (positioned to the left of the health bar)
 			if (CFG::ESP_Players_Show_F2P || CFG::ESP_Players_Show_Party)
 			{
-				int nPlayerIndex = pPlayer->entindex();
+				int nPlayerIndex = iPlayerIndex;
 				// Health bar is at x - ((BAR_WIDTH * 2) + 1) - 1 = x - 6, so position tags further left
-				static constexpr int BAR_WIDTH = 2;
+				constexpr int BAR_WIDTH = 2;
 				int drawX = x - ((BAR_WIDTH * 2) + 1) - 1 - SPACING_X;
-				int tall = H::Fonts->Get(EFonts::ESP_CONDS).m_nTall;
+				int tall = Font_Cond_Tall;
 				int nTagOffsetY = 0;
 
 				// Show F2P tag
 				if (CFG::ESP_Players_Show_F2P && H::Entities->IsF2P(nPlayerIndex))
 				{
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTagOffsetY++), CFG::Color_F2P, POS_LEFT, "F2P");
+					H::Draw->String(Font_Cond, drawX, y + (tall * nTagOffsetY++), CFG::Color_F2P, POS_LEFT, "F2P");
 				}
 
 				// Show Party tag with party-specific color
@@ -755,7 +735,7 @@ void CESP::Run()
 					if (nPartyIndex > 0 && nPartyIndex <= 12)
 					{
 						// Get party color based on index
-						Color_t partyColor;
+						Color_t partyColor = CFG::Color_Party_1;
 						switch (nPartyIndex)
 						{
 						case 1: partyColor = CFG::Color_Party_1; break;
@@ -770,9 +750,9 @@ void CESP::Run()
 						case 10: partyColor = CFG::Color_Party_10; break;
 						case 11: partyColor = CFG::Color_Party_11; break;
 						case 12: partyColor = CFG::Color_Party_12; break;
-						default: partyColor = CFG::Color_Party_1; break;
+						default: break;
 						}
-						H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTagOffsetY++), partyColor, POS_LEFT, "P%d", nPartyIndex);
+						H::Draw->String(Font_Cond, drawX, y + (tall * nTagOffsetY++), partyColor, POS_LEFT, "Party: %d", nPartyIndex);
 					}
 				}
 			}
@@ -798,13 +778,17 @@ void CESP::Run()
 			if (CFG::ESP_Buildings_Ignore_Local && bIsLocal)
 				continue;
 
+			const auto BuildingClass = pBuilding->GetClassId();
+
 			if (!bIsLocal)
 			{
-				if (CFG::ESP_Buildings_Ignore_Teammates && pBuilding->m_iTeamNum() == pLocal->m_iTeamNum())
+				const int LocalTeam = nLocalTeam;
+				const bool bIsTeammate = LocalTeam == pBuilding->m_iTeamNum();
+				if (CFG::ESP_Buildings_Ignore_Teammates && bIsTeammate)
 				{
 					if (CFG::ESP_Buildings_Show_Teammate_Dispensers)
 					{
-						if (pBuilding->GetClassId() != ETFClassIds::CObjectDispenser)
+						if (BuildingClass != ETFClassIds::CObjectDispenser)
 							continue;
 					}
 					else
@@ -813,7 +797,7 @@ void CESP::Run()
 					}
 				}
 
-				if (CFG::ESP_Buildings_Ignore_Enemies && pBuilding->m_iTeamNum() != pLocal->m_iTeamNum())
+				if (CFG::ESP_Buildings_Ignore_Enemies && !bIsTeammate)
 					continue;
 			}
 
@@ -830,17 +814,6 @@ void CESP::Run()
 
 			if (CFG::ESP_Buildings_Tracer)
 			{
-				auto nFromY = [&]() -> int
-				{
-					switch (CFG::ESP_Tracer_From)
-					{
-					case 0: return 0;
-					case 1: return H::Draw->GetScreenH() / 2;
-					case 2: return H::Draw->GetScreenH();
-					default: return 0;
-					}
-				};
-
 				auto nToY = [&]() -> int
 				{
 					switch (CFG::ESP_Tracer_To)
@@ -852,15 +825,15 @@ void CESP::Run()
 					}
 				};
 
-				H::Draw->Line(H::Draw->GetScreenW() / 2, nFromY(), x + (w / 2), nToY(), entColor);
+				H::Draw->Line(nScreenCenterX, nFromY(), x + (w / 2), nToY(), entColor);
 			}
 
 			if (CFG::ESP_Buildings_Name)
 			{
 				H::Draw->String(
-					H::Fonts->Get(EFonts::ESP_SMALL),
+					Font_Small,
 					x + (w / 2),
-					(y - (H::Fonts->Get(EFonts::ESP_SMALL).m_nTall - 1)) - SPACING_Y,
+					(y - (Font_Small_Tall - 1)) - SPACING_Y,
 					textColor,
 					POS_CENTERX,
 					GetBuildingName(pBuilding)
@@ -870,9 +843,9 @@ void CESP::Run()
 			if (CFG::ESP_Buildings_Health)
 			{
 				H::Draw->String(
-					H::Fonts->Get(EFonts::ESP_SMALL),
+					Font_Small,
 					x + w + SPACING_X,
-					y + (H::Fonts->Get(EFonts::ESP_SMALL).m_nTall * nTextOffsetY++),
+					y + (Font_Small_Tall * nTextOffsetY++),
 					healthColor,
 					POS_DEFAULT,
 					"%d",
@@ -902,9 +875,9 @@ void CESP::Run()
 			if (CFG::ESP_Buildings_Level)
 			{
 				H::Draw->String(
-					H::Fonts->Get(EFonts::ESP_SMALL),
+					Font_Small,
 					x + w + SPACING_X,
-					y + (H::Fonts->Get(EFonts::ESP_SMALL).m_nTall * nTextOffsetY++),
+					y + (Font_Small_Tall * nTextOffsetY++),
 					textColor,
 					POS_DEFAULT,
 					"%d",
@@ -916,7 +889,7 @@ void CESP::Run()
 			{
 				int nBarH = 2;
 				int nDrawY = y + h + nBarH + 1;
-				auto flLevel = static_cast<float>(pBuilding->m_iUpgradeLevel());
+				float flLevel = static_cast<float>(pBuilding->m_iUpgradeLevel());
 				float flFillW = Math::RemapValClamped(flLevel, 1.0f, 3.0f, w / 3.0f, static_cast<float>(w));
 
 				if (pBuilding->m_bMiniBuilding())
@@ -938,35 +911,33 @@ void CESP::Run()
 					nTextOffsetY += 1;
 
 				int drawX = x + w + SPACING_X;
-				int tall = H::Fonts->Get(EFonts::ESP_CONDS).m_nTall;
+				int tall = Font_Cond_Tall;
 
 				Color_t color = CFG::Color_Conds;
 
 				if (pBuilding->m_bBuilding())
 				{
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "BUILDING");
+					H::Draw->String(Font_Cond, drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "BUILDING");
 				}
-
 				else
 				{
-					if (pBuilding->GetClassId() == ETFClassIds::CObjectSentrygun && pBuilding->As<C_ObjectSentrygun>()->m_iAmmoShells() == 0)
-						H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "NOSHELLS");
-
-					if (!pBuilding->m_bMiniBuilding())
+					if (BuildingClass == ETFClassIds::CObjectSentrygun) 
 					{
-						if (pBuilding->GetClassId() == ETFClassIds::CObjectSentrygun && pBuilding->As<C_ObjectSentrygun>()->m_iAmmoRockets() == 0)
+						const auto& SentryGun = pBuilding->As<C_ObjectSentrygun>();
+						if (SentryGun->m_iAmmoShells() == 0) H::Draw->String(Font_Cond, drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "NOSHELLS");
+
+						if (!pBuilding->m_bMiniBuilding() && SentryGun->m_iAmmoRockets() == 0)
 						{
 							if (pBuilding->m_iUpgradeLevel() == 3)
-								H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "NOROCKETS");
+								H::Draw->String(Font_Cond, drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "NOROCKETS");
 						}
+
+						if (SentryGun->m_bShielded()) H::Draw->String(Font_Cond, drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "WRANGLED");
 					}
 				}
 
 				if (pBuilding->IsDisabled())
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "DISABLED");
-
-				if (pBuilding->GetClassId() == ETFClassIds::CObjectSentrygun && pBuilding->As<C_ObjectSentrygun>()->m_bShielded())
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "WRANGLED");
+					H::Draw->String(Font_Cond, drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "DISABLED");
 			}
 		}
 	}
@@ -989,17 +960,6 @@ void CESP::Run()
 
 				if (CFG::ESP_World_Tracer)
 				{
-					auto nFromY = [&]() -> int
-					{
-						switch (CFG::ESP_Tracer_From)
-						{
-						case 0: return 0;
-						case 1: return H::Draw->GetScreenH() / 2;
-						case 2: return H::Draw->GetScreenH();
-						default: return 0;
-						}
-					};
-
 					auto nToY = [&]() -> int
 					{
 						switch (CFG::ESP_Tracer_To)
@@ -1011,15 +971,15 @@ void CESP::Run()
 						}
 					};
 
-					H::Draw->Line(H::Draw->GetScreenW() / 2, nFromY(), x + (w / 2), nToY(), color);
+					H::Draw->Line(nScreenCenterX, nFromY(), x + (w / 2), nToY(), color);
 				}
 
 				if (CFG::ESP_World_Name)
 				{
 					H::Draw->String(
-						H::Fonts->Get(EFonts::ESP_SMALL),
+						Font_Small,
 						x + (w / 2),
-						(y - (H::Fonts->Get(EFonts::ESP_SMALL).m_nTall - 1)) - SPACING_Y,
+						(y - (Font_Small_Tall - 1)) - SPACING_Y,
 						textColor,
 						POS_CENTERX,
 						"health"
@@ -1046,17 +1006,6 @@ void CESP::Run()
 
 				if (CFG::ESP_World_Tracer)
 				{
-					auto nFromY = [&]() -> int
-					{
-						switch (CFG::ESP_Tracer_From)
-						{
-						case 0: return 0;
-						case 1: return H::Draw->GetScreenH() / 2;
-						case 2: return H::Draw->GetScreenH();
-						default: return 0;
-						}
-					};
-
 					auto nToY = [&]() -> int
 					{
 						switch (CFG::ESP_Tracer_To)
@@ -1068,15 +1017,15 @@ void CESP::Run()
 						}
 					};
 
-					H::Draw->Line(H::Draw->GetScreenW() / 2, nFromY(), x + (w / 2), nToY(), color);
+					H::Draw->Line(nScreenCenterX, nFromY(), x + (w / 2), nToY(), color);
 				}
 
 				if (CFG::ESP_World_Name)
 				{
 					H::Draw->String(
-						H::Fonts->Get(EFonts::ESP_SMALL),
+						Font_Small,
 						x + (w / 2),
-						(y - (H::Fonts->Get(EFonts::ESP_SMALL).m_nTall - 1)) - SPACING_Y,
+						(y - (Font_Small_Tall - 1)) - SPACING_Y,
 						textColor,
 						POS_CENTERX,
 						"ammo"
@@ -1109,10 +1058,11 @@ void CESP::Run()
 
 				if (!bIsLocal)
 				{
-					if (CFG::ESP_World_Ignore_EnemyProjectiles && pEntity->m_iTeamNum() != pLocal->m_iTeamNum())
+					const int LocalTeam = nLocalTeam;
+					if (CFG::ESP_World_Ignore_EnemyProjectiles && pEntity->m_iTeamNum() != LocalTeam)
 						continue;
 
-					if (CFG::ESP_World_Ignore_TeammateProjectiles && pEntity->m_iTeamNum() == pLocal->m_iTeamNum())
+					if (CFG::ESP_World_Ignore_TeammateProjectiles && pEntity->m_iTeamNum() == LocalTeam)
 						continue;
 				}
 
@@ -1124,17 +1074,6 @@ void CESP::Run()
 
 				if (CFG::ESP_World_Tracer)
 				{
-					auto nFromY = [&]() -> int
-					{
-						switch (CFG::ESP_Tracer_From)
-						{
-						case 0: return 0;
-						case 1: return H::Draw->GetScreenH() / 2;
-						case 2: return H::Draw->GetScreenH();
-						default: return 0;
-						}
-					};
-
 					auto nToY = [&]() -> int
 					{
 						switch (CFG::ESP_Tracer_To)
@@ -1146,15 +1085,15 @@ void CESP::Run()
 						}
 					};
 
-					H::Draw->Line(H::Draw->GetScreenW() / 2, nFromY(), x + (w / 2), nToY(), entColor);
+					H::Draw->Line(nScreenCenterX, nFromY(), x + (w / 2), nToY(), entColor);
 				}
 
 				if (CFG::ESP_World_Name)
 				{
 					H::Draw->String(
-						H::Fonts->Get(EFonts::ESP_SMALL),
+						Font_Small,
 						x + (w / 2),
-						(y - (H::Fonts->Get(EFonts::ESP_SMALL).m_nTall - 1)) - SPACING_Y,
+						(y - (Font_Small_Tall - 1)) - SPACING_Y,
 						textColor,
 						POS_CENTERX,
 						GetProjectileName(pEntity)
@@ -1181,17 +1120,6 @@ void CESP::Run()
 
 				if (CFG::ESP_World_Tracer)
 				{
-					auto nFromY = [&]() -> int
-					{
-						switch (CFG::ESP_Tracer_From)
-						{
-						case 0: return 0;
-						case 1: return H::Draw->GetScreenH() / 2;
-						case 2: return H::Draw->GetScreenH();
-						default: return 0;
-						}
-					};
-
 					auto nToY = [&]() -> int
 					{
 						switch (CFG::ESP_Tracer_To)
@@ -1203,15 +1131,15 @@ void CESP::Run()
 						}
 					};
 
-					H::Draw->Line(H::Draw->GetScreenW() / 2, nFromY(), x + (w / 2), nToY(), color);
+					H::Draw->Line(nScreenCenterX, nFromY(), x + (w / 2), nToY(), color);
 				}
 
 				if (CFG::ESP_World_Name)
 				{
 					H::Draw->String(
-						H::Fonts->Get(EFonts::ESP_SMALL),
+						Font_Small,
 						x + (w / 2),
-						(y - (H::Fonts->Get(EFonts::ESP_SMALL).m_nTall - 1)) - SPACING_Y,
+						(y - (Font_Small_Tall - 1)) - SPACING_Y,
 						textColor,
 						POS_CENTERX,
 						"halloween gift"
@@ -1238,17 +1166,6 @@ void CESP::Run()
 
 				if (CFG::ESP_World_Tracer)
 				{
-					auto nFromY = [&]() -> int
-					{
-						switch (CFG::ESP_Tracer_From)
-						{
-						case 0: return 0;
-						case 1: return H::Draw->GetScreenH() / 2;
-						case 2: return H::Draw->GetScreenH();
-						default: return 0;
-						}
-					};
-
 					auto nToY = [&]() -> int
 					{
 						switch (CFG::ESP_Tracer_To)
@@ -1260,15 +1177,15 @@ void CESP::Run()
 						}
 					};
 
-					H::Draw->Line(H::Draw->GetScreenW() / 2, nFromY(), x + (w / 2), nToY(), color);
+					H::Draw->Line(nScreenCenterX, nFromY(), x + (w / 2), nToY(), color);
 				}
 
 				if (CFG::ESP_World_Name)
 				{
 					H::Draw->String(
-						H::Fonts->Get(EFonts::ESP_SMALL),
+						Font_Small,
 						x + (w / 2),
-						(y - (H::Fonts->Get(EFonts::ESP_SMALL).m_nTall - 1)) - SPACING_Y,
+						(y - (Font_Small_Tall - 1)) - SPACING_Y,
 						textColor,
 						POS_CENTERX,
 						"money"
