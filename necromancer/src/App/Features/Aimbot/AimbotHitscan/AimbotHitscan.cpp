@@ -1066,7 +1066,19 @@ bool CAimbotHitscan::IsFiring(const CUserCmd* pCmd, C_TFWeaponBase* pWeapon)
 	if (pWeapon->GetWeaponID() == TF_WEAPON_SNIPERRIFLE_CLASSIC)
 		return !(pCmd->buttons & IN_ATTACK) && (G::nOldButtons & IN_ATTACK);
 
-	return (pCmd->buttons & IN_ATTACK) && G::bCanPrimaryAttack;
+	// Normal case: attacking and can attack
+	if ((pCmd->buttons & IN_ATTACK) && G::bCanPrimaryAttack)
+		return true;
+	
+	// Reload interrupt case: attacking during reload with single-reload weapon that has ammo
+	// For these weapons, pressing attack will abort reload and fire immediately
+	if ((pCmd->buttons & IN_ATTACK) && pWeapon->IsInReload() && 
+		pWeapon->m_bReloadsSingly() && pWeapon->m_iClip1() > 0)
+	{
+		return true;
+	}
+	
+	return false;
 }
 
 void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)

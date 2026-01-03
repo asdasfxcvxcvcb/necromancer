@@ -269,16 +269,29 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 	}
 
 	// Track ticks since can fire
+	// For weapons that reload singly, we track ticks even during reload if we have ammo
+	// because pressing attack will interrupt the reload and allow firing
 	{
 		static bool bOldCanFire = G::bCanPrimaryAttack;
-		if (G::bCanPrimaryAttack != bOldCanFire)
+		
+		// Check if we can fire during reload (single-reload weapons with ammo)
+		bool bCanFireDuringReload = false;
+		if (pWeapon && G::bReloading && pWeapon->m_bReloadsSingly() && pWeapon->m_iClip1() > 0)
+		{
+			bCanFireDuringReload = true;
+		}
+		
+		// Effective "can fire" state includes reload interrupt capability
+		bool bEffectiveCanFire = G::bCanPrimaryAttack || bCanFireDuringReload;
+		
+		if (bEffectiveCanFire != bOldCanFire)
 		{
 			G::nTicksSinceCanFire = 0;
-			bOldCanFire = G::bCanPrimaryAttack;
+			bOldCanFire = bEffectiveCanFire;
 		}
 		else
 		{
-			if (G::bCanPrimaryAttack)
+			if (bEffectiveCanFire)
 				G::nTicksSinceCanFire++;
 			else
 				G::nTicksSinceCanFire = 0;
