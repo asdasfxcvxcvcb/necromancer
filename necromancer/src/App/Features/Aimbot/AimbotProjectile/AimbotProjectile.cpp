@@ -1374,7 +1374,8 @@ bool CAimbotProjectile::IsFiring(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFW
 		return pCmd->buttons & IN_ATTACK;
 	}
 
-	return (pCmd->buttons & IN_ATTACK) && G::bCanPrimaryAttack;
+	// Allow firing during reload (will interrupt reload) - matches Amalgam's logic
+	return (pCmd->buttons & IN_ATTACK) && (G::bCanPrimaryAttack || G::bReloading);
 }
 
 void CAimbotProjectile::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)

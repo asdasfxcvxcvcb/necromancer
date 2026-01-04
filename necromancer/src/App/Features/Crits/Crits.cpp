@@ -326,7 +326,7 @@ void CCritHack::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd)
 {
 	// During shifting (doubletap), don't reset forced state - keep using the same forced command
 	// This ensures all shifted ticks use the same crit seed
-	if (!Shifting::bShiftingRapidFire && !Shifting::bRapidFireWantShift)
+	if (!(Shifting::bShifting && !Shifting::bShiftingWarp) && !Shifting::bRapidFireWantShift)
 	{
 		m_bForcingCrit = false;
 		m_bForcingSkip = false;
@@ -344,7 +344,7 @@ void CCritHack::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd)
 		return;
 
 	// Attack detection - check for doubletap/shifting first
-	bool bDoubletap = Shifting::bShiftingRapidFire || Shifting::bRapidFireWantShift;
+	bool bDoubletap = (Shifting::bShifting && !Shifting::bShiftingWarp) || Shifting::bRapidFireWantShift;
 	bool bAttacking = bDoubletap;
 	
 	if (!bAttacking)

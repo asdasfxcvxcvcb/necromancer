@@ -99,8 +99,8 @@ bool CFakeAngle::ShouldRun(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd
 			return false;
 	}
 	
-	// Don't anti-aim during rapid fire shifting
-	if (Shifting::bShiftingRapidFire || Shifting::bRapidFireWantShift)
+	// Don't anti-aim during doubletap shifting
+	if (Shifting::bShifting && !Shifting::bShiftingWarp)
 		return false;
 	
 	// Don't anti-aim during recharging

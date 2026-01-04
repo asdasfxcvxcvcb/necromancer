@@ -237,11 +237,12 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 		G::bCanPrimaryAttack = pWeapon->CanPrimaryAttack(pLocal);
 		G::bCanSecondaryAttack = pWeapon->CanSecondaryAttack(pLocal);
 
-		// Minigun special handling
+		// Minigun special handling - only can attack when spun up
 		if (pWeapon->GetWeaponID() == TF_WEAPON_MINIGUN)
 		{
 			int iState = pWeapon->As<C_TFMinigun>()->m_iWeaponState();
-			if ((iState != AC_STATE_FIRING && iState != AC_STATE_SPINNING) || !pWeapon->HasPrimaryAmmoForShot())
+			// Only allow attack when in FIRING or SPINNING state with ammo
+			if (iState == AC_STATE_IDLE || iState == AC_STATE_STARTFIRING || !pWeapon->HasPrimaryAmmoForShot())
 				G::bCanPrimaryAttack = false;
 		}
 
@@ -269,16 +270,31 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 	}
 
 	// Track ticks since can fire
-	// For weapons that reload singly, we track ticks even during reload if we have ammo
+	// For weapons that reload singly OR can interrupt reload (like SMG), we track ticks even during reload if we have ammo
 	// because pressing attack will interrupt the reload and allow firing
 	{
 		static bool bOldCanFire = G::bCanPrimaryAttack;
 		
-		// Check if we can fire during reload (single-reload weapons with ammo)
+		// Check if we can fire during reload
 		bool bCanFireDuringReload = false;
-		if (pWeapon && G::bReloading && pWeapon->m_bReloadsSingly() && pWeapon->m_iClip1() > 0)
+		if (pWeapon && G::bReloading && pWeapon->m_iClip1() > 0)
 		{
-			bCanFireDuringReload = true;
+			// Single-reload weapons (shotguns, etc.)
+			if (pWeapon->m_bReloadsSingly())
+			{
+				bCanFireDuringReload = true;
+			}
+			// SMG and other weapons that can interrupt reload
+			else
+			{
+				const int nWeaponID = pWeapon->GetWeaponID();
+				if (nWeaponID == TF_WEAPON_SMG || nWeaponID == TF_WEAPON_CHARGED_SMG ||
+					nWeaponID == TF_WEAPON_PISTOL || nWeaponID == TF_WEAPON_PISTOL_SCOUT ||
+					nWeaponID == TF_WEAPON_MINIGUN)
+				{
+					bCanFireDuringReload = true;
+				}
+			}
 		}
 		
 		// Effective "can fire" state includes reload interrupt capability
@@ -441,22 +457,8 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 	if (I::ClientState->chokedcommands > 21)
 		*pSendPacket = true;
 
-	// ============================================
-	// AMALGAM ORDER: RapidFire/Ticks management
-	// ============================================
-	F::RapidFire->Run(pCmd, pSendPacket);
-
-	// ============================================
-	// AMALGAM ORDER: AntiAim.Run
-	// ============================================
-	F::FakeAngle->Run(pCmd, pLocal, pWeapon, *pSendPacket);
-
-	// ============================================
-	// AMALGAM ORDER: EnginePrediction.End (AFTER anti-aim)
-	// ============================================
-	F::EnginePrediction->End(pLocal, pCmd);
-
-	// pSilent handling
+	// pSilent handling - MUST run BEFORE RapidFire (like reference project)
+	// This ensures RapidFire saves the command with aimbot angles, not restored angles
 	{
 		static bool bWasSet = false;
 		if (G::bPSilentAngles)
@@ -480,6 +482,21 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 			}
 		}
 	}
+
+	// ============================================
+	// RapidFire/Ticks management - AFTER pSilent handling (like reference)
+	// ============================================
+	F::RapidFire->Run(pCmd, pSendPacket);
+
+	// ============================================
+	// AMALGAM ORDER: AntiAim.Run
+	// ============================================
+	F::FakeAngle->Run(pCmd, pLocal, pWeapon, *pSendPacket);
+
+	// ============================================
+	// AMALGAM ORDER: EnginePrediction.End (AFTER anti-aim)
+	// ============================================
+	F::EnginePrediction->End(pLocal, pCmd);
 
 	// ============================================
 	// AMALGAM ORDER: AntiCheatCompatibility

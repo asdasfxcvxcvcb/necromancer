@@ -3569,12 +3569,9 @@ void CMenu::MainWindow()
 			InputKey("Recharge Key", CFG::Exploits_Shifting_Recharge_Key);
 			InputKey("Double Tap Key", CFG::Exploits_RapidFire_Key);
 			
-			// DT ticks slider: 2-22 normal, 23 = MAX (which is 24 without AA, 22 with AA)
-			const int nMaxSlider = CFG::Misc_AntiCheat_Enabled ? 8 : 23;
-			const bool bIsMax = (CFG::Exploits_RapidFire_Ticks >= 23);
+			// DT ticks slider: 2-22 (max is 22 to match reference project)
+			const int nMaxSlider = CFG::Misc_AntiCheat_Enabled ? 8 : 22;
 			std::string sTicksLabel = CFG::Misc_AntiCheat_Enabled ? "Safe Double Tap Ticks" : "Double Tap Ticks";
-			if (bIsMax && !CFG::Misc_AntiCheat_Enabled)
-				sTicksLabel += " (MAX)";
 			SliderInt(sTicksLabel.c_str(), CFG::Exploits_RapidFire_Ticks, 2, nMaxSlider, 1);
 			
 			SliderInt("Double Tap Delay Ticks", CFG::Exploits_RapidFire_Min_Ticks_Target_Same, 0, 5, 1);

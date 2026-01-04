@@ -598,9 +598,8 @@ void CAimbotMelee::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeap
 	if (CFG::Aimbot_Melee_Sort == 0)
 		G::flAimbotFOV = CFG::Aimbot_Melee_FOV;
 
-	// Allow aimbot to run during rapid fire shifting to recalculate angles for each tick
-	// Skip only during warp shifting (not rapid fire)
-	if (Shifting::bShifting && !Shifting::bShiftingRapidFire)
+	// Skip during doubletap shifting (but not warp)
+	if (Shifting::bShifting && !Shifting::bShiftingWarp)
 		return;
 
 	// Skip sapper - handled by AutoSapper triggerbot
