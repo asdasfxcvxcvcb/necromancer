@@ -64,6 +64,10 @@ bool CRapidFire::ShouldStart(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
 	if (!IsWeaponSupported(pWeapon))
 		return false;
 
+	// Tick tracking - delay shift if we're too far ahead of server
+	if (Shifting::ShouldDelayShift(CFG::Exploits_RapidFire_Tick_Tracking))
+		return false;
+
 	// Projectile dodge airborne check
 	if (CFG::Misc_Projectile_Dodge_Enabled && CFG::Misc_Projectile_Dodge_Disable_DT_Airborne)
 	{
@@ -135,7 +139,10 @@ void CRapidFire::Run(CUserCmd* pCmd, bool* pSendPacket)
 
 		Shifting::bRapidFireWantShift = true;
 
+		// Save the command WITH IN_ATTACK set - this ensures all shifted ticks will attack
 		m_ShiftCmd = *pCmd;
+		m_ShiftCmd.buttons |= IN_ATTACK;  // Force attack in saved command
+		
 		m_bShiftSilentAngles = G::bSilentAngles || G::bPSilentAngles;
 		m_bSetCommand = false;
 		m_bIsProjectileDT = bIsProjectile;

@@ -9,6 +9,7 @@
 #include "../Features/FakeAngle/FakeAngle.h"
 
 MAKE_SIGNATURE(CL_Move, "engine.dll", "40 55 53 48 8D AC 24 ? ? ? ? B8 ? ? ? ? E8 ? ? ? ? 48 2B E0 83 3D", 0x0);
+MAKE_SIGNATURE(net_time, "engine.dll", "F2 0F 10 0D ? ? ? ? F2 0F 5C 0D", 0x4);
 
 MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 	float accumulated_extra_samples, bool bFinalTick)
@@ -153,4 +154,22 @@ MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 	}
 
 	callOriginal(bFinalTick);
+
+	// Optimal command rate - fixes doubletap on high ping servers
+	// This limits how fast commands are sent to the server, preventing rejection
+	// Check if we're connected and in game (m_nSignonState >= SIGNONSTATE_FULL which is 6)
+	if (I::EngineClient->IsInGame() && I::ClientState->m_nSignonState >= 6)
+	{
+		// Get net_time from the signature (it's a pointer to a double)
+		const double flNetTime = *reinterpret_cast<double*>(Signatures::net_time.Get());
+		
+		// Use optimal tick rate for command timing
+		// This ensures commands are spaced properly even on high ping
+		I::ClientState->m_flNextCmdTime = flNetTime + I::GlobalVars->interval_per_tick;
+	}
+	else
+	{
+		const double flNetTime = *reinterpret_cast<double*>(Signatures::net_time.Get());
+		I::ClientState->m_flNextCmdTime = flNetTime + 0.2;
+	}
 }

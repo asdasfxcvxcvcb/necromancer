@@ -22,6 +22,11 @@ void CAimbot::RunMain(CUserCmd* pCmd)
 
 	if (Shifting::bRecharging)
 		return;
+
+	// Skip aimbot during doubletap shifts - we use the saved command angles
+	// This is critical for DT to work properly, the reference project does the same
+	if (Shifting::bShifting && !Shifting::bShiftingWarp)
+		return;
 	
 	// Skip aimbot when AutoFaN is running (it needs to control viewangles for the jump boost)
 	if (F::Misc->IsAutoFaNRunning())

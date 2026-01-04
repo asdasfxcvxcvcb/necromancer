@@ -210,8 +210,22 @@ MAKE_HOOK(INetChannel_SendNetMsg, Signatures::INetChannel_SendNetMsg.Get(), bool
 		unsigned char data[4000] = {};
 		pMsg->m_DataOut.StartWriting(data, sizeof(data));
 
+		// Dynamic command priority: use max (15) during doubletap shifts to push attack commands faster
+		// Use configured lower value when idle to reduce bandwidth/improve stability
+		int nMaxNewCommands;
+		if (Shifting::bShifting && !Shifting::bShiftingWarp)
+		{
+			// During doubletap: prioritize getting all attack commands out - use max allowed
+			nMaxNewCommands = MAX_NEW_COMMANDS;
+		}
+		else
+		{
+			// Normal: use configured value (lower = better for high ping stability)
+			nMaxNewCommands = std::min(CFG::Exploits_RapidFire_Max_Commands, MAX_NEW_COMMANDS);
+		}
+		
 		pMsg->m_nNewCommands = 1 + nChokedCommands;
-		pMsg->m_nNewCommands = std::clamp(pMsg->m_nNewCommands, 0, MAX_NEW_COMMANDS);
+		pMsg->m_nNewCommands = std::clamp(pMsg->m_nNewCommands, 0, nMaxNewCommands);
 
 		const int nExtraCommands = nChokedCommands + 1 - pMsg->m_nNewCommands;
 		const int nCmdBackup = std::max(2, nExtraCommands);

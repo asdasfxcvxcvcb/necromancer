@@ -472,6 +472,53 @@ namespace Shifting
 	inline int nRapidFireTargetIndex = -1;
 	inline float flRapidFireSimTime = 0.0f;
 
+	// Tick tracking for high ping compensation
+	// Tracks server tick acknowledgments to predict optimal shift timing
+	inline int nLastServerTick = 0;           // Last acknowledged server tick
+	inline int nLastCommandAck = 0;           // Last acknowledged command number
+	inline int nTicksAhead = 0;               // How many ticks we're ahead of server
+	inline float flLastLatency = 0.0f;        // Last measured latency
+	inline int nPredictedServerTick = 0;      // Our prediction of current server tick
+
+	// Update tick tracking - call this every frame
+	inline void UpdateTickTracking(int nServerTick, int nCommandAck, float flLatency)
+	{
+		// Track how many ticks ahead we are
+		if (nServerTick > nLastServerTick)
+		{
+			nTicksAhead = I::GlobalVars->tickcount - nServerTick;
+			nLastServerTick = nServerTick;
+		}
+		
+		nLastCommandAck = nCommandAck;
+		flLastLatency = flLatency;
+		
+		// Predict current server tick based on latency
+		// Server tick = our tick - (latency in ticks)
+		int nLatencyTicks = static_cast<int>(flLatency / TICK_INTERVAL);
+		nPredictedServerTick = I::GlobalVars->tickcount - nLatencyTicks;
+	}
+
+	// Check if we should delay shift based on tick tracking
+	// Returns true if we should wait, false if safe to shift
+	inline bool ShouldDelayShift(int nTickTrackingMode)
+	{
+		// Mode 0 = Disabled - no delay
+		if (nTickTrackingMode == 0)
+			return false;
+		
+		// Mode 1 = Linear - simple latency-based delay
+		if (nTickTrackingMode == 1)
+		{
+			// If we're too far ahead of server, wait
+			// This prevents commands from arriving too bunched up
+			int nMaxAhead = static_cast<int>(flLastLatency / TICK_INTERVAL) + 2;
+			return nTicksAhead > nMaxAhead;
+		}
+		
+		return false;
+	}
+
 	inline void Reset()
 	{
 		nAvailableTicks = 0;
@@ -490,6 +537,12 @@ namespace Shifting
 		// Reset rapid fire target tracking
 		nRapidFireTargetIndex = -1;
 		flRapidFireSimTime = 0.0f;
+		// Reset tick tracking
+		nLastServerTick = 0;
+		nLastCommandAck = 0;
+		nTicksAhead = 0;
+		flLastLatency = 0.0f;
+		nPredictedServerTick = 0;
 	}
 }
 

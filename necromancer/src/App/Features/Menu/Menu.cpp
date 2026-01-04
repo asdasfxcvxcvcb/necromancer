@@ -3576,6 +3576,10 @@ void CMenu::MainWindow()
 			
 			SliderInt("Double Tap Delay Ticks", CFG::Exploits_RapidFire_Min_Ticks_Target_Same, 0, 5, 1);
 			CheckBox("Double Tap Antiwarp", CFG::Exploits_RapidFire_Antiwarp);
+			SliderInt("Cmds/Packet", CFG::Exploits_RapidFire_Max_Commands, 2, 15, 1);
+			SelectSingle("Tick Tracking", CFG::Exploits_RapidFire_Tick_Tracking, {
+				{ "Disabled", 0 }, { "Linear", 1 }
+			});
 			InputKey("Warp Key", CFG::Exploits_Warp_Key);
 			SelectSingle("Warp Mode", CFG::Exploits_Warp_Mode, {
 				{ "Slow", 0 }, { "Full", 1 }

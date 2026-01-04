@@ -117,6 +117,21 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 		I::ClientState->lastoutgoingcommand + I::ClientState->chokedcommands
 	);
 
+	// Update tick tracking for doubletap high ping compensation
+	{
+		float flLatency = 0.0f;
+		if (const auto pNetChannel = I::EngineClient->GetNetChannelInfo())
+		{
+			if (!pNetChannel->IsLoopback())
+				flLatency = pNetChannel->GetAvgLatency(FLOW_OUTGOING);
+		}
+		Shifting::UpdateTickTracking(
+			I::ClientState->m_nDeltaTick,
+			I::ClientState->last_command_ack,
+			flLatency
+		);
+	}
+
 	F::AutoVaccinator->PreventReload(pCmd);
 
 	// Run AutoVaccinator early if Always On

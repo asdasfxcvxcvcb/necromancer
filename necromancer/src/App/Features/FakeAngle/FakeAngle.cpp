@@ -65,6 +65,10 @@ bool CFakeAngle::ShouldRun(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd
 	if (!pLocal || !pLocal->IsAlive() || pLocal->InCond(TF_COND_TAUNTING))
 		return false;
 	
+	// Don't run anti-aim during doubletap shifts - we use saved command angles
+	if (Shifting::bShifting && !Shifting::bShiftingWarp)
+		return false;
+	
 	// Ghost check
 	if (pLocal->InCond(TF_COND_HALLOWEEN_GHOST_MODE))
 		return false;
