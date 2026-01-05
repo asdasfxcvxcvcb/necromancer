@@ -20,6 +20,10 @@ MAKE_HOOK(IEngineVGuiInternal_Paint, Memory::GetVFunc(I::EngineVGui, 14), void, 
 {
 	CALL_ORIGINAL(ecx, mode);
 
+	// Skip during level transitions
+	if (G::bLevelTransition)
+		return;
+
 	if (mode & PAINT_UIPANELS)
 	{
 		H::Draw->UpdateW2SMatrix();
@@ -32,18 +36,22 @@ MAKE_HOOK(IEngineVGuiInternal_Paint, Memory::GetVFunc(I::EngineVGui, 14), void, 
 
 		I::MatSystemSurface->StartDrawing();
 		{
-			F::ESP->Run();
-			F::AutoSapper->DrawESP();
-			F::TeamWellBeing->Run();
-			F::MiscVisuals->ShiftBar();
-			F::Radar->Run();
-			F::SpectatorList->Run();
-			F::MiscVisuals->AimbotFOVCircle();
-			F::MiscVisuals->CritIndicator();
-			F::AimbotHitscan->DrawSwitchIndicator();
-			F::SpyCamera->Run();
-			F::SpyWarning->Run();
-			F::SeedPred->Paint();
+			// Only draw entity-dependent stuff if in game
+			if (I::EngineClient && I::EngineClient->IsInGame())
+			{
+				F::ESP->Run();
+				F::AutoSapper->DrawESP();
+				F::TeamWellBeing->Run();
+				F::MiscVisuals->ShiftBar();
+				F::Radar->Run();
+				F::SpectatorList->Run();
+				F::MiscVisuals->AimbotFOVCircle();
+				F::MiscVisuals->CritIndicator();
+				F::AimbotHitscan->DrawSwitchIndicator();
+				F::SpyCamera->Run();
+				F::SpyWarning->Run();
+				F::SeedPred->Paint();
+			}
 			F::Menu->Run();
 		}
 		I::MatSystemSurface->FinishDrawing();

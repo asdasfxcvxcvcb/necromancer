@@ -19,6 +19,9 @@ MAKE_HOOK(IBaseClientDLL_LevelShutdown, Memory::GetVFunc(I::BaseClientDLL, 7), v
 {
 	DebugLog("LevelShutdown: START");
 	
+	// Set level transition flag FIRST to prevent any entity access
+	G::bLevelTransition = true;
+	
 	// Signal that we're shutting down - this will prevent rendering from using materials
 	DebugLog("LevelShutdown: Materials CleanUp");
 	F::Materials->CleanUp();

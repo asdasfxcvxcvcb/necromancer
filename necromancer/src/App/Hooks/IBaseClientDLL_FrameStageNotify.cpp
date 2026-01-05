@@ -13,6 +13,10 @@ MAKE_HOOK(IBaseClientDLL_FrameStageNotify, Memory::GetVFunc(I::BaseClientDLL, 35
 {
 	CALL_ORIGINAL(ecx, curStage);
 
+	// Skip ALL processing during level transitions
+	if (G::bLevelTransition)
+		return;
+
 	// Check if we're in game for entity-related operations
 	const bool bInGame = I::EngineClient && I::EngineClient->IsInGame();
 

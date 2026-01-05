@@ -9,6 +9,9 @@ MAKE_HOOK(IBaseClientDLL_LevelInitPostEntity, Memory::GetVFunc(I::BaseClientDLL,
 {
 	CALL_ORIGINAL(ecx);
 
+	// Clear level transition flag - entities are now valid
+	G::bLevelTransition = false;
+
 	H::Entities->UpdateModelIndexes();
 	H::Entities->ForceRefreshPlayerInfo(); // Force refresh F2P and party info on new server
 	
