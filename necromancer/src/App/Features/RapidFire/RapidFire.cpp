@@ -125,17 +125,27 @@ void CRapidFire::Run(CUserCmd* pCmd, bool* pSendPacket)
 	if (!pWeapon)
 		return;
 
-	if (ShouldStart(pLocal, pWeapon))
+	// If DT key is held but we can't start DT yet, block normal firing
+	// This prevents wasting a normal shot when you want to DT
+	const bool bDTKeyHeld = H::Input->IsDown(CFG::Exploits_RapidFire_Key);
+	const bool bHasEnoughTicks = Shifting::nAvailableTicks >= CFG::Exploits_RapidFire_Ticks;
+	const bool bWeaponSupported = IsWeaponSupported(pWeapon);
+	
+	if (bDTKeyHeld && bHasEnoughTicks && bWeaponSupported && !Shifting::bShifting && !Shifting::bRecharging)
 	{
-		const bool bIsProjectile = IsProjectileWeapon(pWeapon);
-
-		// For hitscan: check target same ticks
-		if (!bIsProjectile && G::nTicksTargetSame < CFG::Exploits_RapidFire_Min_Ticks_Target_Same)
+		// DT key held and we have ticks - check if we should block normal fire
+		if (!IsProjectileWeapon(pWeapon) && G::nTicksTargetSame < CFG::Exploits_RapidFire_Min_Ticks_Target_Same)
 		{
+			// Delay not met - block firing completely, wait for DT
 			pCmd->buttons &= ~IN_ATTACK;
 			G::bFiring = false;
 			return;
 		}
+	}
+
+	if (ShouldStart(pLocal, pWeapon))
+	{
+		const bool bIsProjectile = IsProjectileWeapon(pWeapon);
 
 		Shifting::bRapidFireWantShift = true;
 
