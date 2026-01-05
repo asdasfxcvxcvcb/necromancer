@@ -47,9 +47,6 @@ void CFakeLag::Prediction(C_TFPlayer* pLocal, CUserCmd* pCmd)
 
 bool CFakeLag::IsAllowed(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd)
 {
-	if (CFG::Exploits_AntiAim_Enabled && H::Input->IsDown(CFG::Aimbot_Key)) // ghetto
-		return false;
-
 	// Calculate max allowed fakelag ticks
 	static auto sv_maxusrcmdprocessticks = I::CVar->FindVar("sv_maxusrcmdprocessticks");
 	int nMaxTicks = sv_maxusrcmdprocessticks ? sv_maxusrcmdprocessticks->GetInt() : 24;
@@ -77,8 +74,10 @@ bool CFakeLag::IsAllowed(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* 
 		return true;
 	}
 	
-	// Unchoke on attack
-	if (G::Attacking == 1)
+	// ONLY unchoke when actually firing a shot (G::Attacking == 1 or G::bFiring)
+	// This is set by aimbot when it wants to shoot, not just when holding attack
+	// Don't unchoke just because IN_ATTACK is held - wait for actual shot
+	if (G::Attacking == 1 || G::bFiring)
 		return false;
 	
 	// Don't fakelag during auto rocket jump
@@ -379,6 +378,18 @@ void CFakeLag::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd, 
 		m_eCurrentThreat = eThreat;
 		
 		if (eThreat == EFakeLagThreatType::None)
+		{
+			m_iGoal = 0;
+			m_iCurrentChokeTicks = 0;
+			m_iTargetChokeTicks = 0;
+			m_vLastPosition = pLocal->m_vecOrigin();
+			m_bEnabled = false;
+			return;
+		}
+		
+		// ONLY unchoke when actually firing a shot - not just holding attack
+		// This ensures we stay fakelagged until the moment we shoot
+		if (G::Attacking == 1 || G::bFiring)
 		{
 			m_iGoal = 0;
 			m_iCurrentChokeTicks = 0;
