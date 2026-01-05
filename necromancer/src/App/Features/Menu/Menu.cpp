@@ -12,13 +12,36 @@
 
 #include <filesystem>
 #include <fstream>
-#include <algorithm>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
-// Global flag for menu background refresh button
-static bool g_bMenuBackgroundNeedRefresh = true;
+// Background image state - managed carefully to avoid crashes on level change
+namespace MenuBackground
+{
+	static int g_nTextureId = -1;
+	static int g_nWidth = 0;
+	static int g_nHeight = 0;
+	static std::vector<unsigned char> g_vecImageData;
+	static bool g_bNeedRefresh = true;
+	static bool g_bImageLoaded = false;
+	static std::string g_strLastMap = "";
+	
+	void Invalidate()
+	{
+		g_nTextureId = -1;
+	}
+	
+	void Reset()
+	{
+		g_nTextureId = -1;
+		g_nWidth = 0;
+		g_nHeight = 0;
+		g_vecImageData.clear();
+		g_bImageLoaded = false;
+		g_bNeedRefresh = true;
+	}
+}
 
 #define multiselect(label, unique, ...) static std::vector<std::pair<const char *, bool &>> unique##multiselect = __VA_ARGS__; \
 SelectMulti(label, unique##multiselect)
@@ -1522,87 +1545,117 @@ bool CMenu::ColorPicker(const char* szLabel, Color_t& colVar)
 
 void CMenu::MainWindow()
 {
-	// Menu background image system
-	static int nBackgroundTextureId = -1;
-	static int nBackgroundWidth = 0;
-	static int nBackgroundHeight = 0;
-	
-	// Load/reload background image when refresh is requested
-	if (CFG::Menu_Background_Image_Enabled && g_bMenuBackgroundNeedRefresh)
+	// ========== BACKGROUND IMAGE SYSTEM ==========
+	// Check for level change - invalidate texture if map changed
+	const char* currentMap = I::EngineClient->GetLevelName();
+	std::string currentMapStr = currentMap ? currentMap : "";
+	if (currentMapStr != MenuBackground::g_strLastMap)
 	{
-		g_bMenuBackgroundNeedRefresh = false;
+		MenuBackground::g_strLastMap = currentMapStr;
+		MenuBackground::Invalidate(); // Texture IDs become invalid on level change
+	}
+	
+	// Load image from disk if needed (only when menu is open and feature enabled)
+	if (CFG::Menu_Background_Image_Enabled && MenuBackground::g_bNeedRefresh && !MenuBackground::g_bImageLoaded)
+	{
+		MenuBackground::g_bNeedRefresh = false;
+		
 		std::string strFolderPath = "C:\\necromancer_tf2\\menu_backgrounds";
 		std::string strReadmePath = strFolderPath + "\\README.txt";
 		
-		// Create folder if it doesn't exist
-		if (!std::filesystem::exists(strFolderPath))
-			std::filesystem::create_directories(strFolderPath);
-		
-		// Create readme file if it doesn't exist
-		if (!std::filesystem::exists(strReadmePath))
+		try
 		{
-			std::ofstream readme(strReadmePath);
-			if (readme.is_open())
-			{
-				readme << "Place your background image in this folder.\n\n";
-				readme << "Only ONE image is used. If you want an image to be the background,\n";
-				readme << "rename it to 'image' with one of these extensions:\n";
-				readme << "  - image.png\n";
-				readme << "  - image.jpg\n";
-				readme << "  - image.jpeg\n";
-				readme << "  - image.bmp\n";
-				readme << "  - image.tga\n\n";
-				readme << "The perfect resolution for the image to fit perfectly in the menu is " << CFG::Menu_Width << " by " << CFG::Menu_Height << " pixels.\n\n";
-				readme << "If the image is smaller or bigger, it will be stretched/compressed to fill and fit the menu resolution.\n\n";
-				readme << "Supported formats: PNG, JPG, JPEG, BMP, TGA\n\n";
-				readme << "Click the 'Refresh' button in the menu to reload the image after replacing it.\n";
-				readme.close();
-			}
-		}
-		
-		// Look for image.png, image.jpg, etc.
-		std::string strImagePath = "";
-		const char* extensions[] = { ".png", ".jpg", ".jpeg", ".bmp", ".tga" };
-		for (const char* ext : extensions)
-		{
-			std::string testPath = strFolderPath + "\\image" + ext;
-			if (std::filesystem::exists(testPath))
-			{
-				strImagePath = testPath;
-				break;
-			}
-		}
-		
-		// Load the image
-		if (!strImagePath.empty())
-		{
-			int nChannels = 0;
-			unsigned char* pImageData = stbi_load(strImagePath.c_str(), &nBackgroundWidth, &nBackgroundHeight, &nChannels, 4);
+			// Create folder if it doesn't exist
+			if (!std::filesystem::exists(strFolderPath))
+				std::filesystem::create_directories(strFolderPath);
 			
-			if (pImageData)
+			// Create readme file if it doesn't exist
+			if (!std::filesystem::exists(strReadmePath))
 			{
-				// Convert RGBA to BGRA for Source engine
-				for (int i = 0; i < nBackgroundWidth * nBackgroundHeight; i++)
+				std::ofstream readme(strReadmePath);
+				if (readme.is_open())
 				{
-					std::swap(pImageData[i * 4 + 0], pImageData[i * 4 + 2]); // Swap R and B
+					readme << "Place your background image in this folder.\n\n";
+					readme << "Rename your image to 'image' with one of these extensions:\n";
+					readme << "  - image.png\n";
+					readme << "  - image.jpg\n";
+					readme << "  - image.jpeg\n";
+					readme << "  - image.bmp\n\n";
+					readme << "Recommended resolution: " << CFG::Menu_Width << " x " << CFG::Menu_Height << " pixels.\n";
+					readme << "Click 'Refresh' in menu to reload after changing the image.\n";
+					readme.close();
 				}
+			}
+			
+			// Look for image file
+			std::string strImagePath = "";
+			const char* extensions[] = { ".png", ".jpg", ".jpeg", ".bmp" };
+			for (const char* ext : extensions)
+			{
+				std::string testPath = strFolderPath + "\\image" + ext;
+				if (std::filesystem::exists(testPath))
+				{
+					strImagePath = testPath;
+					break;
+				}
+			}
+			
+			// Load the image
+			if (!strImagePath.empty())
+			{
+				int nChannels = 0;
+				unsigned char* pImageData = stbi_load(strImagePath.c_str(), &MenuBackground::g_nWidth, &MenuBackground::g_nHeight, &nChannels, 4);
 				
-				// Create new texture (or reuse if already exists)
-				if (nBackgroundTextureId == -1)
-					nBackgroundTextureId = I::MatSystemSurface->CreateNewTextureID(true);
-				
-				I::MatSystemSurface->DrawSetTextureRGBAEx(nBackgroundTextureId, pImageData, nBackgroundWidth, nBackgroundHeight, IMAGE_FORMAT_BGRA8888);
-				stbi_image_free(pImageData);
+				if (pImageData && MenuBackground::g_nWidth > 0 && MenuBackground::g_nHeight > 0)
+				{
+					// Convert RGBA to BGRA for Source engine
+					for (int i = 0; i < MenuBackground::g_nWidth * MenuBackground::g_nHeight; i++)
+					{
+						std::swap(pImageData[i * 4 + 0], pImageData[i * 4 + 2]);
+					}
+					
+					// Store image data for texture recreation
+					size_t dataSize = static_cast<size_t>(MenuBackground::g_nWidth) * MenuBackground::g_nHeight * 4;
+					MenuBackground::g_vecImageData.assign(pImageData, pImageData + dataSize);
+					MenuBackground::g_bImageLoaded = true;
+					MenuBackground::g_nTextureId = -1; // Will be created when needed
+					
+					stbi_image_free(pImageData);
+				}
+				else if (pImageData)
+				{
+					stbi_image_free(pImageData);
+				}
+			}
+		}
+		catch (...) { }
+	}
+	
+	// Create texture if we have image data but no valid texture
+	if (CFG::Menu_Background_Image_Enabled && MenuBackground::g_bImageLoaded && MenuBackground::g_nTextureId == -1)
+	{
+		if (!MenuBackground::g_vecImageData.empty() && I::MatSystemSurface)
+		{
+			MenuBackground::g_nTextureId = I::MatSystemSurface->CreateNewTextureID(true);
+			if (MenuBackground::g_nTextureId != -1)
+			{
+				I::MatSystemSurface->DrawSetTextureRGBAEx(
+					MenuBackground::g_nTextureId,
+					MenuBackground::g_vecImageData.data(),
+					MenuBackground::g_nWidth,
+					MenuBackground::g_nHeight,
+					IMAGE_FORMAT_BGRA8888
+				);
 			}
 		}
 	}
 	
-	// Reset texture if disabled
-	if (!CFG::Menu_Background_Image_Enabled && nBackgroundTextureId != -1)
+	// Reset if feature disabled
+	if (!CFG::Menu_Background_Image_Enabled && MenuBackground::g_bImageLoaded)
 	{
-		nBackgroundTextureId = -1;
-		g_bMenuBackgroundNeedRefresh = true; // Will reload when re-enabled
+		MenuBackground::Reset();
 	}
+	// ========== END BACKGROUND IMAGE SYSTEM ==========
 
 	Drag(
 		CFG::Menu_Pos_X,
@@ -1645,12 +1698,12 @@ void CMenu::MainWindow()
 	bgColor.a = static_cast<byte>((bgColor.a / 255.0f) * alpha);
 	H::Draw->Rect(menuX, menuY, scaledW, scaledH, bgColor);
 	
-	// Draw background image if enabled and loaded
-	if (CFG::Menu_Background_Image_Enabled && nBackgroundTextureId != -1)
+	// Draw background image if enabled and texture is valid
+	if (CFG::Menu_Background_Image_Enabled && MenuBackground::g_nTextureId != -1 && I::MatSystemSurface)
 	{
 		byte imgAlpha = static_cast<byte>(CFG::Menu_Background_Image_Transparency * 255 * (alpha / 255.0f));
 		I::MatSystemSurface->DrawSetColor(255, 255, 255, imgAlpha);
-		I::MatSystemSurface->DrawSetTexture(nBackgroundTextureId);
+		I::MatSystemSurface->DrawSetTexture(MenuBackground::g_nTextureId);
 		I::MatSystemSurface->DrawTexturedRect(menuX, menuY, menuX + scaledW, menuY + scaledH);
 	}
 	
@@ -3592,48 +3645,28 @@ void CMenu::MainWindow()
 				ColorPicker("Party 12", CFG::Color_Party_12);
 			}
 			GroupBoxEnd();
-
-			GroupBoxStart("Menu Background", 150);
+			
+			GroupBoxStart("Background Image", 150);
 			{
-				CheckBox("Enable Image", CFG::Menu_Background_Image_Enabled);
-				SliderFloat("Transparency", CFG::Menu_Background_Image_Transparency, 0.0f, 1.0f, 0.05f, "%.2f");
-				if (Button("Refresh"))
+				CheckBox("Enable", CFG::Menu_Background_Image_Enabled);
+				if (CFG::Menu_Background_Image_Enabled)
 				{
-					// Set the global refresh flag
-					g_bMenuBackgroundNeedRefresh = true;
-				}
-				if (Button("Open Folder"))
-				{
-					// Open the menu backgrounds folder
-					std::string strPath = "C:\\necromancer_tf2\\menu_backgrounds";
-					std::string strReadmePath = strPath + "\\README.txt";
-					
-					// Create folder if it doesn't exist
-					if (!std::filesystem::exists(strPath))
-						std::filesystem::create_directories(strPath);
-					
-					// Create readme file if it doesn't exist
-					if (!std::filesystem::exists(strReadmePath))
+					SliderFloat("Opacity", CFG::Menu_Background_Image_Transparency, 0.1f, 1.0f, 0.05f, "%.2f");
+					if (Button("Refresh"))
 					{
-						std::ofstream readme(strReadmePath);
-						if (readme.is_open())
-						{
-							readme << "Place your background image in this folder.\n\n";
-							readme << "Only ONE image is used. If you want an image to be the background,\n";
-							readme << "rename it to 'image' with one of these extensions:\n";
-							readme << "  - image.png\n";
-							readme << "  - image.jpg\n";
-							readme << "  - image.jpeg\n";
-							readme << "  - image.bmp\n";
-							readme << "  - image.tga\n\n";
-							readme << "The perfect resolution for the image to fit perfectly in the menu is " << CFG::Menu_Width << " by " << CFG::Menu_Height << " pixels.\n\n";
-							readme << "If the image is smaller or bigger, it will be stretched/compressed to fill and fit the menu resolution.\n\n";
-							readme << "Supported formats: PNG, JPG, JPEG, BMP, TGA\n\n";
-							readme << "Click the 'Refresh' button in the menu to reload the image after replacing it.\n";
-							readme.close();
-						}
+						MenuBackground::g_bNeedRefresh = true;
+						MenuBackground::g_bImageLoaded = false;
+						MenuBackground::g_nTextureId = -1;
 					}
-					ShellExecuteA(NULL, "open", strPath.c_str(), NULL, NULL, SW_SHOWDEFAULT);
+					if (Button("Open Folder"))
+					{
+						std::string folderPath = "C:\\necromancer_tf2\\menu_backgrounds";
+						try {
+							if (!std::filesystem::exists(folderPath))
+								std::filesystem::create_directories(folderPath);
+						} catch (...) {}
+						ShellExecuteA(NULL, "open", folderPath.c_str(), NULL, NULL, SW_SHOWDEFAULT);
+					}
 				}
 			}
 			GroupBoxEnd();

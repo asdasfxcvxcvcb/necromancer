@@ -363,5 +363,6 @@
     <ClInclude Include="src\Utils\Utils.h" />
     <ClInclude Include="src\App\Features\Aimbot\AimbotProjectile\AimbotProjectile.h" />
     <ClInclude Include="src\App\Features\ProjectileSim\ProjectileSim.h" />
+    <ClInclude Include="src\App\Features\Menu\stb_image.h" />
   </ItemGroup>
 </Project>

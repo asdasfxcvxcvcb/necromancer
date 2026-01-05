@@ -13,14 +13,18 @@ MAKE_HOOK(IBaseClientDLL_FrameStageNotify, Memory::GetVFunc(I::BaseClientDLL, 35
 {
 	CALL_ORIGINAL(ecx, curStage);
 
+	// Check if we're in game for entity-related operations
+	const bool bInGame = I::EngineClient && I::EngineClient->IsInGame();
+
 	switch (curStage)
 	{
 		case FRAME_NET_UPDATE_START:
 		{
-			H::Entities->ClearCache();
+			if (bInGame)
+				H::Entities->ClearCache();
 			
 			// Clear amalgam tracking data when not in-game to prevent memory leaks
-			if (I::EngineClient && !I::EngineClient->IsInGame())
+			if (!bInGame)
 			{
 				g_AmalgamEntitiesExt.Clear();
 			}
@@ -30,59 +34,60 @@ MAKE_HOOK(IBaseClientDLL_FrameStageNotify, Memory::GetVFunc(I::BaseClientDLL, 35
 
 		case FRAME_NET_UPDATE_END:
 		{
+			// Skip entity processing if not in game
+			if (!bInGame)
+				break;
+				
 			H::Entities->UpdateCache();
 			F::CritHack->Store(); // Store player health for crit damage tracking
-			
-			// Only store movement records if we're in-game
-			if (I::EngineClient && I::EngineClient->IsInGame())
-			{
 
-			}
+			const auto pLocal = H::Entities->GetLocal();
+			if (!pLocal)
+				break;
 
-			if (const auto pLocal = H::Entities->GetLocal())
+			for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PLAYERS_ALL))
 			{
-				for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PLAYERS_ALL))
+				if (!pEntity || pEntity == pLocal)
+					continue;
+
+				const auto pPlayer = pEntity->As<C_TFPlayer>();
+				if (!pPlayer)
+					continue;
+
+				if (const auto nDifference = std::clamp(TIME_TO_TICKS(pPlayer->m_flSimulationTime() - pPlayer->m_flOldSimulationTime()), 0, 22))
 				{
-					if (!pEntity || pEntity == pLocal)
-						continue;
-
-					const auto pPlayer = pEntity->As<C_TFPlayer>();
-
-					if (const auto nDifference = std::clamp(TIME_TO_TICKS(pPlayer->m_flSimulationTime() - pPlayer->m_flOldSimulationTime()), 0, 22))
+					//deal with animations, local player is dealt with in RunCommand
+					// Do manual animation updates if Disable Interp is on
+					if (CFG::Misc_Accuracy_Improvements && CFG::Visuals_Disable_Interp)
 					{
-						//deal with animations, local player is dealt with in RunCommand
-						// Do manual animation updates if Disable Interp is on
-						if (CFG::Misc_Accuracy_Improvements && CFG::Visuals_Disable_Interp)
+						const float flOldFrameTime = I::GlobalVars->frametime;
+
+						I::GlobalVars->frametime = I::Prediction->m_bEnginePaused ? 0.0f : TICK_INTERVAL;
+
+						for (int n = 0; n < nDifference; n++)
 						{
-							const float flOldFrameTime = I::GlobalVars->frametime;
-
-							I::GlobalVars->frametime = I::Prediction->m_bEnginePaused ? 0.0f : TICK_INTERVAL;
-
-							for (int n = 0; n < nDifference; n++)
-							{
-								G::bUpdatingAnims = true;
-								pPlayer->UpdateClientSideAnimation();
-								G::bUpdatingAnims = false;
-							}
-
-							I::GlobalVars->frametime = flOldFrameTime;
+							G::bUpdatingAnims = true;
+							pPlayer->UpdateClientSideAnimation();
+							G::bUpdatingAnims = false;
 						}
 
-						//add the lag record
-						if (CFG::Misc_SetupBones_Optimization)
-						{
-							if (!pPlayer->deadflag())
-							{
-								F::LagRecords->AddRecord(pPlayer);
-							}
-						}
+						I::GlobalVars->frametime = flOldFrameTime;
+					}
 
-						else
+					//add the lag record
+					if (CFG::Misc_SetupBones_Optimization)
+					{
+						if (!pPlayer->deadflag())
 						{
-							if (pPlayer->m_iTeamNum() != pLocal->m_iTeamNum() && !pPlayer->deadflag())
-							{
-								F::LagRecords->AddRecord(pPlayer);
-							}
+							F::LagRecords->AddRecord(pPlayer);
+						}
+					}
+
+					else
+					{
+						if (pPlayer->m_iTeamNum() != pLocal->m_iTeamNum() && !pPlayer->deadflag())
+						{
+							F::LagRecords->AddRecord(pPlayer);
 						}
 					}
 				}
@@ -102,6 +107,8 @@ MAKE_HOOK(IBaseClientDLL_FrameStageNotify, Memory::GetVFunc(I::BaseClientDLL, 35
 					continue;
 
 				const auto pPlayer = pEntity->As<C_TFPlayer>();
+				if (!pPlayer)
+					continue;
 
 				if (pPlayer->deadflag())
 					continue;
@@ -120,6 +127,10 @@ MAKE_HOOK(IBaseClientDLL_FrameStageNotify, Memory::GetVFunc(I::BaseClientDLL, 35
 			F::MiscVisuals->ViewModelSway();
 			F::MiscVisuals->DetailProps();
 			F::Weather->Rain();
+
+			// Skip entity-dependent stuff if not in game
+			if (!bInGame)
+				break;
 
 			//fake taunt stuff
 			{

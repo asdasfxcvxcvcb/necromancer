@@ -542,6 +542,7 @@
     <ClInclude Include="src\App\Features\Menu\LateRenderer\LateRenderer.h" />
     <ClInclude Include="src\App\Features\Menu\Menu.h" />
     <ClInclude Include="src\App\Features\Menu\MenuAnimations.h" />
+    <ClInclude Include="src\App\Features\Menu\stb_image.h" />
     <ClInclude Include="src\App\Features\MiscVisuals\MiscVisuals.h" />
     <ClInclude Include="src\App\Features\Misc\AntiCheatCompat\AntiCheatCompat.h" />
     <ClInclude Include="src\App\Features\Misc\Misc.h" />
