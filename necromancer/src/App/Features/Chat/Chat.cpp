@@ -10,7 +10,7 @@
 #include <ShlObj.h>
 
 // Chat folder path
-static std::filesystem::path g_ChatFolder = "C:\\necromancer\\chat";
+static std::filesystem::path g_ChatFolder = "C:\\necromancer_tf2\\chat";
 static std::filesystem::path g_ChatSpammerFile = g_ChatFolder / "chatspammer.txt";
 static std::filesystem::path g_KillsayFile = g_ChatFolder / "killsay.txt";
 

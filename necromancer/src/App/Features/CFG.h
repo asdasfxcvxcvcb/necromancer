@@ -849,5 +849,9 @@ namespace CFG
 	CFGVAR(Menu_GroupBox_Aim_Projectile, 200);
 	CFGVAR(Menu_GroupBox_Aim_Melee, 201);
 
+	// Menu Background Image
+	CFGVAR(Menu_Background_Image_Enabled, false);
+	CFGVAR(Menu_Background_Image_Transparency, 0.5f); // 0.0 - 1.0
+
 #pragma endregion
 }

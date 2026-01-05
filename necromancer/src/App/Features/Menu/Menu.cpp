@@ -10,6 +10,16 @@
 #include "../Chat/Chat.h"
 #include "../../CheaterDatabase/CheaterDatabase.h"
 
+#include <filesystem>
+#include <fstream>
+#include <algorithm>
+
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
+// Global flag for menu background refresh button
+static bool g_bMenuBackgroundNeedRefresh = true;
+
 #define multiselect(label, unique, ...) static std::vector<std::pair<const char *, bool &>> unique##multiselect = __VA_ARGS__; \
 SelectMulti(label, unique##multiselect)
 
@@ -1512,6 +1522,88 @@ bool CMenu::ColorPicker(const char* szLabel, Color_t& colVar)
 
 void CMenu::MainWindow()
 {
+	// Menu background image system
+	static int nBackgroundTextureId = -1;
+	static int nBackgroundWidth = 0;
+	static int nBackgroundHeight = 0;
+	
+	// Load/reload background image when refresh is requested
+	if (CFG::Menu_Background_Image_Enabled && g_bMenuBackgroundNeedRefresh)
+	{
+		g_bMenuBackgroundNeedRefresh = false;
+		std::string strFolderPath = "C:\\necromancer_tf2\\menu_backgrounds";
+		std::string strReadmePath = strFolderPath + "\\README.txt";
+		
+		// Create folder if it doesn't exist
+		if (!std::filesystem::exists(strFolderPath))
+			std::filesystem::create_directories(strFolderPath);
+		
+		// Create readme file if it doesn't exist
+		if (!std::filesystem::exists(strReadmePath))
+		{
+			std::ofstream readme(strReadmePath);
+			if (readme.is_open())
+			{
+				readme << "Place your background image in this folder.\n\n";
+				readme << "Only ONE image is used. If you want an image to be the background,\n";
+				readme << "rename it to 'image' with one of these extensions:\n";
+				readme << "  - image.png\n";
+				readme << "  - image.jpg\n";
+				readme << "  - image.jpeg\n";
+				readme << "  - image.bmp\n";
+				readme << "  - image.tga\n\n";
+				readme << "The perfect resolution for the image to fit perfectly in the menu is " << CFG::Menu_Width << " by " << CFG::Menu_Height << " pixels.\n\n";
+				readme << "If the image is smaller or bigger, it will be stretched/compressed to fill and fit the menu resolution.\n\n";
+				readme << "Supported formats: PNG, JPG, JPEG, BMP, TGA\n\n";
+				readme << "Click the 'Refresh' button in the menu to reload the image after replacing it.\n";
+				readme.close();
+			}
+		}
+		
+		// Look for image.png, image.jpg, etc.
+		std::string strImagePath = "";
+		const char* extensions[] = { ".png", ".jpg", ".jpeg", ".bmp", ".tga" };
+		for (const char* ext : extensions)
+		{
+			std::string testPath = strFolderPath + "\\image" + ext;
+			if (std::filesystem::exists(testPath))
+			{
+				strImagePath = testPath;
+				break;
+			}
+		}
+		
+		// Load the image
+		if (!strImagePath.empty())
+		{
+			int nChannels = 0;
+			unsigned char* pImageData = stbi_load(strImagePath.c_str(), &nBackgroundWidth, &nBackgroundHeight, &nChannels, 4);
+			
+			if (pImageData)
+			{
+				// Convert RGBA to BGRA for Source engine
+				for (int i = 0; i < nBackgroundWidth * nBackgroundHeight; i++)
+				{
+					std::swap(pImageData[i * 4 + 0], pImageData[i * 4 + 2]); // Swap R and B
+				}
+				
+				// Create new texture (or reuse if already exists)
+				if (nBackgroundTextureId == -1)
+					nBackgroundTextureId = I::MatSystemSurface->CreateNewTextureID(true);
+				
+				I::MatSystemSurface->DrawSetTextureRGBAEx(nBackgroundTextureId, pImageData, nBackgroundWidth, nBackgroundHeight, IMAGE_FORMAT_BGRA8888);
+				stbi_image_free(pImageData);
+			}
+		}
+	}
+	
+	// Reset texture if disabled
+	if (!CFG::Menu_Background_Image_Enabled && nBackgroundTextureId != -1)
+	{
+		nBackgroundTextureId = -1;
+		g_bMenuBackgroundNeedRefresh = true; // Will reload when re-enabled
+	}
+
 	Drag(
 		CFG::Menu_Pos_X,
 		CFG::Menu_Pos_Y,
@@ -1552,6 +1644,15 @@ void CMenu::MainWindow()
 	Color_t bgColor = CFG::Menu_Background;
 	bgColor.a = static_cast<byte>((bgColor.a / 255.0f) * alpha);
 	H::Draw->Rect(menuX, menuY, scaledW, scaledH, bgColor);
+	
+	// Draw background image if enabled and loaded
+	if (CFG::Menu_Background_Image_Enabled && nBackgroundTextureId != -1)
+	{
+		byte imgAlpha = static_cast<byte>(CFG::Menu_Background_Image_Transparency * 255 * (alpha / 255.0f));
+		I::MatSystemSurface->DrawSetColor(255, 255, 255, imgAlpha);
+		I::MatSystemSurface->DrawSetTexture(nBackgroundTextureId);
+		I::MatSystemSurface->DrawTexturedRect(menuX, menuY, menuX + scaledW, menuY + scaledH);
+	}
 	
 	// Border with accent primary color
 	Color_t borderColor = CFG::Menu_Accent_Primary;
@@ -3489,6 +3590,51 @@ void CMenu::MainWindow()
 				ColorPicker("Party 10", CFG::Color_Party_10);
 				ColorPicker("Party 11", CFG::Color_Party_11);
 				ColorPicker("Party 12", CFG::Color_Party_12);
+			}
+			GroupBoxEnd();
+
+			GroupBoxStart("Menu Background", 150);
+			{
+				CheckBox("Enable Image", CFG::Menu_Background_Image_Enabled);
+				SliderFloat("Transparency", CFG::Menu_Background_Image_Transparency, 0.0f, 1.0f, 0.05f, "%.2f");
+				if (Button("Refresh"))
+				{
+					// Set the global refresh flag
+					g_bMenuBackgroundNeedRefresh = true;
+				}
+				if (Button("Open Folder"))
+				{
+					// Open the menu backgrounds folder
+					std::string strPath = "C:\\necromancer_tf2\\menu_backgrounds";
+					std::string strReadmePath = strPath + "\\README.txt";
+					
+					// Create folder if it doesn't exist
+					if (!std::filesystem::exists(strPath))
+						std::filesystem::create_directories(strPath);
+					
+					// Create readme file if it doesn't exist
+					if (!std::filesystem::exists(strReadmePath))
+					{
+						std::ofstream readme(strReadmePath);
+						if (readme.is_open())
+						{
+							readme << "Place your background image in this folder.\n\n";
+							readme << "Only ONE image is used. If you want an image to be the background,\n";
+							readme << "rename it to 'image' with one of these extensions:\n";
+							readme << "  - image.png\n";
+							readme << "  - image.jpg\n";
+							readme << "  - image.jpeg\n";
+							readme << "  - image.bmp\n";
+							readme << "  - image.tga\n\n";
+							readme << "The perfect resolution for the image to fit perfectly in the menu is " << CFG::Menu_Width << " by " << CFG::Menu_Height << " pixels.\n\n";
+							readme << "If the image is smaller or bigger, it will be stretched/compressed to fill and fit the menu resolution.\n\n";
+							readme << "Supported formats: PNG, JPG, JPEG, BMP, TGA\n\n";
+							readme << "Click the 'Refresh' button in the menu to reload the image after replacing it.\n";
+							readme.close();
+						}
+					}
+					ShellExecuteA(NULL, "open", strPath.c_str(), NULL, NULL, SW_SHOWDEFAULT);
+				}
 			}
 			GroupBoxEnd();
 		}
