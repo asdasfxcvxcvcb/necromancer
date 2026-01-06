@@ -16,6 +16,7 @@
 #include "../Features/ProjectileDodge/ProjectileDodge.h"
 #include "../Features/Misc/AntiCheatCompat/AntiCheatCompat.h"
 #include "../Features/amalgam_port/AmalgamCompat.h"
+#include "../Features/amalgam_port/Ticks/Ticks.h"
 
 // Taunt delay processing - defined in IVEngineClient013_ClientCmd.cpp
 extern void ProcessTauntDelay();
@@ -364,6 +365,11 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 		}
 
 		F::Misc->CrouchWhileAirborne(pCmd);
+		
+		// IMPORTANT: Save shoot position AFTER prediction starts but BEFORE aimbot
+		// This ensures projectile aimbot uses the correct predicted eye position
+		F::Ticks.SaveShootPos(pLocal);
+		
 		F::Misc->AutoMedigun(pCmd);
 		F::Aimbot->Run(pCmd);
 

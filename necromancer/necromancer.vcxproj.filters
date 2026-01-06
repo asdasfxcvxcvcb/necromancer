@@ -151,6 +151,11 @@
     <ClCompile Include="src\DllMain.cpp" />
     <ClCompile Include="src\App\Features\Aimbot\AimbotProjectile\AimbotProjectile.cpp" />
     <ClCompile Include="src\App\Features\ProjectileSim\ProjectileSim.cpp" />
+    <ClCompile Include="src\App\Features\Aimbot\AimbotRocket\AimbotRocket.cpp" />
+    <ClCompile Include="src\App\Features\amalgam_port\AimbotGlobal\AimbotGlobal.cpp" />
+    <ClCompile Include="src\App\Features\amalgam_port\EnginePrediction\AmalgamEnginePred.cpp" />
+    <ClCompile Include="src\App\Features\amalgam_port\ProjectileSimulation\ProjectileSimulation.cpp" />
+    <ClCompile Include="src\App\Features\amalgam_port\Ticks\Ticks.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\nlohmann\json_fwd.hpp" />
@@ -169,7 +174,6 @@
     <ClInclude Include="src\App\Features\Aimbot\AimbotHitscan\AimbotHitscan.h" />
     <ClInclude Include="src\App\Features\Aimbot\AimbotMelee\AimbotMelee.h" />
     <ClInclude Include="src\App\Features\Aimbot\Aimbot.h" />
-    <ClInclude Include="src\App\Features\amalgam_port\AmalgamCompat.h" />
     <ClInclude Include="src\App\Features\AutoQueue\AutoQueue.h" />
     <ClInclude Include="src\App\Features\Chat\Chat.h" />
     <ClInclude Include="src\App\Features\Crits\Crits.h" />
@@ -364,5 +368,12 @@
     <ClInclude Include="src\App\Features\Aimbot\AimbotProjectile\AimbotProjectile.h" />
     <ClInclude Include="src\App\Features\ProjectileSim\ProjectileSim.h" />
     <ClInclude Include="src\App\Features\Menu\stb_image.h" />
+    <ClInclude Include="src\App\Features\Aimbot\AimbotRocket\AimbotRocket.h" />
+    <ClInclude Include="src\App\Features\amalgam_port\AimbotProjectile\AimbotProjectile.h" />
+    <ClInclude Include="src\App\Features\amalgam_port\AimbotGlobal\AimbotGlobal.h" />
+    <ClInclude Include="src\App\Features\amalgam_port\EnginePrediction\AmalgamEnginePred.h" />
+    <ClInclude Include="src\App\Features\amalgam_port\ProjectileSimulation\ProjectileSimulation.h" />
+    <ClInclude Include="src\App\Features\amalgam_port\Ticks\Ticks.h" />
+    <ClInclude Include="src\App\Features\amalgam_port\AmalgamCompat.h" />
   </ItemGroup>
 </Project>

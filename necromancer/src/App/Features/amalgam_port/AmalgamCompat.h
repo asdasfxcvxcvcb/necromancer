@@ -1235,6 +1235,7 @@ namespace Vars
             struct AutoShootWrapper { bool get() const { return CFG::Aimbot_AutoShoot; } __declspec(property(get=get)) bool Value; } inline AutoShoot;
             struct { float Value = 25.f; } inline AssistStrength;
             struct { int Value = 4; } inline TickTolerance;
+            struct { int Value = 5; } inline MaxTargets; // Max targets to process
         }
         
         namespace Projectile
@@ -1294,6 +1295,7 @@ namespace Vars
             struct { int Value = 1; } inline SplashNormalSkip;
             struct { int Value = SplashModeEnum::Multi; } inline SplashMode;
             struct RocketSplashModeWrapper { int get() const { return CFG::Aimbot_Amalgam_Projectile_RocketSplashMode; } __declspec(property(get=get)) int Value; } inline RocketSplashMode;
+            struct SplashPredictionWrapper { int get() const { return CFG::Aimbot_Amalgam_Projectile_Splash; } __declspec(property(get=get)) int Value; } inline SplashPrediction;
             struct { bool Value = true; } inline SplashGrates;
             struct { float Value = 0.f; } inline DragOverride;
             struct { float Value = 0.f; } inline TimeOverride;
@@ -1435,8 +1437,16 @@ namespace F {
         // Get real latency for projectile prediction
         float GetReal() { return SDKUtils::GetRealLatency(); }
         
-        // Get anticipated choke ticks
-        int GetAnticipatedChoke() { return 0; }
+        // Get anticipated choke ticks - accounts for silent aim choking
+        // This is important for projectile timing accuracy
+        int GetAnticipatedChoke() 
+        { 
+            // If using silent aim for projectiles, we'll choke 1 tick
+            // This matches Amalgam's behavior
+            if (CFG::Aimbot_Projectile_Aim_Type == 1) // Silent aim
+                return 1;
+            return 0; 
+        }
         
         // Get bones for a target entity (returns nullptr - no backtrack)
         matrix3x4_t* GetBones(C_BaseEntity* pEntity)

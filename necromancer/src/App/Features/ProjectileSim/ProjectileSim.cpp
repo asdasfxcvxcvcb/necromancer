@@ -1,9 +1,9 @@
 #include "ProjectileSim.h"
 
-IPhysicsEnvironment* env{};
-IPhysicsObject* obj{};
+static IPhysicsEnvironment* env{};
+static IPhysicsObject* obj{};
 
-bool CProjectileSim::GetInfo(C_TFPlayer* player, C_TFWeaponBase* weapon, const Vec3& angles, ProjectileInfo& out)
+bool CProjectileSim::GetInfo(C_TFPlayer* player, C_TFWeaponBase* weapon, const Vec3& angles, ProjSimInfo& out)
 {
 	if (!player || !weapon)
 	{
@@ -123,36 +123,45 @@ bool CProjectileSim::GetInfo(C_TFPlayer* player, C_TFWeaponBase* weapon, const V
 	}
 }
 
-bool CProjectileSim::Init(const ProjectileInfo& info, bool no_vec_up)
+bool CProjectileSim::Init(const ProjSimInfo& info, bool no_vec_up)
 {
 	if (!env)
 	{
 		env = I::Physics->CreateEnvironment();
 	}
 
-	if (!obj)
-	{
-		//it doesn't matter what the size is for non drag affected projectiles
-		//pipes use the size below so it works out just fine
-		auto col{ I::PhysicsCollision->BBoxToCollide({ -2.0f, -2.0f, -2.0f }, { 2.0f, 2.0f, 2.0f }) };
-
-		auto params{ g_PhysDefaultObjectParams };
-
-		params.damping = 0.0f;
-		params.rotdamping = 0.0f;
-		params.inertia = 0.0f;
-		params.rotInertiaLimit = 0.0f;
-		params.enableCollisions = false;
-
-		obj = env->CreatePolyObject(col, 0, info.m_pos, info.m_ang, &params);
-
-		obj->Wake();
-	}
-
-	if (!env || !obj)
+	if (!env)
 	{
 		return false;
 	}
+
+	// Destroy existing object to ensure clean state each init
+	if (obj)
+	{
+		env->DestroyObject(obj);
+		obj = nullptr;
+	}
+
+	//it doesn't matter what the size is for non drag affected projectiles
+	//pipes use the size below so it works out just fine
+	auto col{ I::PhysicsCollision->BBoxToCollide({ -2.0f, -2.0f, -2.0f }, { 2.0f, 2.0f, 2.0f }) };
+
+	auto params{ g_PhysDefaultObjectParams };
+
+	params.damping = 0.0f;
+	params.rotdamping = 0.0f;
+	params.inertia = 0.0f;
+	params.rotInertiaLimit = 0.0f;
+	params.enableCollisions = false;
+
+	obj = env->CreatePolyObject(col, 0, info.m_pos, info.m_ang, &params);
+
+	if (!obj)
+	{
+		return false;
+	}
+
+	obj->Wake();
 
 	//set position and velocity
 	{

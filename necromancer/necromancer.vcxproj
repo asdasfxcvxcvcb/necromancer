@@ -367,6 +367,11 @@
     <ClCompile Include="src\App\Features\Aimbot\AimbotHitscan\AimbotHitscan.cpp" />
     <ClCompile Include="src\App\Features\Aimbot\AimbotMelee\AimbotMelee.cpp" />
     <ClCompile Include="src\App\Features\Aimbot\AimbotProjectile\AimbotProjectile.cpp" />
+    <ClCompile Include="src\App\Features\amalgam_port\AimbotGlobal\AimbotGlobal.cpp" />
+    <ClCompile Include="src\App\Features\amalgam_port\AimbotProjectile\AimbotProjectileAmalgam.cpp" />
+    <ClCompile Include="src\App\Features\amalgam_port\EnginePrediction\AmalgamEnginePred.cpp" />
+    <ClCompile Include="src\App\Features\amalgam_port\ProjectileSimulation\ProjectileSimulation.cpp" />
+    <ClCompile Include="src\App\Features\amalgam_port\Ticks\Ticks.cpp" />
     <ClCompile Include="src\App\Features\AutoQueue\AutoQueue.cpp" />
     <ClCompile Include="src\App\Features\Chat\Chat.cpp" />
     <ClCompile Include="src\App\Features\Crits\Crits.cpp" />
@@ -516,7 +521,12 @@
     <ClInclude Include="src\App\Features\Aimbot\AimbotHitscan\AimbotHitscan.h" />
     <ClInclude Include="src\App\Features\Aimbot\AimbotMelee\AimbotMelee.h" />
     <ClInclude Include="src\App\Features\Aimbot\AimbotProjectile\AimbotProjectile.h" />
+    <ClInclude Include="src\App\Features\Aimbot\AimbotRocket\AimbotRocket.h" />
+    <ClInclude Include="src\App\Features\amalgam_port\AimbotGlobal\AimbotGlobal.h" />
+    <ClInclude Include="src\App\Features\amalgam_port\AimbotProjectile\AimbotProjectile.h" />
+    <ClInclude Include="src\App\Features\amalgam_port\AimbotProjectile\AimbotProjectileAmalgam.h" />
     <ClInclude Include="src\App\Features\amalgam_port\AmalgamCompat.h" />
+    <ClInclude Include="src\App\Features\amalgam_port\EnginePrediction\AmalgamEnginePred.h" />
     <ClInclude Include="src\App\Features\amalgam_port\EnginePrediction\EnginePrediction.h" />
     <ClInclude Include="include\nlohmann\json.hpp" />
     <ClInclude Include="include\MinHook\buffer.h" />
@@ -527,6 +537,8 @@
     <ClInclude Include="include\MinHook\hde\table64.h" />
     <ClInclude Include="include\MinHook\MinHook.h" />
     <ClInclude Include="include\MinHook\trampoline.h" />
+    <ClInclude Include="src\App\Features\amalgam_port\ProjectileSimulation\ProjectileSimulation.h" />
+    <ClInclude Include="src\App\Features\amalgam_port\Ticks\Ticks.h" />
     <ClInclude Include="src\App\Features\AutoQueue\AutoQueue.h" />
     <ClInclude Include="src\App\Features\CFG.h" />
     <ClInclude Include="src\App\Features\Chat\Chat.h" />

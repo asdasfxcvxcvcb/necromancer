@@ -2584,12 +2584,41 @@ void CMenu::MainWindow()
 			{
 				CheckBox("Active", CFG::Aimbot_Projectile_Active);
 				CheckBox("No Spread", CFG::Aimbot_Projectile_NoSpread);
+				CheckBox("Midpoint Aim", CFG::Aimbot_Projectile_Midpoint_Aim);
 				CheckBox("Auto Double Donk", CFG::Aimbot_Projectile_Auto_Double_Donk);
 //				CheckBox("Advanced Head Aim", CFG::Aimbot_Projectile_Advanced_Head_Aim);
 				CheckBox("Ground Strafe Prediction", CFG::Aimbot_Projectile_Ground_Strafe_Prediction);
 				CheckBox("Air Strafe Prediction", CFG::Aimbot_Projectile_Air_Strafe_Prediction);
+				CheckBox("Prioritize Feet", CFG::Aimbot_Amalgam_Projectile_Hitbox_PrioritizeFeet);
+				CheckBox("Neckbreaker", CFG::Aimbot_Projectile_Neckbreaker);
+				if (CFG::Aimbot_Projectile_Neckbreaker)
+				{
+					SliderInt("Neckbreaker Step", CFG::Aimbot_Projectile_NeckbreakerStep, 15, 180, 15);
+				}
 //				CheckBox("BBOX Multipoint", CFG::Aimbot_Projectile_BBOX_Multipoint);
-				SelectSingle("Splashbot", CFG::Aimbot_Projectile_Rocket_Splash,
+				
+				// Splashbot (Rockets Only) - Off = direct hits, Include/Prefer/Only = splash prediction
+				SelectSingle("Splashbot (Rockets)", CFG::Aimbot_Amalgam_Projectile_Splash,
+					{
+						{ "Off", 0 },
+						{ "Include", 1 },
+						{ "Prefer", 2 },
+						{ "Only", 3 }
+					});
+				
+				// Rocket Splash mode (only show when splashbot is not Off)
+				if (CFG::Aimbot_Amalgam_Projectile_Splash > 0)
+				{
+					SelectSingle("Rocket Splash", CFG::Aimbot_Amalgam_Projectile_RocketSplashMode,
+					{
+						{ "Regular", 0 },
+						{ "Special Light", 1 },
+						{ "Special Heavy", 2 }
+					});
+				}
+				
+				// Normal projectile splash (show for non-rocket weapons)
+				SelectSingle("Splash", CFG::Aimbot_Projectile_Rocket_Splash,
 					{
 						{ "Disabled", 0 },
 						{ "Enabled", 1 },
@@ -2621,6 +2650,7 @@ void CMenu::MainWindow()
 				SliderFloat("FOV", CFG::Aimbot_Projectile_FOV, 1.0f, 180.0f, 1.0f, "%.0f");
 				SliderFloat("Max Simulation Time", CFG::Aimbot_Projectile_Max_Simulation_Time, 1.0f, 5.0f, 0.5f, "%.1fs");
 				SliderInt("Max Targets", CFG::Aimbot_Projectile_Max_Processing_Targets, 1, 6, 1);
+				SliderInt("Splash Points", CFG::Aimbot_Amalgam_Projectile_SplashPoints, 25, 200, 5);
 			}
 			GroupBoxEnd();
 		}

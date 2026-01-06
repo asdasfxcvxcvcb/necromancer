@@ -2,7 +2,8 @@
 
 #include "../../../SDK/SDK.h"
 
-struct ProjectileInfo
+// Renamed to avoid conflict with amalgam_port's ProjectileInfo
+struct ProjSimInfo
 {
 	ProjectileType_t m_type{};
 
@@ -18,8 +19,8 @@ struct ProjectileInfo
 class CProjectileSim
 {
 public:
-	bool GetInfo(C_TFPlayer* player, C_TFWeaponBase* weapon, const Vec3& angles, ProjectileInfo& out);
-	bool Init(const ProjectileInfo& info, bool no_vec_up = false);
+	bool GetInfo(C_TFPlayer* player, C_TFWeaponBase* weapon, const Vec3& angles, ProjSimInfo& out);
+	bool Init(const ProjSimInfo& info, bool no_vec_up = false);
 	void RunTick();
 	Vec3 GetOrigin();
 };
