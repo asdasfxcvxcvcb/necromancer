@@ -21,6 +21,7 @@ class CMiscVisuals
 	bool m_bFreecamActive = false;
 	Vec3 m_vFreecamPos = {};
 	Vec3 m_vFreecamAngles = {};
+	Vec3 m_vSavedPlayerAngles = {}; // Saved player angles to restore when exiting freecam
 
 public:
 	void AimbotFOVCircle();

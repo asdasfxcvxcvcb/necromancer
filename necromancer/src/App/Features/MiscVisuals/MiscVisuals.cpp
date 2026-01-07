@@ -702,11 +702,17 @@ void CMiscVisuals::Freecam(CViewSetup* pSetup)
 		{
 			m_bFreecamActive = !m_bFreecamActive;
 			
-			// Initialize position when enabling
 			if (m_bFreecamActive)
 			{
+				// Save player angles and initialize freecam position when enabling
+				m_vSavedPlayerAngles = I::EngineClient->GetViewAngles();
 				m_vFreecamPos = pSetup->origin;
 				m_vFreecamAngles = pSetup->angles;
+			}
+			else
+			{
+				// Restore saved player angles when disabling
+				I::EngineClient->SetViewAngles(m_vSavedPlayerAngles);
 			}
 		}
 	}
