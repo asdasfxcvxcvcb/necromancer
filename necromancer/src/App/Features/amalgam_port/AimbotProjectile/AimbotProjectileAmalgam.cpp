@@ -1251,6 +1251,10 @@ bool CAmalgamAimbotProjectile::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeap
 		return false;
 	}
 
+	// Need at least 1 rocket to proceed
+	if (pWeapon->m_iClip1() < 1)
+		return false;
+
 	if (F::AimbotGlobal->ShouldHoldAttack(pWeapon))
 		pCmd->buttons |= IN_ATTACK;
 	
