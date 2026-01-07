@@ -165,6 +165,7 @@ static inline int GetHitboxPriority(int nHitbox, Target_t& tTarget, Info_t& tInf
 	if (!F::AimbotGlobal->IsHitboxValid(nHitbox, Vars::Aimbot::Projectile::Hitboxes.Value))
 		return -1;
 
+	int iHeadPriority = 2;
 	int iBodyPriority = 0;
 	int iFeetPriority = 1;
 
@@ -173,12 +174,14 @@ static inline int GetHitboxPriority(int nHitbox, Target_t& tTarget, Info_t& tInf
 		bool bLower = Vars::Aimbot::Projectile::Hitboxes.Value & Vars::Aimbot::Projectile::HitboxesEnum::PrioritizeFeet
 			&& tTarget.m_iTargetType == TargetEnum::Player && IsOnGround(tTarget.m_pEntity->As<CTFPlayer>());
 
+		iHeadPriority = 2;
 		iBodyPriority = bLower ? 1 : 0;
 		iFeetPriority = bLower ? 0 : 1;
 	}
 
 	switch (nHitbox)
 	{
+	case BOUNDS_HEAD: return iHeadPriority;
 	case BOUNDS_BODY: return iBodyPriority;
 	case BOUNDS_FEET: return iFeetPriority;
 	}
@@ -191,7 +194,7 @@ std::unordered_map<int, Vec3> CAmalgamAimbotProjectile::GetDirectPoints(Target_t
 	std::unordered_map<int, Vec3> mPoints = {};
 
 	const Vec3 vMins = tTarget.m_pEntity->m_vecMins(), vMaxs = tTarget.m_pEntity->m_vecMaxs();
-	for (int i = 1; i < 3; i++) // Skip head (0), only body (1) and feet (2)
+	for (int i = 0; i < 3; i++) // Head (0), Body (1), Feet (2)
 	{
 		int iPriority = GetHitboxPriority(i, tTarget, m_tInfo, pProjectile);
 		if (iPriority == -1)
@@ -199,6 +202,7 @@ std::unordered_map<int, Vec3> CAmalgamAimbotProjectile::GetDirectPoints(Target_t
 
 		switch (i)
 		{
+		case BOUNDS_HEAD: mPoints[iPriority] = Vec3(0, 0, vMaxs.z - Vars::Aimbot::Projectile::VerticalShift.Value); break;
 		case BOUNDS_BODY: mPoints[iPriority] = Vec3(0, 0, (vMaxs.z - vMins.z) / 2); break;
 		case BOUNDS_FEET: mPoints[iPriority] = Vec3(0, 0, vMins.z + Vars::Aimbot::Projectile::VerticalShift.Value); break;
 		}
@@ -839,7 +843,7 @@ int CAmalgamAimbotProjectile::CanHit(Target_t& tTarget, CTFPlayer* pLocal, CTFWe
 	tTarget.m_vPos = tTarget.m_pEntity->m_vecOrigin();
 
 	m_tInfo = { pLocal, pWeapon };
-	m_tInfo.m_vLocalEye = pLocal->GetShootPos();
+	m_tInfo.m_vLocalEye = F::Ticks.GetShootPos(); // Use predicted shoot pos that accounts for CrouchWhileAirborne
 	
 	if (bIsPlayer)
 		m_tInfo.m_vTargetEye = tTarget.m_pEntity->As<CTFPlayer>()->GetViewOffset();
@@ -1062,41 +1066,43 @@ int CAmalgamAimbotProjectile::CanHit(Target_t& tTarget, CTFPlayer* pLocal, CTFWe
 			std::vector<Vec3> vProjLines; bool bHitSolid = false;
 			bool bHitTarget = false;
 
-			// Neckbreaker: iterate roll angles (silent aim only)
+			// Neckbreaker: if roll 0 fails, try different roll angles to bypass obstructions (silent aim only)
 			bool bUseNeckbreaker = Vars::Aimbot::Projectile::Neckbreaker.Value && 
 				Vars::Aimbot::General::AimType.Value == Vars::Aimbot::General::AimTypeEnum::Silent;
-			if (bUseNeckbreaker)
+			
+			// Try roll 0 first
+			Vec3 vAngles; Aim(G::CurrentUserCmd->viewangles, { vPoint.m_tSolution.m_flPitch, vPoint.m_tSolution.m_flYaw, 0.f }, vAngles);
+			if (TestAngle(pLocal, pWeapon, tTarget, vPoint.m_vPoint, vAngles, i, bSplash, &bHitSolid, &vProjLines))
 			{
-				int iStep = Vars::Aimbot::Projectile::NeckbreakerStep.Value;
+				bHitTarget = true;
+				iLowestPriority = iPriority; flLowestDist = flDist;
+				vAngleTo = vAngles, vPredicted = tTarget.m_vPos, vTarget = vOriginalPoint;
+				m_flTimeTo = vPoint.m_tSolution.m_flTime + m_tInfo.m_flLatency;
+				m_vPlayerPath = vPlayerPath;
+				m_vProjectilePath = vProjLines;
+			}
+			// If roll 0 failed and neckbreaker is enabled, search for working roll angle
+			else if (bUseNeckbreaker)
+			{
+				const int iStep = Vars::Aimbot::Projectile::NeckbreakerStep.Value;
 				
-				for (int iRoll = 0; iRoll < 360; iRoll += iStep)
+				// Search through roll angles using configured step size
+				for (int iRoll = iStep; iRoll < 360; iRoll += iStep)
 				{
-					Vec3 vAngles; Aim(G::CurrentUserCmd->viewangles, { vPoint.m_tSolution.m_flPitch, vPoint.m_tSolution.m_flYaw, static_cast<float>(iRoll) }, vAngles);
-					vAngles.z = static_cast<float>(iRoll);
+					Vec3 vRollAngles;
+					Aim(G::CurrentUserCmd->viewangles, { vPoint.m_tSolution.m_flPitch, vPoint.m_tSolution.m_flYaw, static_cast<float>(iRoll) }, vRollAngles);
+					vRollAngles.z = static_cast<float>(iRoll);
 					
-					if (TestAngle(pLocal, pWeapon, tTarget, vPoint.m_vPoint, vAngles, i, bSplash, &bHitSolid, &vProjLines))
+					if (TestAngle(pLocal, pWeapon, tTarget, vPoint.m_vPoint, vRollAngles, i, bSplash, &bHitSolid, &vProjLines))
 					{
 						bHitTarget = true;
 						iLowestPriority = iPriority; flLowestDist = flDist;
-						vAngleTo = vAngles, vPredicted = tTarget.m_vPos, vTarget = vOriginalPoint;
+						vAngleTo = vRollAngles, vPredicted = tTarget.m_vPos, vTarget = vOriginalPoint;
 						m_flTimeTo = vPoint.m_tSolution.m_flTime + m_tInfo.m_flLatency;
 						m_vPlayerPath = vPlayerPath;
 						m_vProjectilePath = vProjLines;
 						break;
 					}
-				}
-			}
-			else
-			{
-				Vec3 vAngles; Aim(G::CurrentUserCmd->viewangles, { vPoint.m_tSolution.m_flPitch, vPoint.m_tSolution.m_flYaw, 0.f }, vAngles);
-				if (TestAngle(pLocal, pWeapon, tTarget, vPoint.m_vPoint, vAngles, i, bSplash, &bHitSolid, &vProjLines))
-				{
-					bHitTarget = true;
-					iLowestPriority = iPriority; flLowestDist = flDist;
-					vAngleTo = vAngles, vPredicted = tTarget.m_vPos, vTarget = vOriginalPoint;
-					m_flTimeTo = vPoint.m_tSolution.m_flTime + m_tInfo.m_flLatency;
-					m_vPlayerPath = vPlayerPath;
-					m_vProjectilePath = vProjLines;
 				}
 			}
 
@@ -1197,26 +1203,34 @@ bool CAmalgamAimbotProjectile::Aim(Vec3 vCurAngle, Vec3 vToAngle, Vec3& vOut, in
 	return bReturn;
 }
 
-void CAmalgamAimbotProjectile::Aim(CUserCmd* pCmd, Vec3& vAngle, int iMethod)
+void CAmalgamAimbotProjectile::Aim(CUserCmd* pCmd, Vec3& vAngle, int iMethod, bool bIsFiring)
 {
 	Vec3 vOut;
 	Aim(pCmd->viewangles, vAngle, vOut, iMethod);
 	
-	H::AimUtils->FixMovement(pCmd, vOut);
-	pCmd->viewangles = vOut;
-	
 	switch (iMethod)
 	{
 	case Vars::Aimbot::General::AimTypeEnum::Plain:
+		H::AimUtils->FixMovement(pCmd, vOut);
+		pCmd->viewangles = vOut;
 		I::EngineClient->SetViewAngles(vOut);
 		break;
 	case Vars::Aimbot::General::AimTypeEnum::Silent:
-		G::bSilentAngles = true;
+		// For silent aim, only change angles on the tick we actually fire
+		// This matches the original AimbotProjectile behavior
+		if (bIsFiring && G::bCanPrimaryAttack)
+		{
+			H::AimUtils->FixMovement(pCmd, vOut);
+			pCmd->viewangles = vOut;
+			G::bPSilentAngles = true;
+		}
 		break;
 	case Vars::Aimbot::General::AimTypeEnum::Locking:
 	case Vars::Aimbot::General::AimTypeEnum::Smooth:
 	case Vars::Aimbot::General::AimTypeEnum::Assistive:
 	default:
+		H::AimUtils->FixMovement(pCmd, vOut);
+		pCmd->viewangles = vOut;
 		I::EngineClient->SetViewAngles(vOut);
 		break;
 	}
@@ -1269,7 +1283,8 @@ bool CAmalgamAimbotProjectile::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeap
 			G::AimTarget = { tTarget.m_pEntity->entindex(), I::GlobalVars->tickcount, 0 };
 			G::nTargetIndex = tTarget.m_pEntity->entindex();
 			G::nTargetIndexEarly = tTarget.m_pEntity->entindex();
-			Aim(pCmd, tTarget.m_vAngleTo);
+			// For smooth/assistive aim (iResult == 2), always apply angles
+			Aim(pCmd, tTarget.m_vAngleTo, Vars::Aimbot::General::AimType.Value, true);
 			break;
 		}
 
@@ -1288,7 +1303,11 @@ bool CAmalgamAimbotProjectile::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeap
 			}
 		}
 
+		// Determine if we're actually firing this tick
+		const bool bIsFiring = (pCmd->buttons & IN_ATTACK) && G::bCanPrimaryAttack;
+		
 		F::AmalgamAimbot.m_bRan = G::Attacking = SDK::IsAttacking(pLocal, pWeapon, pCmd, true);
+		G::bFiring = bIsFiring;
 
 		// Draw paths only on the actual firing tick
 		// Track when we transition from "can't fire" to "firing" to detect actual shots
@@ -1334,7 +1353,7 @@ bool CAmalgamAimbotProjectile::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeap
 			}
 		}
 
-		Aim(pCmd, tTarget.m_vAngleTo);
+		Aim(pCmd, tTarget.m_vAngleTo, Vars::Aimbot::General::AimType.Value, bIsFiring);
 		return true;
 	}
 
@@ -1369,7 +1388,7 @@ void CAmalgamAimbotProjectile::SetupInfo(C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 		return;
 	
 	m_tInfo = { pLocal, pWeapon };
-	m_tInfo.m_vLocalEye = pLocal->GetShootPos();
+	m_tInfo.m_vLocalEye = F::Ticks.GetShootPos(); // Use predicted shoot pos that accounts for CrouchWhileAirborne
 	m_tInfo.m_flLatency = F::Backtrack.GetReal() + TICKS_TO_TIME(F::Backtrack.GetAnticipatedChoke());
 
 	Vec3 vVelocity = F::ProjSim.GetVelocity();

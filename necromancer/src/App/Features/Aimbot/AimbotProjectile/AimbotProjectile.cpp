@@ -593,18 +593,8 @@ void CAimbotProjectile::OffsetPlayerPosition(C_TFWeaponBase* pWeapon, Vec3& vPos
 			case TF_WEAPON_GRENADELAUNCHER:
 			case TF_WEAPON_CANNON:
 			{
-				if (bOnGround)
-				{
-					vPos.z += (flMaxZ * 0.2f);
-					m_LastAimPos = 0;
-				}
-
-				else
-				{
-					vPos.z += (flMaxZ * 0.5f);
-					m_LastAimPos = 1;
-				}
-
+				vPos.z += (flMaxZ * 0.5f);
+				m_LastAimPos = 1;
 				break;
 			}
 			case TF_WEAPON_PIPEBOMBLAUNCHER:
@@ -847,20 +837,17 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 			if ((nTargetTick == nTick || nTargetTick == nTick - 1))
 			{
 				// Helper to get splash radius for weapon
-				// splash radius is 146 for most weapons, but can be modified by attributes
+				// Only sticky launcher and flare guns use splashbot
 				auto getSplashRadius = [&]() -> float
 					{
 						float flRadius = 0.0f;
 						switch (pWeapon->GetWeaponID())
 						{
 						case TF_WEAPON_PIPEBOMBLAUNCHER:
-						case TF_WEAPON_GRENADELAUNCHER:
-						case TF_WEAPON_CANNON:
 							flRadius = 146.0f;
 							break;
 						case TF_WEAPON_FLAREGUN:
 						case TF_WEAPON_FLAREGUN_REVENGE:
-							// Scorch Shot has splash
 							flRadius = 110.0f;
 							break;
 						default:
@@ -1029,14 +1016,13 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 		float flTimeToTarget = 0.0f;
 
 		// Helper to get splash radius for weapon (same as player version)
+		// Only sticky launcher and flare guns use splashbot
 		auto getSplashRadius = [&]() -> float
 			{
 				float flRadius = 0.0f;
 				switch (pWeapon->GetWeaponID())
 				{
 				case TF_WEAPON_PIPEBOMBLAUNCHER:
-				case TF_WEAPON_GRENADELAUNCHER:
-				case TF_WEAPON_CANNON:
 					flRadius = 146.0f;
 					break;
 				case TF_WEAPON_FLAREGUN:
