@@ -4,6 +4,8 @@
 
 #include "../CFG.h"
 
+#include <vector>
+
 void CMovementSimulation::CPlayerDataBackup::Store(C_TFPlayer* pPlayer)
 {
 	m_vecOrigin = pPlayer->m_vecOrigin();
@@ -107,6 +109,230 @@ void CMovementSimulation::CPlayerDataBackup::Restore(C_TFPlayer* pPlayer)
 	pPlayer->_condition_bits() = _condition_bits;
 }
 
+void CMovementSimulation::AnalyzeMovementPattern(C_TFPlayer* pPlayer)
+{
+	m_MovementAnalysis = {};
+	
+	if (!pPlayer || !F::LagRecords->HasRecords(pPlayer))
+		return;
+	
+	// Get more records for better pattern analysis
+	const LagRecord_t* records[8] = {};
+	int nValidRecords = 0;
+	
+	for (int i = 0; i < 8; i++)
+	{
+		records[i] = F::LagRecords->GetRecord(pPlayer, i);
+		if (records[i])
+			nValidRecords++;
+	}
+	
+	if (nValidRecords < 4)
+		return;
+	
+	// Calculate yaw angles and speeds for each record
+	float yaws[8] = {};
+	float speeds[8] = {};
+	float yawDeltas[7] = {};  // Differences between consecutive yaws
+	
+	for (int i = 0; i < nValidRecords; i++)
+	{
+		if (records[i])
+		{
+			yaws[i] = Math::VelocityToAngles(records[i]->Velocity).y;
+			speeds[i] = records[i]->Velocity.Length2D();
+		}
+	}
+	
+	// Calculate yaw deltas (how much direction changed each tick)
+	int nSignChanges = 0;
+	int nLastSign = 0;
+	float flTotalYawChange = 0.0f;
+	std::vector<int> directionChangeIndices;
+	
+	for (int i = 0; i < nValidRecords - 1; i++)
+	{
+		yawDeltas[i] = Math::NormalizeAngle(yaws[i] - yaws[i + 1]);
+		flTotalYawChange += fabsf(yawDeltas[i]);
+		
+		// Track sign changes (direction reversals)
+		int nCurrentSign = (yawDeltas[i] > 0.5f) ? 1 : ((yawDeltas[i] < -0.5f) ? -1 : 0);
+		
+		if (nCurrentSign != 0 && nLastSign != 0 && nCurrentSign != nLastSign)
+		{
+			nSignChanges++;
+			directionChangeIndices.push_back(i);
+		}
+		
+		if (nCurrentSign != 0)
+			nLastSign = nCurrentSign;
+	}
+	
+	// Calculate average speed and acceleration
+	float flAvgSpeed = 0.0f;
+	float flSpeedChange = 0.0f;
+	
+	for (int i = 0; i < nValidRecords; i++)
+		flAvgSpeed += speeds[i];
+	flAvgSpeed /= nValidRecords;
+	
+	if (nValidRecords >= 2)
+		flSpeedChange = speeds[0] - speeds[nValidRecords - 1];
+	
+	m_MovementAnalysis.flAvgSpeed = flAvgSpeed;
+	m_MovementAnalysis.flAcceleration = flSpeedChange / (nValidRecords * TICK_INTERVAL);
+	m_MovementAnalysis.flAvgYawRate = flTotalYawChange / (nValidRecords - 1);
+	
+	// Detect zig-zag pattern (ADAD strafing)
+	// Characteristics: multiple direction reversals, consistent timing, maintained speed
+	if (nSignChanges >= 2 && flAvgSpeed > m_MoveData.m_flMaxSpeed * 0.5f)
+	{
+		// Calculate average period between direction changes
+		float flAvgPeriod = 0.0f;
+		if (directionChangeIndices.size() >= 2)
+		{
+			for (size_t i = 1; i < directionChangeIndices.size(); i++)
+			{
+				flAvgPeriod += (directionChangeIndices[i] - directionChangeIndices[i - 1]);
+			}
+			flAvgPeriod /= (directionChangeIndices.size() - 1);
+		}
+		else if (!directionChangeIndices.empty())
+		{
+			flAvgPeriod = static_cast<float>(directionChangeIndices[0] + 1);
+		}
+		
+		// Calculate average amplitude (how sharp the turns are)
+		float flAvgAmplitude = 0.0f;
+		int nAmplitudeSamples = 0;
+		for (int i = 0; i < nValidRecords - 1; i++)
+		{
+			if (fabsf(yawDeltas[i]) > 0.5f)
+			{
+				flAvgAmplitude += fabsf(yawDeltas[i]);
+				nAmplitudeSamples++;
+			}
+		}
+		if (nAmplitudeSamples > 0)
+			flAvgAmplitude /= nAmplitudeSamples;
+		
+		// Zig-zag detection: need consistent reversals with reasonable period
+		if (flAvgPeriod > 0.0f && flAvgPeriod < 20.0f && flAvgAmplitude > 1.0f)
+		{
+			m_MovementAnalysis.Pattern = EMovementPattern::ZigZag;
+			m_MovementAnalysis.flZigZagPeriod = flAvgPeriod;
+			m_MovementAnalysis.flZigZagAmplitude = flAvgAmplitude;
+			
+			// Determine current phase and direction
+			if (!directionChangeIndices.empty())
+			{
+				m_MovementAnalysis.nZigZagPhase = directionChangeIndices[0];
+				m_MovementAnalysis.flNextDirectionChange = flAvgPeriod - m_MovementAnalysis.nZigZagPhase;
+				
+				// Current direction based on most recent yaw delta
+				m_MovementAnalysis.nZigZagDirection = (yawDeltas[0] > 0.0f) ? 1 : -1;
+			}
+			
+			// Confidence based on consistency of the pattern
+			float flPeriodVariance = 0.0f;
+			if (directionChangeIndices.size() >= 2)
+			{
+				for (size_t i = 1; i < directionChangeIndices.size(); i++)
+				{
+					float flPeriod = static_cast<float>(directionChangeIndices[i] - directionChangeIndices[i - 1]);
+					flPeriodVariance += fabsf(flPeriod - flAvgPeriod);
+				}
+				flPeriodVariance /= (directionChangeIndices.size() - 1);
+			}
+			
+			// Lower variance = higher confidence
+			m_MovementAnalysis.flConfidence = std::clamp(1.0f - (flPeriodVariance / flAvgPeriod), 0.3f, 1.0f);
+			return;
+		}
+	}
+	
+	// Detect counter-strafe (rapid deceleration)
+	if (flSpeedChange > flAvgSpeed * 0.3f && speeds[0] < speeds[nValidRecords - 1] * 0.7f)
+	{
+		m_MovementAnalysis.Pattern = EMovementPattern::CounterStrafe;
+		m_MovementAnalysis.flConfidence = 0.8f;
+		return;
+	}
+	
+	// Detect acceleration (speeding up)
+	if (flSpeedChange < -flAvgSpeed * 0.2f && speeds[0] > speeds[nValidRecords - 1])
+	{
+		m_MovementAnalysis.Pattern = EMovementPattern::Acceleration;
+		m_MovementAnalysis.flConfidence = 0.7f;
+		return;
+	}
+	
+	// Detect consistent turning
+	bool bConsistentTurn = true;
+	int nTurnDirection = 0;
+	for (int i = 0; i < nValidRecords - 1 && bConsistentTurn; i++)
+	{
+		if (fabsf(yawDeltas[i]) > 0.5f)
+		{
+			int nDir = (yawDeltas[i] > 0) ? 1 : -1;
+			if (nTurnDirection == 0)
+				nTurnDirection = nDir;
+			else if (nDir != nTurnDirection)
+				bConsistentTurn = false;
+		}
+	}
+	
+	if (bConsistentTurn && nTurnDirection != 0 && m_MovementAnalysis.flAvgYawRate > 1.0f)
+	{
+		m_MovementAnalysis.Pattern = EMovementPattern::Turning;
+		m_MovementAnalysis.flYawTurnRate = (nTurnDirection > 0) ? m_MovementAnalysis.flAvgYawRate : -m_MovementAnalysis.flAvgYawRate;
+		m_MovementAnalysis.flConfidence = 0.75f;
+		return;
+	}
+	
+	// Default: straight line movement
+	if (flAvgSpeed > 10.0f && m_MovementAnalysis.flAvgYawRate < 2.0f)
+	{
+		m_MovementAnalysis.Pattern = EMovementPattern::Straight;
+		m_MovementAnalysis.flConfidence = 0.6f;
+	}
+}
+
+void CMovementSimulation::ApplyZigZagPrediction()
+{
+	if (m_MovementAnalysis.Pattern != EMovementPattern::ZigZag)
+		return;
+	
+	// Calculate where we are in the zig-zag cycle
+	float flPhaseInCycle = fmodf(m_MovementAnalysis.nZigZagPhase + m_nSimulatedTicks, m_MovementAnalysis.flZigZagPeriod);
+	
+	// Predict if we should flip direction
+	// Direction changes happen at period boundaries
+	float flPrevPhase = fmodf(m_MovementAnalysis.nZigZagPhase + m_nSimulatedTicks - 1, m_MovementAnalysis.flZigZagPeriod);
+	
+	// Check if we crossed a period boundary (direction change)
+	if (flPhaseInCycle < flPrevPhase || m_nSimulatedTicks == 0)
+	{
+		// Flip direction at period boundaries
+		if (m_nSimulatedTicks > 0)
+			m_MovementAnalysis.nZigZagDirection *= -1;
+	}
+	
+	// Apply the predicted yaw change based on current direction and amplitude
+	float flYawChange = m_MovementAnalysis.flZigZagAmplitude * m_MovementAnalysis.nZigZagDirection;
+	
+	// Scale by confidence
+	flYawChange *= m_MovementAnalysis.flConfidence;
+	
+	// Apply to view angles
+	m_MoveData.m_vecViewAngles.y += flYawChange;
+	
+	// Also adjust side move to simulate the strafe input
+	// When turning right (positive yaw change), player is pressing A (left strafe)
+	// When turning left (negative yaw change), player is pressing D (right strafe)
+	m_MoveData.m_flSideMove = -m_MovementAnalysis.nZigZagDirection * 450.0f * m_MovementAnalysis.flConfidence;
+}
+
 void CMovementSimulation::SetupMoveData(C_TFPlayer* pPlayer, CMoveData* pMoveData)
 {
 	if (!pPlayer || !pMoveData)
@@ -159,14 +385,15 @@ void CMovementSimulation::SetupMoveData(C_TFPlayer* pPlayer, CMoveData* pMoveDat
 	pMoveData->m_flConstraintSpeedFactor = pPlayer->m_flConstraintSpeedFactor();
 
 	m_flYawTurnRate = 0.0f;
+	m_bCounterStrafing = false;
+	m_flCounterStrafeDecelRate = 0.0f;
+	m_nSimulatedTicks = 0;
+	
+	// Analyze movement pattern for intelligent prediction
+	AnalyzeMovementPattern(pPlayer);
 
 	if (CFG::Aimbot_Projectile_Ground_Strafe_Prediction && (m_PlayerDataBackup.m_fFlags & FL_ONGROUND) && F::LagRecords->HasRecords(pPlayer))
 	{
-		if (m_MoveData.m_vecVelocity.Length2D() < (m_MoveData.m_flMaxSpeed * 0.85f))
-		{
-			return;
-		}
-
 		const auto pRecord0 = F::LagRecords->GetRecord(pPlayer, 0);
 		const auto pRecord1 = F::LagRecords->GetRecord(pPlayer, 1);
 		const auto pRecord2 = F::LagRecords->GetRecord(pPlayer, 2);
@@ -175,28 +402,70 @@ void CMovementSimulation::SetupMoveData(C_TFPlayer* pPlayer, CMoveData* pMoveDat
 
 		if (pRecord0 && pRecord1 && pRecord2 && pRecord3 && pRecord4)
 		{
-			const float flYaw0 = Math::VelocityToAngles(pRecord0->Velocity).y;
-			const float flYaw1 = Math::VelocityToAngles(pRecord1->Velocity).y;
-			const float flYaw2 = Math::VelocityToAngles(pRecord2->Velocity).y;
-			const float flYaw3 = Math::VelocityToAngles(pRecord3->Velocity).y;
-			const float flYaw4 = Math::VelocityToAngles(pRecord4->Velocity).y;
+			// Get speed history for counter-strafe detection
+			const float flSpeed0 = pRecord0->Velocity.Length2D();
+			const float flSpeed1 = pRecord1->Velocity.Length2D();
+			const float flSpeed2 = pRecord2->Velocity.Length2D();
+			const float flSpeed3 = pRecord3->Velocity.Length2D();
 
-			const auto inc{ flYaw4 > flYaw3 && flYaw3 > flYaw2 && flYaw2 > flYaw1 && flYaw1 > flYaw0 };
-			const auto dec{ flYaw4 < flYaw3 && flYaw3 < flYaw2 && flYaw2 < flYaw1 && flYaw1 < flYaw0 };
+			// Counter-strafe detection: player is rapidly decelerating while maintaining direction
+			// This happens when pressing opposite movement key to stop quickly
+			const float flDecel0 = flSpeed1 - flSpeed0; // negative = decelerating
+			const float flDecel1 = flSpeed2 - flSpeed1;
+			const float flDecel2 = flSpeed3 - flSpeed2;
 
-			if (!inc && !dec)
+			// Check for consistent deceleration pattern (counter-strafing)
+			// TF2 friction alone gives ~4 units/tick decel, counter-strafe gives much more (~15-30+)
+			const float flAvgDecel = (flDecel0 + flDecel1 + flDecel2) / 3.0f;
+			const float flFrictionDecel = m_MoveData.m_flMaxSpeed * 4.0f * TICK_INTERVAL; // approximate friction decel
+
+			// Detect counter-strafe: consistent strong deceleration beyond normal friction
+			if (flAvgDecel < -flFrictionDecel * 1.5f && flDecel0 < 0.0f && flDecel1 < 0.0f && flDecel2 < 0.0f)
 			{
-				return;
+				// Check if direction is roughly maintained (not turning while counter-strafing)
+				const float flYaw0 = Math::VelocityToAngles(pRecord0->Velocity).y;
+				const float flYaw1 = Math::VelocityToAngles(pRecord1->Velocity).y;
+				const float flYawDelta = fabsf(Math::NormalizeAngle(flYaw0 - flYaw1));
+
+				if (flYawDelta < 15.0f) // direction roughly maintained
+				{
+					m_bCounterStrafing = true;
+					m_flCounterStrafeDecelRate = flAvgDecel;
+
+					// Predict when they'll stop: time = current_speed / decel_rate
+					// Reduce forward move to simulate the stop
+					const float flCurrentSpeed = m_MoveData.m_vecVelocity.Length2D();
+					if (flCurrentSpeed > 10.0f && fabsf(flAvgDecel) > 0.1f)
+					{
+						const float flTicksToStop = flCurrentSpeed / fabsf(flAvgDecel);
+						// Scale forward move based on how close to stopping
+						m_MoveData.m_flForwardMove *= std::clamp(flTicksToStop / 10.0f, 0.0f, 1.0f);
+					}
+				}
 			}
 
-			const float flYawRate = (((flYaw0 - flYaw1) + (flYaw2 - flYaw3) + (flYaw3 - flYaw4)) / 3) / (TICK_INTERVAL * 50.0f);
-
-			if (fabsf(flYawRate) < 1.0f)
+			// Only do turn rate prediction if not counter-strafing and moving fast enough
+			if (!m_bCounterStrafing && m_MoveData.m_vecVelocity.Length2D() >= (m_MoveData.m_flMaxSpeed * 0.85f))
 			{
-				return;
-			}
+				const float flYaw0 = Math::VelocityToAngles(pRecord0->Velocity).y;
+				const float flYaw1 = Math::VelocityToAngles(pRecord1->Velocity).y;
+				const float flYaw2 = Math::VelocityToAngles(pRecord2->Velocity).y;
+				const float flYaw3 = Math::VelocityToAngles(pRecord3->Velocity).y;
+				const float flYaw4 = Math::VelocityToAngles(pRecord4->Velocity).y;
 
-			m_flYawTurnRate = std::clamp(flYawRate, -4.3f, 4.3f);
+				const auto inc{ flYaw4 > flYaw3 && flYaw3 > flYaw2 && flYaw2 > flYaw1 && flYaw1 > flYaw0 };
+				const auto dec{ flYaw4 < flYaw3 && flYaw3 < flYaw2 && flYaw2 < flYaw1 && flYaw1 < flYaw0 };
+
+				if (inc || dec)
+				{
+					const float flYawRate = (((flYaw0 - flYaw1) + (flYaw2 - flYaw3) + (flYaw3 - flYaw4)) / 3) / (TICK_INTERVAL * 50.0f);
+
+					if (fabsf(flYawRate) >= 1.0f)
+					{
+						m_flYawTurnRate = std::clamp(flYawRate, -4.3f, 4.3f);
+					}
+				}
+			}
 		}
 	}
 
@@ -321,6 +590,10 @@ void CMovementSimulation::Restore()
 
 	m_pPlayer = nullptr;
 	m_flYawTurnRate = 0.0f;
+	m_bCounterStrafing = false;
+	m_flCounterStrafeDecelRate = 0.0f;
+	m_nSimulatedTicks = 0;
+	m_MovementAnalysis = {};
 
 	std::memset(&m_MoveData, 0, sizeof(CMoveData));
 	std::memset(&m_PlayerDataBackup, 0, sizeof(CPlayerDataBackup));
@@ -343,17 +616,105 @@ void CMovementSimulation::RunTick(float flTimeToTarget)
 		return;
 	}
 
-	if (CFG::Aimbot_Projectile_Ground_Strafe_Prediction && (m_PlayerDataBackup.m_fFlags & FL_ONGROUND) && (m_pPlayer->m_fFlags() & FL_ONGROUND))
+	const bool bOnGround = (m_PlayerDataBackup.m_fFlags & FL_ONGROUND) && (m_pPlayer->m_fFlags() & FL_ONGROUND);
+	const bool bInAir = !(m_PlayerDataBackup.m_fFlags & FL_ONGROUND) && !(m_pPlayer->m_fFlags() & FL_ONGROUND);
+
+	// Apply pattern-based prediction for ground movement
+	if (CFG::Aimbot_Projectile_Ground_Strafe_Prediction && bOnGround)
 	{
-		m_MoveData.m_vecViewAngles.y += m_flYawTurnRate * Math::RemapValClamped(flTimeToTarget, 0.0f, 1.0f, 1.0f, 0.5f);
+		switch (m_MovementAnalysis.Pattern)
+		{
+		case EMovementPattern::ZigZag:
+			// Apply zig-zag prediction - predicts ADAD strafing
+			ApplyZigZagPrediction();
+			break;
+			
+		case EMovementPattern::CounterStrafe:
+			// Apply counter-strafe deceleration
+			if (m_bCounterStrafing)
+			{
+				const float flCurrentSpeed = m_MoveData.m_vecVelocity.Length2D();
+				if (flCurrentSpeed > 1.0f)
+				{
+					const float flDecelThisTick = fabsf(m_flCounterStrafeDecelRate);
+					float flNewSpeed = flCurrentSpeed - flDecelThisTick;
+					
+					if (flNewSpeed < 1.0f)
+					{
+						m_MoveData.m_vecVelocity.x = 0.0f;
+						m_MoveData.m_vecVelocity.y = 0.0f;
+					}
+					else
+					{
+						const float flScale = flNewSpeed / flCurrentSpeed;
+						m_MoveData.m_vecVelocity.x *= flScale;
+						m_MoveData.m_vecVelocity.y *= flScale;
+					}
+				}
+			}
+			break;
+			
+		case EMovementPattern::Turning:
+			// Apply consistent turn rate
+			m_MoveData.m_vecViewAngles.y += m_MovementAnalysis.flYawTurnRate * Math::RemapValClamped(flTimeToTarget, 0.0f, 1.0f, 1.0f, 0.5f);
+			break;
+			
+		case EMovementPattern::Acceleration:
+			// Player is speeding up - predict they'll reach max speed
+			{
+				const float flCurrentSpeed = m_MoveData.m_vecVelocity.Length2D();
+				const float flTargetSpeed = std::min(flCurrentSpeed + m_MovementAnalysis.flAcceleration * TICK_INTERVAL, m_MoveData.m_flMaxSpeed);
+				if (flCurrentSpeed > 0.1f)
+				{
+					const float flScale = flTargetSpeed / flCurrentSpeed;
+					m_MoveData.m_vecVelocity.x *= flScale;
+					m_MoveData.m_vecVelocity.y *= flScale;
+				}
+			}
+			break;
+			
+		case EMovementPattern::Straight:
+		case EMovementPattern::None:
+		default:
+			// Fallback to original turn rate prediction if we have one
+			if (fabsf(m_flYawTurnRate) > 0.1f)
+			{
+				m_MoveData.m_vecViewAngles.y += m_flYawTurnRate * Math::RemapValClamped(flTimeToTarget, 0.0f, 1.0f, 1.0f, 0.5f);
+			}
+			break;
+		}
+	}
+	// Legacy counter-strafe handling for when pattern detection didn't trigger
+	else if (m_bCounterStrafing && bOnGround)
+	{
+		const float flCurrentSpeed = m_MoveData.m_vecVelocity.Length2D();
+		if (flCurrentSpeed > 1.0f)
+		{
+			const float flDecelThisTick = fabsf(m_flCounterStrafeDecelRate);
+			float flNewSpeed = flCurrentSpeed - flDecelThisTick;
+			
+			if (flNewSpeed < 1.0f)
+			{
+				m_MoveData.m_vecVelocity.x = 0.0f;
+				m_MoveData.m_vecVelocity.y = 0.0f;
+			}
+			else
+			{
+				const float flScale = flNewSpeed / flCurrentSpeed;
+				m_MoveData.m_vecVelocity.x *= flScale;
+				m_MoveData.m_vecVelocity.y *= flScale;
+			}
+		}
 	}
 
-	if (CFG::Aimbot_Projectile_Air_Strafe_Prediction && !(m_PlayerDataBackup.m_fFlags & FL_ONGROUND) && !(m_pPlayer->m_fFlags() & FL_ONGROUND))
+	// Air strafe prediction
+	if (CFG::Aimbot_Projectile_Air_Strafe_Prediction && bInAir)
 	{
 		m_MoveData.m_vecViewAngles.y += m_flYawTurnRate;
 	}
 
 	m_bRunning = true;
+	m_nSimulatedTicks++;
 
 	I::GameMovement->ProcessMovement(m_pPlayer, &m_MoveData);
 
