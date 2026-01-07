@@ -415,9 +415,61 @@ bool CAimbotProjectile::CalcProjAngle(const Vec3& vFrom, const Vec3& vTo, Vec3& 
 	return true;
 }
 
-void CAimbotProjectile::OffsetPlayerPosition(C_TFWeaponBase* pWeapon, Vec3& vPos, C_TFPlayer* pPlayer, bool bDucked, bool bOnGround)
+void CAimbotProjectile::OffsetPlayerPosition(C_TFWeaponBase* pWeapon, Vec3& vPos, C_TFPlayer* pPlayer, bool bDucked, bool bOnGround, const Vec3& vLocalPos)
 {
+	const Vec3 vMins = pPlayer->m_vecMins();
+	const Vec3 vMaxs = pPlayer->m_vecMaxs();
 	const float flMaxZ{ (bDucked ? 62.0f : 82.0f) * pPlayer->m_flModelScale() };
+
+	// Helper lambda for huntsman advanced head aim with lerp
+	auto ApplyHuntsmanHeadAim = [&]() -> Vec3
+	{
+		Vec3 vOffset = {};
+		
+		if (!CFG::Aimbot_Projectile_Advanced_Head_Aim)
+		{
+			// Simple head aim - just use top of bbox
+			vOffset.z = flMaxZ * 0.92f;
+			return vOffset;
+		}
+
+		// Get head hitbox position relative to player origin
+		const Vec3 vHeadPos = pPlayer->GetHitboxPos(HITBOX_HEAD);
+		Vec3 vHeadOffset = vHeadPos - pPlayer->m_vecOrigin();
+
+		// Calculate "low" factor - how much the target is above the shooter
+		// This affects how much we lerp towards the top of the bbox
+		float flLow = 0.0f;
+		Vec3 vTargetEye = vPos + Vec3(0, 0, flMaxZ * 0.85f); // Approximate target eye position
+		Vec3 vDelta = vTargetEye - vLocalPos;
+		
+		if (vDelta.z > 0)
+		{
+			float flXY = vDelta.Length2D();
+			if (flXY > 0.0f)
+				flLow = Math::RemapValClamped(vDelta.z / flXY, 0.0f, 0.5f, 0.0f, 1.0f);
+			else
+				flLow = 1.0f;
+		}
+
+		// Interpolate lerp and add values based on low factor
+		float flLerp = (CFG::Aimbot_Projectile_Huntsman_Lerp + 
+			(CFG::Aimbot_Projectile_Huntsman_Lerp_Low - CFG::Aimbot_Projectile_Huntsman_Lerp) * flLow) / 100.0f;
+		float flAdd = CFG::Aimbot_Projectile_Huntsman_Add + 
+			(CFG::Aimbot_Projectile_Huntsman_Add_Low - CFG::Aimbot_Projectile_Huntsman_Add) * flLow;
+
+		// Apply add offset and lerp towards top of bbox
+		vHeadOffset.z += flAdd;
+		vHeadOffset.z = vHeadOffset.z + (vMaxs.z - vHeadOffset.z) * flLerp;
+
+		// Clamp to stay within bbox bounds
+		const float flClamp = CFG::Aimbot_Projectile_Huntsman_Clamp;
+		vHeadOffset.x = std::clamp(vHeadOffset.x, vMins.x + flClamp, vMaxs.x - flClamp);
+		vHeadOffset.y = std::clamp(vHeadOffset.y, vMins.y + flClamp, vMaxs.y - flClamp);
+		vHeadOffset.z = std::clamp(vHeadOffset.z, vMins.z + flClamp, vMaxs.z - flClamp);
+
+		return vHeadOffset;
+	};
 
 	switch (CFG::Aimbot_Projectile_Aim_Position)
 	{
@@ -440,14 +492,25 @@ void CAimbotProjectile::OffsetPlayerPosition(C_TFWeaponBase* pWeapon, Vec3& vPos
 	// Head
 	case 2:
 	{
-		if (CFG::Aimbot_Projectile_Advanced_Head_Aim)
+		if (pWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW)
+		{
+			// Use huntsman lerp for compound bow
+			Vec3 vOffset = ApplyHuntsmanHeadAim();
+			vPos.x += vOffset.x;
+			vPos.y += vOffset.y;
+			vPos.z += vOffset.z;
+		}
+		else if (CFG::Aimbot_Projectile_Advanced_Head_Aim)
 		{
 			const Vec3 vDelta = pPlayer->GetHitboxPos(HITBOX_HEAD) - pPlayer->m_vecOrigin();
 			vPos.x += vDelta.x;
 			vPos.y += vDelta.y;
+			vPos.z += (flMaxZ * 0.85f);
 		}
-
-		vPos.z += (flMaxZ * 0.85f);
+		else
+		{
+			vPos.z += (flMaxZ * 0.85f);
+		}
 		m_LastAimPos = 2;
 		break;
 	}
@@ -457,14 +520,11 @@ void CAimbotProjectile::OffsetPlayerPosition(C_TFWeaponBase* pWeapon, Vec3& vPos
 	{
 		if (pWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW)
 		{
-			if (CFG::Aimbot_Projectile_Advanced_Head_Aim)
-			{
-				const Vec3 vDelta = pPlayer->GetHitboxPos(HITBOX_HEAD) - pPlayer->m_vecOrigin();
-				vPos.x += vDelta.x;
-				vPos.y += vDelta.y;
-			}
-
-			vPos.z += (flMaxZ * 0.92f);
+			// Use huntsman lerp for compound bow
+			Vec3 vOffset = ApplyHuntsmanHeadAim();
+			vPos.x += vOffset.x;
+			vPos.y += vOffset.y;
+			vPos.z += vOffset.z;
 			m_LastAimPos = 2;
 		}
 
@@ -698,7 +758,7 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 
 			Vec3 vTarget = F::MovementSimulation->GetOrigin();
 
-			OffsetPlayerPosition(pWeapon, vTarget, pPlayer, bDucked, bOnGround);
+			OffsetPlayerPosition(pWeapon, vTarget, pPlayer, bDucked, bOnGround, vLocalPos);
 
 			float flTimeToTarget = 0.0f;
 
@@ -854,7 +914,7 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 
 						Vec3 vTargetMp = F::MovementSimulation->GetOrigin();
 
-						OffsetPlayerPosition(pWeapon, vTargetMp, pPlayer, bDucked, bOnGround);
+						OffsetPlayerPosition(pWeapon, vTargetMp, pPlayer, bDucked, bOnGround, vLocalPos);
 
 						CFG::Aimbot_Projectile_Aim_Position = nOld;
 

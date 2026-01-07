@@ -2586,7 +2586,8 @@ void CMenu::MainWindow()
 				CheckBox("No Spread", CFG::Aimbot_Projectile_NoSpread);
 				CheckBox("Midpoint Aim", CFG::Aimbot_Projectile_Midpoint_Aim);
 				CheckBox("Auto Double Donk", CFG::Aimbot_Projectile_Auto_Double_Donk);
-//				CheckBox("Advanced Head Aim", CFG::Aimbot_Projectile_Advanced_Head_Aim);
+				CheckBox("Advanced Head Aim", CFG::Aimbot_Projectile_Advanced_Head_Aim);
+				
 				CheckBox("Ground Strafe Prediction", CFG::Aimbot_Projectile_Ground_Strafe_Prediction);
 				CheckBox("Air Strafe Prediction", CFG::Aimbot_Projectile_Air_Strafe_Prediction);
 				CheckBox("Prioritize Feet", CFG::Aimbot_Amalgam_Projectile_Hitbox_PrioritizeFeet);

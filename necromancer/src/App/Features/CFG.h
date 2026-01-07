@@ -48,6 +48,13 @@ namespace CFG
 	CFGVAR(Aimbot_Projectile_NoSpread, true);
 	CFGVAR(Aimbot_Projectile_Auto_Double_Donk, true);
 	CFGVAR(Aimbot_Projectile_Advanced_Head_Aim, true);
+	
+	// Huntsman Advanced Head Aim Settings (lerp-based like Amalgam)
+	CFGVAR(Aimbot_Projectile_Huntsman_Lerp, 50.0f);      // Base lerp % towards top of bbox (0-100)
+	CFGVAR(Aimbot_Projectile_Huntsman_Lerp_Low, 100.0f); // Lerp % when target is above shooter (0-100)
+	CFGVAR(Aimbot_Projectile_Huntsman_Add, 3.0f);        // Base Z offset to add to head position
+	CFGVAR(Aimbot_Projectile_Huntsman_Add_Low, 0.0f);    // Z offset when target is above shooter
+	CFGVAR(Aimbot_Projectile_Huntsman_Clamp, 2.0f);      // Clamp distance from bbox edges
 	CFGVAR(Aimbot_Projectile_Ground_Strafe_Prediction, true);
 	CFGVAR(Aimbot_Projectile_Air_Strafe_Prediction, true);
 	CFGVAR(Aimbot_Projectile_BBOX_Multipoint, true);
