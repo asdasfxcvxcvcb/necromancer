@@ -6,6 +6,7 @@
 #include "../Features/Aimbot/AimbotProjectile/AimbotProjectile.h"
 #include "../Features/EnginePrediction/EnginePrediction.h"
 #include "../Features/Misc/Misc.h"
+#include "../Features/MiscVisuals/MiscVisuals.h"
 #include "../Features/RapidFire/RapidFire.h"
 #include "../Features/Triggerbot/Triggerbot.h"
 #include "../Features/Triggerbot/AutoVaccinator/AutoVaccinator.h"
@@ -101,6 +102,15 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 
 	if (!pCmd || !pCmd->command_number)
 		return CALL_ORIGINAL(ecx, flInputSampleTime, pCmd);
+
+	// Block player movement when freecam is active
+	if (F::MiscVisuals->IsFreecamActive())
+	{
+		pCmd->forwardmove = 0.0f;
+		pCmd->sidemove = 0.0f;
+		pCmd->upmove = 0.0f;
+		pCmd->buttons &= ~(IN_FORWARD | IN_BACK | IN_MOVELEFT | IN_MOVERIGHT | IN_JUMP | IN_DUCK);
+	}
 
 	// ============================================
 	// TAUNT DELAY HANDLING - Process pending taunt with tick delay

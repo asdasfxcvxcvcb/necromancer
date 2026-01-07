@@ -557,6 +557,10 @@ namespace CFG
 
 	CFGVAR(Visuals_Weather, 0); // 0 = Off, 1 = Rain, 2 = Light Rain
 
+	// Freecam
+	CFGVAR(Visuals_Freecam_Key, 0);
+	CFGVAR(Visuals_Freecam_Speed, 500.0f);
+
 #pragma endregion
 
 #pragma region Misc

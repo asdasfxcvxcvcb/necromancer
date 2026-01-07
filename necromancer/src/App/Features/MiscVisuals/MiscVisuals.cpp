@@ -693,4 +693,60 @@ void CMiscVisuals::CritIndicator()
 	F::CritHack->Draw();
 }
 
+void CMiscVisuals::Freecam(CViewSetup* pSetup)
+{
+	// Toggle freecam with key
+	if (!I::MatSystemSurface->IsCursorVisible() && !I::EngineVGui->IsGameUIVisible())
+	{
+		if (H::Input->IsPressed(CFG::Visuals_Freecam_Key))
+		{
+			m_bFreecamActive = !m_bFreecamActive;
+			
+			// Initialize position when enabling
+			if (m_bFreecamActive)
+			{
+				m_vFreecamPos = pSetup->origin;
+				m_vFreecamAngles = pSetup->angles;
+			}
+		}
+	}
+	
+	if (!m_bFreecamActive || !CFG::Visuals_Freecam_Key)
+		return;
+	
+	// Update angles from mouse input
+	m_vFreecamAngles = I::EngineClient->GetViewAngles();
+	
+	// Calculate movement direction
+	Vec3 vForward = {}, vRight = {}, vUp = {};
+	Math::AngleVectors(m_vFreecamAngles, &vForward, &vRight, &vUp);
+	
+	// Get movement input
+	float flSpeed = CFG::Visuals_Freecam_Speed * I::GlobalVars->frametime;
+	
+	// Speed boost with shift
+	if (GetAsyncKeyState(VK_SHIFT) & 0x8000)
+		flSpeed *= 2.0f;
+	
+	// WASD movement
+	if (GetAsyncKeyState('W') & 0x8000)
+		m_vFreecamPos = m_vFreecamPos + vForward * flSpeed;
+	if (GetAsyncKeyState('S') & 0x8000)
+		m_vFreecamPos = m_vFreecamPos - vForward * flSpeed;
+	if (GetAsyncKeyState('A') & 0x8000)
+		m_vFreecamPos = m_vFreecamPos - vRight * flSpeed;
+	if (GetAsyncKeyState('D') & 0x8000)
+		m_vFreecamPos = m_vFreecamPos + vRight * flSpeed;
+	
+	// Up/Down with space/ctrl
+	if (GetAsyncKeyState(VK_SPACE) & 0x8000)
+		m_vFreecamPos = m_vFreecamPos + Vec3(0, 0, flSpeed);
+	if (GetAsyncKeyState(VK_CONTROL) & 0x8000)
+		m_vFreecamPos = m_vFreecamPos - Vec3(0, 0, flSpeed);
+	
+	// Apply freecam view
+	pSetup->origin = m_vFreecamPos;
+	pSetup->angles = m_vFreecamAngles;
+}
+
 

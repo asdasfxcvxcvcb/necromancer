@@ -3433,6 +3433,13 @@ void CMenu::MainWindow()
 			}
 			GroupBoxEnd();
 
+			GroupBoxStart("Freecam", 150);
+			{
+				InputKey("Toggle Key", CFG::Visuals_Freecam_Key);
+				SliderFloat("Speed", CFG::Visuals_Freecam_Speed, 100.0f, 2000.0f, 50.0f, "%.0f");
+			}
+			GroupBoxEnd();
+
 			m_nCursorX += m_nLastGroupBoxW + (CFG::Menu_Spacing_X * 2);
 			m_nCursorY = anchor_y;
 
