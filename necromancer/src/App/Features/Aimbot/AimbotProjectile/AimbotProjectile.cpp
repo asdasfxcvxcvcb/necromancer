@@ -24,8 +24,8 @@ void DrawProjPath(const CUserCmd* pCmd, float time)
 	if (!F::ProjectileSim->Init(info))
 		return;
 
-	const auto& col = CFG::Color_Simulation_Projectile; // this method is so unorthodox
-	const int r = col.r, g = col.g, b = col.b;
+	const auto& col = CFG::Color_Simulation_Projectile; // this method is so unorthodox but it works so whatever
+	const int r = col.r, g = col.g, b = col.b; // thanks valve for making colors annoying
 
 	std::vector<Vec3> vPath;
 	vPath.reserve(TIME_TO_TICKS(time) + 1);
@@ -298,119 +298,176 @@ bool CAimbotProjectile::GetProjectileInfo(C_TFWeaponBase* pWeapon)
 	return m_CurProjInfo.Speed > 0.0f;
 }
 
-bool CAimbotProjectile::CalcProjAngle(const Vec3& vFrom, const Vec3& vTo, Vec3& vAngleOut, float& flTimeOut)
+// Helper to solve basic parabolic trajectory
+// i hate physics but here we are
+static bool SolveParabolic(const Vec3& vFrom, const Vec3& vTo, float flSpeed, float flGravity, float& flPitchOut, float& flYawOut, float& flTimeOut)
 {
-	const auto pWeapon = H::Entities->GetWeapon();
-	if (!pWeapon)
+	const Vec3 v = vTo - vFrom;
+	const float dx = v.Length2D();
+	const float dy = v.z;
+
+	if (dx < 0.001f)
 		return false;
 
-	const Vec3 v = vTo - vFrom;
-	const float dx = sqrt(v.x * v.x + v.y * v.y);
-	const float dy = v.z;
+	flYawOut = RAD2DEG(atan2f(v.y, v.x));
+
+	if (flGravity > 0.001f)
+	{
+		const float v2 = flSpeed * flSpeed;
+		const float v4 = v2 * v2;
+		const float root = v4 - flGravity * (flGravity * dx * dx + 2.0f * dy * v2);
+
+		if (root < 0.0f)
+			return false;
+
+		flPitchOut = -RAD2DEG(atanf((v2 - sqrtf(root)) / (flGravity * dx)));
+		flTimeOut = dx / (cosf(-DEG2RAD(flPitchOut)) * flSpeed);
+	}
+	else
+	{
+		const Vec3 vAngle = Math::CalcAngle(vFrom, vTo);
+		flPitchOut = vAngle.x;
+		flTimeOut = vFrom.DistTo(vTo) / flSpeed;
+	}
+
+	return true;
+}
+
+bool CAimbotProjectile::CalcProjAngle(const Vec3& vFrom, const Vec3& vTo, Vec3& vAngleOut, float& flTimeOut)
+{
+	const auto pLocal = H::Entities->GetLocal();
+	const auto pWeapon = H::Entities->GetWeapon();
+	if (!pWeapon || !pLocal)
+		return false;
+
 	float v0 = m_CurProjInfo.Speed;
 	const float g = SDKUtils::GetGravity() * m_CurProjInfo.GravityMod;
 
-	if (g)
-	{
-		if (m_CurProjInfo.Pipes)
-		{
-			if (v0 > k_flMaxVelocity)
-			{
-				v0 = k_flMaxVelocity;
-			}
-		}
+	if (m_CurProjInfo.Pipes && v0 > k_flMaxVelocity)
+		v0 = k_flMaxVelocity;
 
-		const auto root{ v0 * v0 * v0 * v0 - g * (g * dx * dx + 2.0f * dy * v0 * v0) };
-		if (root < 0.0f)
-		{
-			return false;
-		}
+	// First pass: calculate from eye position
+	float flPitch, flYaw, flTime;
+	if (!SolveParabolic(vFrom, vTo, v0, g, flPitch, flYaw, flTime))
+		return false;
 
-		vAngleOut = { -RAD2DEG(atanf((v0 * v0 - sqrtf(root)) / (g * dx))), RAD2DEG(atan2f(v.y, v.x)), 0.0f };
-		flTimeOut = dx / (cosf(-DEG2RAD(vAngleOut.x)) * v0);
-
-		if (m_CurProjInfo.Pipes)
-		{
-			//do 2nd pass for drag | TODO: Math > Magic
-
-			auto magic{ 0.0f };
-
-			if (pWeapon->GetWeaponID() == TF_WEAPON_GRENADELAUNCHER)
-			{
-				if (pWeapon->m_iItemDefinitionIndex() == Demoman_m_TheLochnLoad)
-				{
-					magic = 0.07f;
-				}
-
-				else
-				{
-					magic = 0.11f;
-				}
-			}
-
-			if (pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)
-			{
-				magic = 0.16f;
-			}
-
-			if (pWeapon->GetWeaponID() == TF_WEAPON_CANNON)
-			{
-				magic = 0.35f;
-			}
-
-			v0 -= (v0 * flTimeOut) * magic;
-
-			auto root{ v0 * v0 * v0 * v0 - g * (g * dx * dx + 2.0f * dy * v0 * v0) };
-
-			if (root < 0.0f)
-			{
-				return false;
-			}
-
-			vAngleOut = { -RAD2DEG(atanf((v0 * v0 - sqrtf(root)) / (g * dx))), RAD2DEG(atan2f(v.y, v.x)), 0.0f };
-			flTimeOut = dx / (cosf(-DEG2RAD(vAngleOut.x)) * v0);
-		}
-	}
-
-	else
-	{
-		vAngleOut = Math::CalcAngle(vFrom, vTo);
-		flTimeOut = vFrom.DistTo(vTo) / v0;
-	}
-
+	// For pipes, apply drag correction
+	// thanks kal you ass for making me figure this out
 	if (m_CurProjInfo.Pipes)
 	{
-		if (pWeapon->GetWeaponID() == TF_WEAPON_CANNON)
+		float magic = 0.0f; // yes its called magic, no i dont know why it works
+
+		if (pWeapon->GetWeaponID() == TF_WEAPON_GRENADELAUNCHER)
+			magic = (pWeapon->m_iItemDefinitionIndex() == Demoman_m_TheLochnLoad) ? 0.07f : 0.11f; // lochnload is special
+		else if (pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)
+			magic = 0.16f; // stickies are weird
+		else if (pWeapon->GetWeaponID() == TF_WEAPON_CANNON)
+			magic = 0.35f; // loose cannon is extra weird
+
+		float v0_adjusted = v0 - (v0 * flTime) * magic;
+
+		if (!SolveParabolic(vFrom, vTo, v0_adjusted, g, flPitch, flYaw, flTime))
+			return false;
+	}
+
+	// Second pass for projectiles with spawn offset (huntsman, crossbow, flares, etc.)
+	// This corrects for the fact that projectiles spawn from a different position than the eye
+	// i hate this shit but it makes huntsman actually hit at long range so whatever
+	const int nWeaponID = pWeapon->GetWeaponID();
+	const bool bNeedsOffsetCorrection = (nWeaponID == TF_WEAPON_COMPOUND_BOW ||
+		nWeaponID == TF_WEAPON_CROSSBOW ||
+		nWeaponID == TF_WEAPON_SHOTGUN_BUILDING_RESCUE ||
+		nWeaponID == TF_WEAPON_FLAREGUN ||
+		nWeaponID == TF_WEAPON_FLAREGUN_REVENGE ||
+		nWeaponID == TF_WEAPON_SYRINGEGUN_MEDIC ||
+		nWeaponID == TF_WEAPON_FLAME_BALL);
+
+	if (bNeedsOffsetCorrection)
+	{
+		// Get the projectile spawn offset
+		Vec3 vOffset;
+		if (nWeaponID == TF_WEAPON_COMPOUND_BOW)
+			vOffset = { 23.5f, 8.0f, -3.0f };
+		else if (nWeaponID == TF_WEAPON_CROSSBOW || nWeaponID == TF_WEAPON_SHOTGUN_BUILDING_RESCUE)
+			vOffset = { 23.5f, 8.0f, -3.0f };
+		else
+			vOffset = { 23.5f, 12.0f, (pLocal->m_fFlags() & FL_DUCKING) ? 8.0f : -3.0f };
+
+		// Calculate actual projectile spawn position using first-pass angles
+		Vec3 vFirstPassAngle = { flPitch, flYaw, 0.0f };
+		Vec3 vForward, vRight, vUp;
+		Math::AngleVectors(vFirstPassAngle, &vForward, &vRight, &vUp);
+
+		Vec3 vProjSpawn = vFrom + (vForward * vOffset.x) + (vRight * vOffset.y) + (vUp * vOffset.z);
+
+		// Recalculate trajectory from actual spawn position
+		float flPitch2, flYaw2, flTime2;
+		if (!SolveParabolic(vProjSpawn, vTo, v0, g, flPitch2, flYaw2, flTime2))
+			return false;
+
+		// Apply pitch correction
+		if (g > 0.001f)
 		{
-			if (flTimeOut > 0.95f)
-			{
-				return false;
-			}
+			// For gravity-affected projectiles, adjust pitch based on the difference
+			float flPitchCorrection = flPitch2 - flPitch;
+			flPitch += flPitchCorrection;
 		}
 		else
 		{
-			if (pWeapon->m_iItemDefinitionIndex() == Demoman_m_TheIronBomber)
-			{
-				if (flTimeOut > 1.4f)
-				{
-					return false;
-				}
-			}
+			// For non-gravity projectiles, use the recalculated pitch directly
+			flPitch = flPitch2;
+		}
 
-			else
+		// Apply yaw correction using quadratic solution (like Amalgam)
+		// This accounts for the lateral offset of the projectile spawn point
+		// quadratic formula from high school finally being useful lmao
+		Vec3 vShootPos = (vProjSpawn - vFrom).To2D();
+		Vec3 vTarget = (vTo - vFrom).To2D();
+		Vec3 vForward2D = vForward.To2D();
+		float flForwardLen = vForward2D.Length2D();
+		if (flForwardLen > 0.001f)
+		{
+			vForward2D = vForward2D / flForwardLen;
+			
+			// Solve quadratic: |vShootPos + t*vForward2D|^2 = |vTarget|^2
+			// This finds where along the forward direction we need to aim to hit the target distance
+			float flA = 1.0f;
+			float flB = 2.0f * (vShootPos.x * vForward2D.x + vShootPos.y * vForward2D.y);
+			float flC = vShootPos.Length2DSqr() - vTarget.Length2DSqr();
+			
+			float flDiscriminant = flB * flB - 4.0f * flA * flC;
+			if (flDiscriminant >= 0.0f)
 			{
-				if (flTimeOut > 2.0f)
+				float flT = (-flB + sqrtf(flDiscriminant)) / (2.0f * flA);
+				if (flT > 0.0f)
 				{
-					return false;
+					Vec3 vAdjusted = vShootPos + vForward2D * flT;
+					float flNewYaw = RAD2DEG(atan2f(vAdjusted.y, vAdjusted.x));
+					// Apply the yaw correction as the difference
+					flYaw = flYaw - (flNewYaw - flYaw);
 				}
 			}
 		}
+
+		flTime = flTime2;
 	}
 
-	if ((pWeapon->GetWeaponID() == TF_WEAPON_FLAME_BALL || pWeapon->GetWeaponID() == TF_WEAPON_FLAMETHROWER) && flTimeOut > 0.18f)
+	vAngleOut = { flPitch, flYaw, 0.0f };
+	flTimeOut = flTime;
+
+	// Time limit checks
+	if (m_CurProjInfo.Pipes)
 	{
-		return false;
+		if (nWeaponID == TF_WEAPON_CANNON && flTimeOut > 0.95f)
+			return false;
+		else if (pWeapon->m_iItemDefinitionIndex() == Demoman_m_TheIronBomber && flTimeOut > 1.4f)
+			return false;
+		else if (flTimeOut > 2.0f)
+			return false;
 	}
+
+	if ((nWeaponID == TF_WEAPON_FLAME_BALL || nWeaponID == TF_WEAPON_FLAMETHROWER) && flTimeOut > 0.18f)
+		return false;
 
 	return true;
 }
@@ -422,6 +479,7 @@ void CAimbotProjectile::OffsetPlayerPosition(C_TFWeaponBase* pWeapon, Vec3& vPos
 	const float flMaxZ{ (bDucked ? 62.0f : 82.0f) * pPlayer->m_flModelScale() };
 
 	// Helper lambda for huntsman advanced head aim with lerp
+	// this is cursed but it works, dont question it
 	auto ApplyHuntsmanHeadAim = [&]() -> Vec3
 	{
 		Vec3 vOffset = {};
@@ -594,7 +652,7 @@ bool CAimbotProjectile::CanArcReach(const Vec3& vFrom, const Vec3& vTo, const Ve
 
 	if (pWeapon->m_iItemDefinitionIndex() == Demoman_m_TheLochnLoad)
 	{
-		info.m_speed += 45.0f; //need to do this for some reason
+		info.m_speed += 45.0f; // we need this for some fucking reason, thanks valve
 	}
 
 	if (!F::ProjectileSim->Init(info, true))
@@ -773,14 +831,9 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 			/*if (CFG::Aimbot_Projectile_Aim_Type == 1)
 				nTargetTick += 1;*/
 
-				//[20:57]
-				//todellinen mennink�inen:
-				//crazy
-				//cant u do me like kgb
-				//do the like
-				//credits: m-fed
-				//for my
-				//original code
+				// credits: m-fed for the original code
+				// todellinen menninkäinen: "crazy cant u do me like kgb"
+				// no we cant lol
 
 			if (pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)
 			{
@@ -793,22 +846,48 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 
 			if ((nTargetTick == nTick || nTargetTick == nTick - 1))
 			{
+				// Helper to get splash radius for weapon
+				// splash radius is 146 for most weapons, but can be modified by attributes
+				auto getSplashRadius = [&]() -> float
+					{
+						float flRadius = 0.0f;
+						switch (pWeapon->GetWeaponID())
+						{
+						case TF_WEAPON_PIPEBOMBLAUNCHER:
+						case TF_WEAPON_GRENADELAUNCHER:
+						case TF_WEAPON_CANNON:
+							flRadius = 146.0f;
+							break;
+						case TF_WEAPON_FLAREGUN:
+						case TF_WEAPON_FLAREGUN_REVENGE:
+							// Scorch Shot has splash
+							flRadius = 110.0f;
+							break;
+						default:
+							return 0.0f;
+						}
+						// Apply attribute modifiers
+						flRadius = SDKUtils::AttribHookValue(flRadius, "mult_explosion_radius", pWeapon);
+						return flRadius;
+					};
+
 				auto runSplash = [&]()
 					{
-						auto isSticky = pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER;
-
-						if (!isSticky)
-						{
+						// Get splash radius for this weapon
+						const float flSplashRadius = getSplashRadius();
+						if (flSplashRadius <= 0.0f)
 							return false;
-						}
+
+						// Use slightly smaller radius for stability (146 can be unstable)
+						const float radius = std::min(flSplashRadius - 16.0f, 130.0f);
 
 						Vec3 mins{ target.Entity->m_vecMins() };
 						Vec3 maxs{ target.Entity->m_vecMaxs() };
 
 						auto center{ F::MovementSimulation->GetOrigin() + Vec3(0.0f, 0.0f, (mins.z + maxs.z) * 0.5f) };
 
-						auto numPoints{ 80 };
-						auto radius{ 130.0f }; // 146/142 is unstable
+						// fibonacci sphere go brrrr
+						constexpr int numPoints = 80;
 
 						std::vector<Vec3> potential{};
 						for (int n = 0; n < numPoints; n++)
@@ -863,7 +942,8 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 								&trace
 							);
 
-							if (pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)
+							// For gravity-affected projectiles (pipes, stickies, etc), verify arc can reach
+							if (m_CurProjInfo.GravityMod > 0.0f)
 							{
 								if (!CanArcReach(vLocalPos, point, target.AngleTo, target.TimeToTarget, target.Entity))
 									continue;
@@ -948,19 +1028,39 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 
 		float flTimeToTarget = 0.0f;
 
+		// Helper to get splash radius for weapon (same as player version)
+		auto getSplashRadius = [&]() -> float
+			{
+				float flRadius = 0.0f;
+				switch (pWeapon->GetWeaponID())
+				{
+				case TF_WEAPON_PIPEBOMBLAUNCHER:
+				case TF_WEAPON_GRENADELAUNCHER:
+				case TF_WEAPON_CANNON:
+					flRadius = 146.0f;
+					break;
+				case TF_WEAPON_FLAREGUN:
+				case TF_WEAPON_FLAREGUN_REVENGE:
+					flRadius = 110.0f;
+					break;
+				default:
+					return 0.0f;
+				}
+				flRadius = SDKUtils::AttribHookValue(flRadius, "mult_explosion_radius", pWeapon);
+				return flRadius;
+			};
+
 		auto runSplash = [&]()
 			{
-				const auto isSticky = pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER;
-
-				if (!isSticky)
-				{
+				const float flSplashRadius = getSplashRadius();
+				if (flSplashRadius <= 0.0f)
 					return false;
-				}
+
+				const float radius = std::min(flSplashRadius - 16.0f, 130.0f);
 
 				const auto center{ target.Entity->GetCenter() };
 
 				constexpr auto numPoints{ 80 };
-				auto radius{ 130.0f }; // 146/142 is unstable
 
 				std::vector<Vec3> potential{};
 
@@ -989,12 +1089,8 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 						return a.DistTo(center) < b.DistTo(center);
 					});
 
-				//I::DebugOverlay->ClearAllOverlays();
-
 				for (auto& point : potential)
 				{
-					//I::DebugOverlay->AddBoxOverlay(point, {}, { 1.0f, 1.0f, 1.0f }, {}, 255, 255, 255, 255, 0.1f);
-
 					if (!CalcProjAngle(vLocalPos, point, target.AngleTo, target.TimeToTarget))
 					{
 						continue;
@@ -1020,7 +1116,8 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 						&trace
 					);
 
-					if (pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)
+					// For gravity-affected projectiles, verify arc can reach
+					if (m_CurProjInfo.GravityMod > 0.0f)
 					{
 						if (!CanArcReach(vLocalPos, point, target.AngleTo, target.TimeToTarget, target.Entity))
 							continue;
@@ -1151,7 +1248,7 @@ bool CAimbotProjectile::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, c
 				continue;
 			}
 
-			Vec3 vPos = pBuilding->GetCenter(); //fuck teleporters when aimed at with pipes lma
+			Vec3 vPos = pBuilding->GetCenter(); // fuck teleporters when aimed at with pipes lmao
 
 			/*if (pEntity->GetClassId() == ETFClassIds::CObjectTeleporter || pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)
 			{
@@ -1215,9 +1312,10 @@ void CAimbotProjectile::Aim(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* 
 
 	if (m_CurProjInfo.Pipes)
 	{
+		// pipes need special angle adjustment because source engine moment
 		Vec3 vAngle = {}, vForward = {}, vUp = {};
 		Math::AngleVectors(vAngleTo, &vForward, nullptr, &vUp);
-		const Vec3 vVelocity = (vForward * m_CurProjInfo.Speed) - (vUp * 200.0f);
+		const Vec3 vVelocity = (vForward * m_CurProjInfo.Speed) - (vUp * 200.0f); // the 200 is hardcoded in tf2, thanks valve
 		Math::VectorAngles(vVelocity, vAngle);
 		vAngleTo.x = vAngle.x;
 	}
@@ -1262,7 +1360,7 @@ bool CAimbotProjectile::ShouldFire(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeapo
 {
 	if (!CFG::Aimbot_AutoShoot)
 	{
-		//fucking fuck
+		// fucking fuck this edge case
 		if (pWeapon->GetWeaponID() == TF_WEAPON_FLAME_BALL && pLocal->m_flTankPressure() < 100.0f)
 			pCmd->buttons &= ~IN_ATTACK;
 
@@ -1355,6 +1453,7 @@ bool CAimbotProjectile::IsFiring(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFW
 	}
 
 	// Allow firing during reload (will interrupt reload) - matches Amalgam's logic
+	// dont touch this it took forever to get right
 	return (pCmd->buttons & IN_ATTACK) && (G::bCanPrimaryAttack || G::bReloading);
 }
 
