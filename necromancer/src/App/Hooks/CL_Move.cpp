@@ -29,11 +29,11 @@ MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 	F::SeedPred->AskForPlayerPerf();
 
 	// Calculate max ticks based on anti-cheat and anti-aim state
-	// Anti-cheat: max 8 ticks
+	// Anti-cheat: max 8 ticks (unless Ignore Tick Limit is enabled)
 	// Anti-aim ON: max 22 ticks (need 2 for fakelag)
 	// Anti-aim OFF: max 24 ticks
 	int nMaxTicks;
-	if (CFG::Misc_AntiCheat_Enabled)
+	if (CFG::Misc_AntiCheat_Enabled && !CFG::Misc_AntiCheat_IgnoreTickLimit)
 	{
 		nMaxTicks = 8;
 	}

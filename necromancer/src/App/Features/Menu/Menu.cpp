@@ -2743,7 +2743,7 @@ void CMenu::MainWindow()
 				CheckBox("Auto Heal", CFG::AutoUber_AutoHeal_Active);
 				if (CFG::AutoUber_AutoHeal_Active)
 				{
-					CheckBox("Prioritize Friends", CFG::AutoUber_AutoHeal_Prioritize_Friends);
+					CheckBox("Friends Only", CFG::AutoUber_AutoHeal_Friends_Only);
 				}
 			}
 			GroupBoxEnd();
@@ -3780,8 +3780,9 @@ void CMenu::MainWindow()
 			InputKey("Double Tap Key", CFG::Exploits_RapidFire_Key);
 			
 			// DT ticks slider: 2-22 (max is 22 to match reference project)
-			const int nMaxSlider = CFG::Misc_AntiCheat_Enabled ? 8 : 22;
-			std::string sTicksLabel = CFG::Misc_AntiCheat_Enabled ? "Safe Double Tap Ticks" : "Double Tap Ticks";
+			const bool bLimitTicks = CFG::Misc_AntiCheat_Enabled && !CFG::Misc_AntiCheat_IgnoreTickLimit;
+			const int nMaxSlider = bLimitTicks ? 8 : 22;
+			std::string sTicksLabel = bLimitTicks ? "Safe Double Tap Ticks" : "Double Tap Ticks";
 			SliderInt(sTicksLabel.c_str(), CFG::Exploits_RapidFire_Ticks, 2, nMaxSlider, 1);
 			
 			SliderInt("Double Tap Delay Ticks", CFG::Exploits_RapidFire_Min_Ticks_Target_Same, 0, 5, 1);
@@ -3802,8 +3803,9 @@ void CMenu::MainWindow()
 
 		m_mapGroupBoxes["Exploits_FakeLag"].m_fnRenderContent = [this]() {
 			CheckBox("Enabled (Adaptive)", CFG::Exploits_FakeLag_Enabled);
-			const int nMaxFakeLagTicks = CFG::Misc_AntiCheat_Enabled ? 8 : 21;
-			SliderInt(CFG::Misc_AntiCheat_Enabled ? "Safe Max Ticks" : "Max Ticks", 
+			const bool bLimitTicks = CFG::Misc_AntiCheat_Enabled && !CFG::Misc_AntiCheat_IgnoreTickLimit;
+			const int nMaxFakeLagTicks = bLimitTicks ? 8 : 21;
+			SliderInt(bLimitTicks ? "Safe Max Ticks" : "Max Ticks", 
 				CFG::Exploits_FakeLag_Max_Ticks, 1, nMaxFakeLagTicks, 1);
 			CheckBox("Only When Moving", CFG::Exploits_FakeLag_Only_Moving);
 			CheckBox("Activate on Sightline", CFG::Exploits_FakeLag_Activate_On_Sightline);
@@ -4088,6 +4090,7 @@ void CMenu::MainWindow()
 			// Anti-Cheat toggle with save/restore of fakelag and doubletap values
 			{
 				static bool s_bWasAntiCheatEnabled = CFG::Misc_AntiCheat_Enabled;
+				static bool s_bWasIgnoreTickLimit = CFG::Misc_AntiCheat_IgnoreTickLimit;
 				static int s_nSavedRapidFireTicks = 0;
 				static int s_nSavedFakeLagTicks = 0;
 				
@@ -4097,7 +4100,7 @@ void CMenu::MainWindow()
 				// Detect toggle
 				if (CFG::Misc_AntiCheat_Enabled != bOldValue)
 				{
-					if (CFG::Misc_AntiCheat_Enabled)
+					if (CFG::Misc_AntiCheat_Enabled && !CFG::Misc_AntiCheat_IgnoreTickLimit)
 					{
 						// Turning ON - save current values and clamp
 						s_nSavedRapidFireTicks = CFG::Exploits_RapidFire_Ticks;
@@ -4120,10 +4123,13 @@ void CMenu::MainWindow()
 				}
 				
 				s_bWasAntiCheatEnabled = CFG::Misc_AntiCheat_Enabled;
+				s_bWasIgnoreTickLimit = CFG::Misc_AntiCheat_IgnoreTickLimit;
 			}
 			
 			if (CFG::Misc_AntiCheat_Enabled)
 				CheckBox("Skip Crit Detection", CFG::Misc_AntiCheat_SkipCritDetection);
+			if (CFG::Misc_AntiCheat_Enabled)
+				CheckBox("Ignore Tick Limit", CFG::Misc_AntiCheat_IgnoreTickLimit);
 			if (Button("Fix Invisible Players"))
 			{
 				// Record and stop demo to refresh client-side state

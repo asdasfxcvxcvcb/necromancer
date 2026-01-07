@@ -908,7 +908,6 @@ void CMisc::AutoMedigun(CUserCmd* cmd)
 		
 		C_TFPlayer* pBestTarget = nullptr;
 		float flLowestHealth = 1.0f;
-		bool bBestIsFriend = false;
 
 		for (const auto ent : H::Entities->GetGroup(EEntGroup::PLAYERS_TEAMMATES))
 		{
@@ -921,20 +920,14 @@ void CMisc::AutoMedigun(CUserCmd* cmd)
 			float flPercent = getHealthPercent(pl);
 			if (flPercent >= 0.99f) continue;
 			
-			// Only do trace for potential best targets
-			bool bIsFriend = CFG::AutoUber_AutoHeal_Prioritize_Friends && isFriend(pl);
-			bool bIsBetter = false;
+			// Skip non-friends if Friends Only is enabled
+			if (CFG::AutoUber_AutoHeal_Friends_Only && !isFriend(pl))
+				continue;
 			
-			if (bIsFriend && !bBestIsFriend)
-				bIsBetter = true;
-			else if (bIsFriend == bBestIsFriend && flPercent < flLowestHealth)
-				bIsBetter = true;
-			
-			if (bIsBetter && isFullyValid(pl))
+			if (flPercent < flLowestHealth && isFullyValid(pl))
 			{
 				pBestTarget = pl;
 				flLowestHealth = flPercent;
-				bBestIsFriend = bIsFriend;
 			}
 		}
 		

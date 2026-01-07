@@ -215,7 +215,7 @@ namespace CFG
 	CFGVAR(AutoUber_CritProjectile_Check, true);
 	CFGVAR(AutoUber_SniperSightline_Check, true);
 	CFGVAR(AutoUber_AutoHeal_Active, false);
-	CFGVAR(AutoUber_AutoHeal_Prioritize_Friends, true);
+	CFGVAR(AutoUber_AutoHeal_Friends_Only, false);
 
 #pragma endregion
 
@@ -621,6 +621,7 @@ namespace CFG
 
 	CFGVAR(Misc_AntiCheat_Enabled, false);
 	CFGVAR(Misc_AntiCheat_SkipCritDetection, false);
+	CFGVAR(Misc_AntiCheat_IgnoreTickLimit, false);
 
 	CFGVAR(Exploits_Shifting_Recharge_Key, 0);
 

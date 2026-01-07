@@ -404,7 +404,7 @@ void CMiscVisuals::ShiftBar()
 		// Calculate max ticks budget (shared between DT and fakelag)
 		static auto sv_maxusrcmdprocessticks = I::CVar->FindVar("sv_maxusrcmdprocessticks");
 		int nMaxTicksBudget = sv_maxusrcmdprocessticks ? sv_maxusrcmdprocessticks->GetInt() : 24;
-		if (CFG::Misc_AntiCheat_Enabled)
+		if (CFG::Misc_AntiCheat_Enabled && !CFG::Misc_AntiCheat_IgnoreTickLimit)
 			nMaxTicksBudget = std::min(nMaxTicksBudget, 8);
 		
 		// Get current usage
