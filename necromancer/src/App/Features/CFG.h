@@ -624,6 +624,7 @@ namespace CFG
 	CFGVAR(Misc_AntiCheat_IgnoreTickLimit, false);
 
 	CFGVAR(Exploits_Shifting_Recharge_Key, 0);
+	CFGVAR(Exploits_Shifting_Recharge_Limit, 24); // 2-24, max ticks to recharge (accounts for fakeangle 2 ticks, anticheat)
 
 	CFGVAR(Exploits_RapidFire_Key, 0);
 	CFGVAR(Exploits_RapidFire_Ticks, 22);
@@ -643,6 +644,7 @@ namespace CFG
 	CFGVAR(Exploits_FakeLag_Enabled, false);
 	CFGVAR(Exploits_FakeLag_Only_Moving, false);
 	CFGVAR(Exploits_FakeLag_Activate_On_Sightline, false);
+;
 	CFGVAR(Exploits_FakeLag_Max_Ticks, 12);
 
 	// Anti-Aim (uses tick shifting to show fake angles)

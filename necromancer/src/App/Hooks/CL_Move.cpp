@@ -32,6 +32,7 @@ MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 	// Anti-cheat: max 8 ticks (unless Ignore Tick Limit is enabled)
 	// Anti-aim ON: max 22 ticks (need 2 for fakelag)
 	// Anti-aim OFF: max 24 ticks
+	// User can also set a custom limit via Exploits_Shifting_Recharge_Limit (2-24)
 	int nMaxTicks;
 	if (CFG::Misc_AntiCheat_Enabled && !CFG::Misc_AntiCheat_IgnoreTickLimit)
 	{
@@ -45,6 +46,10 @@ MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 	{
 		nMaxTicks = 24; // Full 24 ticks when no anti-aim
 	}
+	
+	// Apply user's recharge limit (clamp to 2-24 range)
+	const int nUserLimit = std::clamp(CFG::Exploits_Shifting_Recharge_Limit, 2, 24);
+	nMaxTicks = std::min(nMaxTicks, nUserLimit);
 
 	// Handle recharging BEFORE the callOriginal lambda (like reference)
 	if (Shifting::nAvailableTicks < nMaxTicks)

@@ -3777,6 +3777,10 @@ void CMenu::MainWindow()
 		// Set up render functions for each GroupBox
 		m_mapGroupBoxes["Exploits_Shifting"].m_fnRenderContent = [this]() {
 			InputKey("Recharge Key", CFG::Exploits_Shifting_Recharge_Key);
+			
+			// Recharge limit slider: 2-24 (accounts for fakeangle 2 ticks, anticheat)
+			SliderInt("Recharge Limit", CFG::Exploits_Shifting_Recharge_Limit, 2, 24, 1);
+			
 			InputKey("Double Tap Key", CFG::Exploits_RapidFire_Key);
 			
 			// DT ticks slider: 2-22 (max is 22 to match reference project)

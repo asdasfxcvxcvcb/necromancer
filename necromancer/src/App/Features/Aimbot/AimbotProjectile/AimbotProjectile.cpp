@@ -1362,6 +1362,10 @@ void CAimbotProjectile::HandleFire(CUserCmd* pCmd, C_TFWeaponBase* pWeapon, C_TF
 	if (!bIsBazooka && !pWeapon->HasPrimaryAmmoForShot())
 		return;
 
+	// Don't fire if we don't have a valid angle calculation
+	if (target.AngleTo.IsZero())
+		return;
+
 	const int nWeaponID = pWeapon->GetWeaponID();
 	if (nWeaponID == TF_WEAPON_COMPOUND_BOW || nWeaponID == TF_WEAPON_PIPEBOMBLAUNCHER)
 	{
