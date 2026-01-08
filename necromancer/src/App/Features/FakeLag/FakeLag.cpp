@@ -163,6 +163,25 @@ EFakeLagThreatType CFakeLag::CheckSniperThreat(C_TFPlayer* pLocal, int& outMinTi
 	if (!CFG::Exploits_FakeLag_Activate_On_Sightline)
 		return EFakeLagThreatType::None;
 
+	// Early exit if fakelag is disabled entirely
+	if (!CFG::Exploits_FakeLag_Enabled)
+		return EFakeLagThreatType::None;
+
+	// Throttle expensive checks - only run every 3 ticks (~45ms at 66 tick)
+	// This is still responsive enough for sniper threat detection
+	static int s_nThrottleCounter = 0;
+	static EFakeLagThreatType s_eLastThreat = EFakeLagThreatType::None;
+	static int s_nLastMinTicks = 4;
+	static int s_nLastMaxTicks = 7;
+	
+	if (++s_nThrottleCounter < 3)
+	{
+		outMinTicks = s_nLastMinTicks;
+		outMaxTicks = s_nLastMaxTicks;
+		return s_eLastThreat;
+	}
+	s_nThrottleCounter = 0;
+
 	// Default values for no tag (will be overridden based on threat type)
 	outMinTicks = 4;
 	outMaxTicks = 7;
@@ -175,6 +194,12 @@ EFakeLagThreatType CFakeLag::CheckSniperThreat(C_TFPlayer* pLocal, int& outMinTi
 	EFakeLagThreatType eHighestThreat = EFakeLagThreatType::None;
 	int nHighestMinTicks = 0;
 	int nHighestMaxTicks = 0;
+
+	// Cache local player data
+	const Vec3 vLocalOrigin = pLocal->m_vecOrigin();
+	const Vec3 vLocalMins = pLocal->m_vecMins();
+	const Vec3 vLocalMaxs = pLocal->m_vecMaxs();
+	const auto& localTransform = pLocal->RenderableToWorldTransform();
 
 	for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PLAYERS_ENEMIES))
 	{
@@ -193,10 +218,6 @@ EFakeLagThreatType CFakeLag::CheckSniperThreat(C_TFPlayer* pLocal, int& outMinTi
 		if (!pWeapon || pWeapon->GetSlot() != WEAPON_SLOT_PRIMARY || pWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW)
 			continue;
 
-		// Get player tag info
-		PlayerPriority pInfo{};
-		const bool bHasTag = F::Players->GetInfo(pEnemy->entindex(), pInfo);
-
 		// Check if enemy is scoped (required for all threat types)
 		bool bZoomed = pEnemy->InCond(TF_COND_ZOOMED);
 		if (pWeapon->GetWeaponID() == TF_WEAPON_SNIPERRIFLE_CLASSIC)
@@ -204,13 +225,18 @@ EFakeLagThreatType CFakeLag::CheckSniperThreat(C_TFPlayer* pLocal, int& outMinTi
 			bZoomed = pWeapon->As<C_TFSniperRifleClassic>()->m_bCharging();
 		}
 
+		// Skip if not zoomed - no threat
+		if (!bZoomed)
+			continue;
+
+		// Get player tag info
+		PlayerPriority pInfo{};
+		const bool bHasTag = F::Players->GetInfo(pEnemy->entindex(), pInfo);
+
 		// Determine threat type based on tag
 		if (bHasTag && pInfo.Cheater)
 		{
 			// CHEATER TAG: 19-24 ticks, no sightline distance check needed, just needs to be scoped
-			if (!bZoomed)
-				continue;
-			
 			// Cheater is highest priority threat
 			if (eHighestThreat != EFakeLagThreatType::Cheater)
 			{
@@ -224,12 +250,9 @@ EFakeLagThreatType CFakeLag::CheckSniperThreat(C_TFPlayer* pLocal, int& outMinTi
 		if (bHasTag && pInfo.RetardLegit)
 		{
 			// RETARD LEGIT TAG: 6-12 ticks, 2x sightline distance
-			if (!bZoomed)
-				continue;
-			
 			// Use 2x the base sightline distance for retard legit
-			auto vMins = pLocal->m_vecMins();
-			auto vMaxs = pLocal->m_vecMaxs();
+			auto vMins = vLocalMins;
+			auto vMaxs = vLocalMaxs;
 
 			vMins.x *= flBaseDistMultX * 2.0f;
 			vMins.y *= flBaseDistMultY * 2.0f;
@@ -242,7 +265,7 @@ EFakeLagThreatType CFakeLag::CheckSniperThreat(C_TFPlayer* pLocal, int& outMinTi
 			Vec3 vForward{};
 			Math::AngleVectors(pEnemy->GetEyeAngles(), &vForward);
 
-			if (!Math::RayToOBB(pEnemy->GetShootPos(), vForward, pLocal->m_vecOrigin(), vMins, vMaxs, pLocal->RenderableToWorldTransform()))
+			if (!Math::RayToOBB(pEnemy->GetShootPos(), vForward, vLocalOrigin, vMins, vMaxs, localTransform))
 				continue;
 			
 			// Retard legit is second priority (only upgrade if not already cheater)
@@ -256,12 +279,9 @@ EFakeLagThreatType CFakeLag::CheckSniperThreat(C_TFPlayer* pLocal, int& outMinTi
 		}
 
 		// NO TAG: 4-7 ticks, base sightline distance, must be scoped
-		if (!bZoomed)
-			continue;
-
 		// Use base sightline distance for no tag
-		auto vMins = pLocal->m_vecMins();
-		auto vMaxs = pLocal->m_vecMaxs();
+		auto vMins = vLocalMins;
+		auto vMaxs = vLocalMaxs;
 
 		vMins.x *= flBaseDistMultX;
 		vMins.y *= flBaseDistMultY;
@@ -274,7 +294,7 @@ EFakeLagThreatType CFakeLag::CheckSniperThreat(C_TFPlayer* pLocal, int& outMinTi
 		Vec3 vForward{};
 		Math::AngleVectors(pEnemy->GetEyeAngles(), &vForward);
 
-		if (!Math::RayToOBB(pEnemy->GetShootPos(), vForward, pLocal->m_vecOrigin(), vMins, vMaxs, pLocal->RenderableToWorldTransform()))
+		if (!Math::RayToOBB(pEnemy->GetShootPos(), vForward, vLocalOrigin, vMins, vMaxs, localTransform))
 			continue;
 
 		// No tag is lowest priority (only set if no higher threat)
@@ -293,6 +313,11 @@ EFakeLagThreatType CFakeLag::CheckSniperThreat(C_TFPlayer* pLocal, int& outMinTi
 		outMaxTicks = nHighestMaxTicks;
 	}
 
+	// Cache results for throttling
+	s_eLastThreat = eHighestThreat;
+	s_nLastMinTicks = outMinTicks;
+	s_nLastMaxTicks = outMaxTicks;
+
 	return eHighestThreat;
 }
 
@@ -306,21 +331,26 @@ void CFakeLag::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd, 
 	if (!m_iGoal)
 		m_iGoal = 22;
 	
-	// Check for new entities and force unchoke
+	// Check for new entities and force unchoke - only check every 22 ticks (~0.33 sec) to save CPU
 	static int nLastPlayerCount = 0;
-	int nCurrentPlayerCount = 0;
-	for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PLAYERS_ENEMIES))
+	static int nCheckCounter = 0;
+	if (++nCheckCounter >= 22)
 	{
-		if (auto pPlayer = pEntity->As<C_TFPlayer>())
+		nCheckCounter = 0;
+		int nCurrentPlayerCount = 0;
+		for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PLAYERS_ENEMIES))
 		{
-			if (!pPlayer->deadflag())
-				nCurrentPlayerCount++;
+			if (auto pPlayer = pEntity->As<C_TFPlayer>())
+			{
+				if (!pPlayer->deadflag())
+					nCurrentPlayerCount++;
+			}
 		}
+		
+		if (nCurrentPlayerCount > nLastPlayerCount)
+			m_iNewEntityUnchokeTicks = 5;
+		nLastPlayerCount = nCurrentPlayerCount;
 	}
-	
-	if (nCurrentPlayerCount > nLastPlayerCount)
-		m_iNewEntityUnchokeTicks = 5;
-	nLastPlayerCount = nCurrentPlayerCount;
 	
 	if (m_iNewEntityUnchokeTicks > 0)
 	{

@@ -4,6 +4,7 @@
 #include "../SpyCamera/SpyCamera.h"
 #include "../VisualUtils/VisualUtils.h"
 #include "../Players/Players.h"
+#include "../MovementSimulation/MovementSimulation.h"
 
 constexpr int SPACING_X = 2;
 constexpr int SPACING_Y = 2;
@@ -199,27 +200,32 @@ void CESP::DrawBones(C_TFPlayer* pPlayer, Color_t color)
 	if (!pStudioHdr)
 		return;
 
-	matrix3x4_t boneMatrix[MAXSTUDIOBONES];
-
-	if (!pPlayer->SetupBones(boneMatrix, MAXSTUDIOBONES, BONE_USED_BY_HITBOX, I::GlobalVars->curtime))
+	// Use cached bone data instead of calling SetupBones every frame - MASSIVE performance gain
+	const auto pCachedBoneData = pPlayer->GetCachedBoneData();
+	if (!pCachedBoneData || pCachedBoneData->Count() <= 0)
 		return;
 
 	Vec3 p1 = {}, p2 = {};
 	Vec3 p1s = {}, p2s = {};
 
-	for (int n = 0; n < pStudioHdr->numbones; n++)
+	const int nBoneCount = std::min(pStudioHdr->numbones, pCachedBoneData->Count());
+
+	for (int n = 0; n < nBoneCount; n++)
 	{
 		const mstudiobone_t* pBone = pStudioHdr->pBone(n);
 
 		if (!pBone || pBone->parent == -1 || !(pBone->flags & BONE_USED_BY_HITBOX))
 			continue;
 
-		MatrixPosition(boneMatrix[n], p1);
+		if (pBone->parent >= pCachedBoneData->Count())
+			continue;
+
+		MatrixPosition((*pCachedBoneData)[n], p1);
 
 		if (!H::Draw->W2S(p1, p1s))
 			continue;
 
-		MatrixPosition(boneMatrix[pBone->parent], p2);
+		MatrixPosition((*pCachedBoneData)[pBone->parent], p2);
 
 		if (!H::Draw->W2S(p2, p2s))
 			continue;
@@ -774,6 +780,197 @@ void CESP::Run()
 						}
 						H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTagOffsetY++), partyColor, POS_LEFT, "P%d", nPartyIndex);
 					}
+				}
+			}
+
+			// Movement Simulation Behavior Debug Display
+			if (CFG::ESP_Players_Behavior_Debug && !bIsLocal)
+			{
+				int nPlayerIndex = pPlayer->entindex();
+				auto* pBehavior = F::MovementSimulation->GetPlayerBehavior(nPlayerIndex);
+				
+				if (pBehavior && pBehavior->m_nSampleCount > 0)
+				{
+					int tall = H::Fonts->Get(EFonts::ESP_CONDS).m_nTall;
+					int drawY = y - tall - SPACING_Y;
+					
+					// Calculate offset based on name/tags
+					if (CFG::ESP_Players_Name)
+						drawY -= tall + SPACING_Y;
+					if (CFG::ESP_Players_Tags)
+						drawY -= (tall + SPACING_Y) * 2;
+					
+					// Confidence color: Red (0%) -> Yellow (50%) -> Green (100%)
+					float flConfidence = pBehavior->GetConfidence();
+					Color_t confColor;
+					if (flConfidence < 0.5f)
+					{
+						confColor = { 255, static_cast<unsigned char>(flConfidence * 2.0f * 255), 0, 255 };
+					}
+					else
+					{
+						confColor = { static_cast<unsigned char>((1.0f - (flConfidence - 0.5f) * 2.0f) * 255), 255, 0, 255 };
+					}
+					
+					// === LINE 1: Confidence and sample count ===
+					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), x + (w / 2), drawY, confColor, POS_CENTERX,
+						"Conf: %.0f%% [%d samples]", flConfidence * 100.0f, pBehavior->m_nSampleCount);
+					drawY -= tall;
+					
+					// === LINE 2: Personality - Brave/Scared based on aggression ===
+					const char* szPersonality;
+					Color_t persColor;
+					if (pBehavior->m_Positioning.m_flAggressionScore > 0.65f)
+					{
+						szPersonality = "BRAVE";
+						persColor = {255, 80, 80, 255}; // Red - aggressive
+					}
+					else if (pBehavior->m_Positioning.m_flAggressionScore < 0.35f)
+					{
+						szPersonality = "SCARED";
+						persColor = {80, 80, 255, 255}; // Blue - defensive
+					}
+					else
+					{
+						szPersonality = "NEUTRAL";
+						persColor = {200, 200, 100, 255}; // Yellow - balanced
+					}
+					
+					// Add low HP behavior
+					const char* szLowHP = "";
+					if (pBehavior->m_Positioning.m_nLowHPRetreatSamples + pBehavior->m_Positioning.m_nLowHPFightSamples > 5)
+					{
+						if (pBehavior->m_Positioning.m_flLowHealthRetreatRate > 0.6f)
+							szLowHP = " (runs@lowHP)";
+						else if (pBehavior->m_Positioning.m_flLowHealthRetreatRate < 0.3f)
+							szLowHP = " (fights@lowHP)";
+					}
+					
+					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), x + (w / 2), drawY, persColor, POS_CENTERX,
+						"%s %.0f%%%s", szPersonality, pBehavior->m_Positioning.m_flAggressionScore * 100.0f, szLowHP);
+					drawY -= tall;
+					
+					// === LINE 3: Jump/Air behavior ===
+					float flAirRate = (pBehavior->m_Strafe.m_nAirSamples + pBehavior->m_Strafe.m_nGroundSamples > 50) ?
+						static_cast<float>(pBehavior->m_Strafe.m_nAirSamples) / static_cast<float>(pBehavior->m_Strafe.m_nAirSamples + pBehavior->m_Strafe.m_nGroundSamples) : 0.0f;
+					
+					Color_t jumpColor = pBehavior->m_Strafe.m_flBunnyHopRate > 0.2f ? Color_t{255, 150, 50, 255} : Color_t{150, 150, 150, 255};
+					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), x + (w / 2), drawY, jumpColor, POS_CENTERX,
+						"Air: %.0f%% BHop: %.0f%% [%d]",
+						flAirRate * 100.0f,
+						pBehavior->m_Strafe.m_flBunnyHopRate * 100.0f,
+						pBehavior->m_Strafe.m_nBunnyHopSamples);
+					drawY -= tall;
+					
+					// === LINE 4: Strafe behavior ===
+					Color_t strafeColor = pBehavior->m_Strafe.m_flStrafeIntensity > 5.0f ? Color_t{255, 200, 100, 255} : Color_t{150, 150, 150, 255};
+					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), x + (w / 2), drawY, strafeColor, POS_CENTERX,
+						"Strafe: %.1f A-D: %.0f%%",
+						pBehavior->m_Strafe.m_flStrafeIntensity,
+						pBehavior->m_Strafe.m_flCounterStrafeRate * 100.0f);
+					drawY -= tall;
+					
+					// === LINE 5: Corner peek and attack predictability ===
+					Color_t tacticsColor = {180, 180, 255, 255};
+					std::string tactics;
+					
+					if (pBehavior->m_Strafe.m_flCornerPeekRate > 0.2f)
+						tactics += std::string("Peeker:") + std::to_string(static_cast<int>(pBehavior->m_Strafe.m_flCornerPeekRate * 100)) + "% ";
+					
+					if (pBehavior->m_Combat.m_nAttackingSamples > 5)
+					{
+						if (pBehavior->m_Combat.m_flAttackPredictability > 0.6f)
+							tactics += "StandsStill ";
+						else if (pBehavior->m_Combat.m_flAttackPredictability < 0.3f)
+							tactics += "MovesWhileShooting ";
+					}
+					
+					if (!tactics.empty())
+					{
+						H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), x + (w / 2), drawY, tacticsColor, POS_CENTERX, "%s", tactics.c_str());
+						drawY -= tall;
+					}
+					
+					// === LINE 6: Team behavior ===
+					if (pBehavior->m_Positioning.m_nNearTeamSamples + pBehavior->m_Positioning.m_nAloneSamples > 10)
+					{
+						const char* szTeamStyle;
+						Color_t teamColor;
+						if (pBehavior->m_Positioning.m_flSoloPlayRate > 0.6f)
+						{
+							szTeamStyle = "FLANKER";
+							teamColor = {255, 100, 255, 255}; // Purple
+						}
+						else if (pBehavior->m_Positioning.m_flTeamProximityRate > 0.6f)
+						{
+							szTeamStyle = "TEAMPLAYER";
+							teamColor = {100, 255, 100, 255}; // Green
+						}
+						else
+						{
+							szTeamStyle = "MIXED";
+							teamColor = {150, 150, 150, 255};
+						}
+						
+						H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), x + (w / 2), drawY, teamColor, POS_CENTERX,
+							"%s Solo:%.0f%% Team:%.0f%%", szTeamStyle, pBehavior->m_Positioning.m_flSoloPlayRate * 100.0f, pBehavior->m_Positioning.m_flTeamProximityRate * 100.0f);
+						drawY -= tall;
+					}
+					
+					// === LINE 7: Healed behavior ===
+					if (pBehavior->m_Positioning.m_nHealedPushSamples + pBehavior->m_Positioning.m_nHealedPassiveSamples > 3)
+					{
+						Color_t healColor = pBehavior->m_Positioning.m_flHealedAggroBoost > 0.5f ? Color_t{255, 100, 100, 255} : Color_t{100, 200, 100, 255};
+						H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), x + (w / 2), drawY, healColor, POS_CENTERX,
+							"WhenHealed: %s %.0f%%",
+							pBehavior->m_Positioning.m_flHealedAggroBoost > 0.5f ? "PUSHES" : "PASSIVE",
+							pBehavior->m_Positioning.m_flHealedAggroBoost * 100.0f);
+						drawY -= tall;
+					}
+					
+					// === LINE 8: Reaction to being shot at ===
+					if (pBehavior->m_Combat.m_nReactionSamples > 2)
+					{
+						int nDodgeDir = F::MovementSimulation->GetPredictedDodge(nPlayerIndex);
+						const char* szDodge;
+						switch (nDodgeDir)
+						{
+						case -1: szDodge = "LEFT"; break;
+						case 1: szDodge = "RIGHT"; break;
+						case 2: szDodge = "JUMP"; break;
+						case 3: szDodge = "BACK"; break;
+						default: szDodge = "NONE"; break;
+						}
+						
+						Color_t reactColor = pBehavior->m_Combat.m_flReactionToThreat > 0.5f ? Color_t{255, 180, 100, 255} : Color_t{100, 180, 255, 255};
+						H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), x + (w / 2), drawY, reactColor, POS_CENTERX,
+							"Dodge: %s (%.2fs) React:%.0f%%",
+							szDodge, pBehavior->m_Combat.m_flAvgReactionTime, pBehavior->m_Combat.m_flReactionToThreat * 100.0f);
+						drawY -= tall;
+						
+						// Show dodge breakdown
+						int nTotal = pBehavior->m_Combat.m_nDodgeLeftCount + pBehavior->m_Combat.m_nDodgeRightCount + 
+						             pBehavior->m_Combat.m_nDodgeJumpCount + pBehavior->m_Combat.m_nDodgeBackCount + pBehavior->m_Combat.m_nNoReactionCount;
+						if (nTotal > 3)
+						{
+							H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), x + (w / 2), drawY, Color_t{150, 150, 150, 255}, POS_CENTERX,
+								"L:%d R:%d J:%d B:%d X:%d",
+								pBehavior->m_Combat.m_nDodgeLeftCount, pBehavior->m_Combat.m_nDodgeRightCount,
+								pBehavior->m_Combat.m_nDodgeJumpCount, pBehavior->m_Combat.m_nDodgeBackCount, pBehavior->m_Combat.m_nNoReactionCount);
+						}
+					}
+				}
+				else
+				{
+					// No data yet
+					H::Draw->String(
+						H::Fonts->Get(EFonts::ESP_CONDS),
+						x + (w / 2),
+						y - H::Fonts->Get(EFonts::ESP_CONDS).m_nTall - SPACING_Y - (CFG::ESP_Players_Name ? H::Fonts->Get(EFonts::ESP_CONDS).m_nTall + SPACING_Y : 0),
+						Color_t{100, 100, 100, 255},
+						POS_CENTERX,
+						"[Collecting Data...]"
+					);
 				}
 			}
 		}

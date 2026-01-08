@@ -69,19 +69,36 @@ void CLagRecords::AddRecord(C_TFPlayer* pPlayer)
 {
 	LagRecord_t newRecord = {};
 
-	m_bSettingUpBones = true;
-
+	// Use cached bone data when optimization is enabled - avoids expensive SetupBones call
 	const auto setup_bones_optimization{ CFG::Misc_SetupBones_Optimization };
-
+	
 	if (setup_bones_optimization)
 	{
-		pPlayer->InvalidateBoneCache();
+		// Try to use cached bones first - much faster
+		const auto pCachedBoneData = pPlayer->GetCachedBoneData();
+		if (pCachedBoneData && pCachedBoneData->Count() > 0)
+		{
+			const int nBoneCount = std::min(pCachedBoneData->Count(), 128);
+			memcpy(newRecord.BoneMatrix, pCachedBoneData->Base(), sizeof(matrix3x4_t) * nBoneCount);
+		}
+		else
+		{
+			// Fallback to SetupBones only if no cached data
+			m_bSettingUpBones = true;
+			if (!pPlayer->SetupBones(newRecord.BoneMatrix, 128, BONE_USED_BY_ANYTHING, I::GlobalVars->curtime))
+			{
+				m_bSettingUpBones = false;
+				return;
+			}
+			m_bSettingUpBones = false;
+		}
 	}
-
-	const auto result = pPlayer->SetupBones(newRecord.BoneMatrix, 128, BONE_USED_BY_ANYTHING, I::GlobalVars->curtime);
-
-	if (setup_bones_optimization)
+	else
 	{
+		// Original behavior when optimization is disabled
+		m_bSettingUpBones = true;
+		const auto result = pPlayer->SetupBones(newRecord.BoneMatrix, 128, BONE_USED_BY_ANYTHING, I::GlobalVars->curtime);
+		
 		auto attach = pPlayer->FirstMoveChild();
 		while (attach)
 		{
@@ -90,15 +107,14 @@ void CLagRecords::AddRecord(C_TFPlayer* pPlayer)
 				attach->InvalidateBoneCache();
 				attach->SetupBones(nullptr, -1, BONE_USED_BY_ANYTHING, I::GlobalVars->curtime);
 			}
-
 			attach = attach->NextMovePeer();
 		}
+		
+		m_bSettingUpBones = false;
+		
+		if (!result)
+			return;
 	}
-
-	m_bSettingUpBones = false;
-
-	if (!result)
-		return;
 
 	newRecord.Player = pPlayer;
 	newRecord.SimulationTime = pPlayer->m_flSimulationTime();

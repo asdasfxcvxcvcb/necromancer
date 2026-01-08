@@ -2947,7 +2947,8 @@ void CMenu::MainWindow()
 					{ "Conds", CFG::ESP_Players_Conds },
 					{ "Sniper Lines", CFG::ESP_Players_Sniper_Lines },
 					{ "F2P Tag", CFG::ESP_Players_Show_F2P },
-					{ "Party Tag", CFG::ESP_Players_Show_Party }
+					{ "Party Tag", CFG::ESP_Players_Show_Party },
+					{ "Behavior Debug", CFG::ESP_Players_Behavior_Debug }
 					});
 
 				CheckBox("Show Team Medics", CFG::ESP_Players_Show_Teammate_Medics);

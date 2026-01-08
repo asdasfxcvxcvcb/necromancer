@@ -50,6 +50,12 @@ MAKE_HOOK(IBaseClientDLL_FrameStageNotify, Memory::GetVFunc(I::BaseClientDLL, 35
 			if (!pLocal)
 				break;
 
+			// Cache local team for faster comparisons
+			const int nLocalTeam = pLocal->m_iTeamNum();
+			const bool bSetupBonesOpt = CFG::Misc_SetupBones_Optimization;
+			const bool bDisableInterp = CFG::Visuals_Disable_Interp;
+			const bool bAccuracyImprovements = CFG::Misc_Accuracy_Improvements;
+
 			for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PLAYERS_ALL))
 			{
 				if (!pEntity || pEntity == pLocal)
@@ -59,11 +65,20 @@ MAKE_HOOK(IBaseClientDLL_FrameStageNotify, Memory::GetVFunc(I::BaseClientDLL, 35
 				if (!pPlayer)
 					continue;
 
+				// Skip dead players for most operations
+				const bool bIsDead = pPlayer->deadflag();
+
+				// Store velocity fix records for all alive players (moved from separate loop)
+				if (!bIsDead)
+				{
+					G::mapVelFixRecords[pPlayer] = { pPlayer->m_vecOrigin(), pPlayer->m_fFlags(), pPlayer->m_flSimulationTime() };
+				}
+
 				if (const auto nDifference = std::clamp(TIME_TO_TICKS(pPlayer->m_flSimulationTime() - pPlayer->m_flOldSimulationTime()), 0, 22))
 				{
 					//deal with animations, local player is dealt with in RunCommand
 					// Do manual animation updates if Disable Interp is on
-					if (CFG::Misc_Accuracy_Improvements && CFG::Visuals_Disable_Interp)
+					if (bAccuracyImprovements && bDisableInterp)
 					{
 						const float flOldFrameTime = I::GlobalVars->frametime;
 
@@ -79,18 +94,10 @@ MAKE_HOOK(IBaseClientDLL_FrameStageNotify, Memory::GetVFunc(I::BaseClientDLL, 35
 						I::GlobalVars->frametime = flOldFrameTime;
 					}
 
-					//add the lag record
-					if (CFG::Misc_SetupBones_Optimization)
+					//add the lag record - only for enemies unless SetupBones optimization is on
+					if (!bIsDead)
 					{
-						if (!pPlayer->deadflag())
-						{
-							F::LagRecords->AddRecord(pPlayer);
-						}
-					}
-
-					else
-					{
-						if (pPlayer->m_iTeamNum() != pLocal->m_iTeamNum() && !pPlayer->deadflag())
+						if (bSetupBonesOpt || pPlayer->m_iTeamNum() != nLocalTeam)
 						{
 							F::LagRecords->AddRecord(pPlayer);
 						}
@@ -105,21 +112,6 @@ MAKE_HOOK(IBaseClientDLL_FrameStageNotify, Memory::GetVFunc(I::BaseClientDLL, 35
 			if (G::mapVelFixRecords.size() > 64)
 			{
 				G::mapVelFixRecords.clear();
-			}
-
-			for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PLAYERS_ALL))
-			{
-				if (!pEntity)
-					continue;
-
-				const auto pPlayer = pEntity->As<C_TFPlayer>();
-				if (!pPlayer)
-					continue;
-
-				if (pPlayer->deadflag())
-					continue;
-
-				G::mapVelFixRecords[pPlayer] = { pPlayer->m_vecOrigin(), pPlayer->m_fFlags(), pPlayer->m_flSimulationTime() };
 			}
 
 			break;

@@ -255,6 +255,7 @@ namespace CFG
 	CFGVAR(ESP_Players_Sniper_Lines, true);
 	CFGVAR(ESP_Players_Show_F2P, false); // Show F2P tag on players
 	CFGVAR(ESP_Players_Show_Party, false); // Show party indicator on players
+	CFGVAR(ESP_Players_Behavior_Debug, false); // Debug: Show movement simulation confidence and learned behavior
 
 	CFGVAR(ESP_Buildings_Active, true);
 	CFGVAR(ESP_Buildings_Alpha, 0.7f);

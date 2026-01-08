@@ -1,5 +1,6 @@
 #include "../../SDK/SDK.h"
 
+#include "../Features/CFG.h"
 #include "../Features/Materials/Materials.h"
 #include "../Features/Outlines/Outlines.h"
 
@@ -21,13 +22,25 @@ MAKE_HOOK(CParticleSystemMgr_DrawRenderCache, Signatures::CParticleSystemMgr_Dra
 {
 	if (isDrawingWorld)
 	{
+		// Early exit if both systems are disabled - skip all rendering overhead
+		const bool bMaterialsEnabled = CFG::Materials_Active && (CFG::Materials_Players_Active || CFG::Materials_Buildings_Active || CFG::Materials_World_Active);
+		const bool bOutlinesEnabled = CFG::Outlines_Active && (CFG::Outlines_Players_Active || CFG::Outlines_Buildings_Active || CFG::Outlines_World_Active);
+		
+		if (!bMaterialsEnabled && !bOutlinesEnabled)
+		{
+			CALL_ORIGINAL(ecx, bShadowDepth);
+			return;
+		}
+
 		if (const auto rc = I::MaterialSystem->GetRenderContext())
 		{
 			rc->ClearBuffers(false, false, true);
 		}
 
-		F::Materials->Run();
-		F::Outlines->RunModels();
+		if (bMaterialsEnabled)
+			F::Materials->Run();
+		if (bOutlinesEnabled)
+			F::Outlines->RunModels();
 	}
 
 	CALL_ORIGINAL(ecx, bShadowDepth);

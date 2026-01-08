@@ -4,153 +4,282 @@
 #include <deque>
 #include <unordered_map>
 
-// Per-player behavior profile - learned over the match
-struct PlayerBehavior
+// ============================================================================
+// BEHAVIOR SUB-STRUCTURES - Organized for clarity and cache efficiency
+// ============================================================================
+
+// Strafe and movement pattern data
+struct StrafeBehavior
 {
-	// === STRAFE TENDENCIES ===
 	float m_flCounterStrafeRate = 0.0f;      // How often they A-D spam (0-1)
 	float m_flStrafeIntensity = 0.0f;        // How aggressive their strafes are (avg yaw change)
 	float m_flAvgStrafePeriod = 0.0f;        // Average ticks between direction changes
-	
-	// === MOVEMENT STYLE ===
 	float m_flBunnyHopRate = 0.0f;           // How often they bhop (0-1)
-	float m_flAggressionScore = 0.5f;        // 0=coward/retreating, 1=aggressive/pushing
 	float m_flCornerPeekRate = 0.0f;         // How often they peek and retreat (0-1)
-	
-	// === HEALTH-BASED BEHAVIOR ===
-	float m_flLowHealthRetreatRate = 0.0f;   // Do they run when low HP?
-	float m_flHealedAggroBoost = 0.0f;       // Do they push when being healed?
-	
-	// === TEAM/OBJECTIVE BEHAVIOR ===
-	float m_flCartProximityRate = 0.0f;      // How often near payload cart
-	float m_flTeamProximityRate = 0.0f;      // Do they stick with teammates?
-	float m_flSoloPlayRate = 0.0f;           // Do they flank alone?
-	
-	// === CLASS-SPECIFIC TENDENCIES ===
-	int m_nPlayerClass = 0;                  // TF2 class (scout=1, soldier=2, etc)
-	float m_flClassAggroModifier = 1.0f;     // Class-based aggression adjustment
-	
-	// === SITUATIONAL AWARENESS ===
+	int m_nCounterStrafeSamples = 0;
+	int m_nBunnyHopSamples = 0;
+	int m_nCornerPeekSamples = 0;
+	int m_nAirSamples = 0;
+	int m_nGroundSamples = 0;
+	bool m_bWasOnGround = true;
+	int m_nConsecutiveAirTicks = 0;
+	std::deque<float> m_vRecentYawChanges;
+	std::deque<float> m_vRecentYawTimes;
+};
+
+// Combat and reaction data
+struct CombatBehavior
+{
 	float m_flReactionToThreat = 0.5f;       // How they react when shot at (0=freeze, 1=dodge)
-	float m_flRetreatWhenOutnumbered = 0.0f; // Do they run when outnumbered?
-	float m_flPushWhenAdvantage = 0.0f;      // Do they push when team has numbers?
-	
-	// === WEAPON AWARENESS (are they shooting?) ===
-	bool m_bIsAttacking = false;             // Currently shooting/attacking
-	float m_flLastAttackTime = 0.0f;         // When they last attacked
-	float m_flAttackPredictability = 0.0f;   // Higher = more predictable when attacking (0-1)
-	int m_nAttackingSamples = 0;             // Times we saw them attacking
-	int m_nAttackingStillSamples = 0;        // Times they stood still while attacking
-	int m_nAttackingMovingSamples = 0;       // Times they moved while attacking
-	
-	// === REACTION DETECTION (how do they react when shot at?) ===
-	float m_flLastShotAtTime = 0.0f;         // When we last shot at them
-	float m_flLastAnalyzedShotTime = 0.0f;   // Last shot time we analyzed (prevents double-counting)
-	Vec3 m_vPosWhenShotAt = {};              // Their position when we shot
-	int m_nDodgeLeftCount = 0;               // Times they dodged left after being shot at
-	int m_nDodgeRightCount = 0;              // Times they dodged right
-	int m_nDodgeJumpCount = 0;               // Times they jumped
-	int m_nDodgeBackCount = 0;               // Times they retreated
-	int m_nNoReactionCount = 0;              // Times they didn't react
 	float m_flAvgReactionTime = 0.3f;        // Average time to react (seconds)
-	int m_nReactionSamples = 0;              // Total reaction samples
+	float m_flAttackPredictability = 0.0f;   // Higher = more predictable when attacking (0-1)
+	float m_flLastAttackTime = 0.0f;
+	float m_flLastShotAtTime = 0.0f;
+	float m_flLastAnalyzedShotTime = 0.0f;
+	Vec3 m_vPosWhenShotAt = {};
+	int m_nDodgeLeftCount = 0;
+	int m_nDodgeRightCount = 0;
+	int m_nDodgeJumpCount = 0;
+	int m_nDodgeBackCount = 0;
+	int m_nNoReactionCount = 0;
+	int m_nReactionSamples = 0;
+	int m_nAttackingSamples = 0;
+	int m_nAttackingStillSamples = 0;
+	int m_nAttackingMovingSamples = 0;
+	bool m_bIsAttacking = false;
 	
-	// === TRACKING STATS ===
-	int m_nSampleCount = 0;                  // Total samples collected
-	int m_nCounterStrafeSamples = 0;         // Times we detected counter-strafe
-	int m_nBunnyHopSamples = 0;              // Times we detected bhop
-	int m_nCornerPeekSamples = 0;            // Times we detected corner peek
-	int m_nAggressiveSamples = 0;            // Times moving toward enemies
-	int m_nDefensiveSamples = 0;             // Times moving away from enemies
-	int m_nNearCartSamples = 0;              // Times near payload cart
-	int m_nNearTeamSamples = 0;              // Times near teammates
-	int m_nAloneSamples = 0;                 // Times alone
-	int m_nLowHPRetreatSamples = 0;          // Times retreated when low HP
-	int m_nLowHPFightSamples = 0;            // Times fought when low HP
-	int m_nHealedPushSamples = 0;            // Times pushed while being healed
-	int m_nHealedPassiveSamples = 0;         // Times passive while being healed
-	int m_nAirSamples = 0;                   // Times in air
-	int m_nGroundSamples = 0;                // Times on ground
+	// Melee and look direction tracking
+	bool m_bHasMeleeOut = false;             // Currently holding melee weapon
+	bool m_bIsLookingAtUs = false;           // Looking toward local player
+	float m_flMeleeChargeRate = 0.0f;        // How often they charge with melee (0-1)
+	int m_nMeleeChargeSamples = 0;           // Times they ran at us with melee
+	int m_nMeleePassiveSamples = 0;          // Times they had melee but didn't charge
+};
+
+// Positioning and team behavior data
+struct PositioningBehavior
+{
+	float m_flAggressionScore = 0.5f;        // 0=coward/retreating, 1=aggressive/pushing
+	float m_flLowHealthRetreatRate = 0.0f;
+	float m_flHealedAggroBoost = 0.0f;
+	float m_flCartProximityRate = 0.0f;
+	float m_flTeamProximityRate = 0.0f;
+	float m_flSoloPlayRate = 0.0f;
+	float m_flRetreatWhenOutnumbered = 0.0f;
+	float m_flPushWhenAdvantage = 0.0f;
 	
-	// === RECENT DATA ===
-	std::deque<float> m_vRecentYawChanges;   // Last N yaw deltas
-	std::deque<float> m_vRecentYawTimes;     // Timestamps of yaw changes
-	std::deque<float> m_vRecentHealthPct;    // Recent health percentages
-	std::deque<Vec3> m_vRecentPositions;     // Recent positions for pattern detection
+	// Conditional objective behavior - what do they do in specific situations?
+	float m_flLeavesCartToFight = 0.5f;      // 0=stays on cart, 1=chases enemies when on cart
+	float m_flLeavesTeamToFight = 0.5f;      // 0=stays grouped, 1=breaks off to chase
+	float m_flObjectiveVsFragger = 0.5f;     // 0=pure objective player, 1=pure fragger
+	int m_nOnCartChasedEnemy = 0;            // Was on cart, left to chase
+	int m_nOnCartStayedOnCart = 0;           // Was on cart, stayed despite enemy nearby
+	int m_nWithTeamChasedAlone = 0;          // Was grouped, broke off to chase
+	int m_nWithTeamStayedGrouped = 0;        // Was grouped, stayed with team
+	bool m_bWasNearCart = false;             // For tracking state changes
+	bool m_bWasNearTeam = false;             // For tracking state changes
 	
-	// === POSITION HISTORY ===
+	int m_nAggressiveSamples = 0;
+	int m_nDefensiveSamples = 0;
+	int m_nNearCartSamples = 0;
+	int m_nNearTeamSamples = 0;
+	int m_nAloneSamples = 0;
+	int m_nLowHPRetreatSamples = 0;
+	int m_nLowHPFightSamples = 0;
+	int m_nHealedPushSamples = 0;
+	int m_nHealedPassiveSamples = 0;
+	std::deque<float> m_vRecentHealthPct;
+	std::deque<Vec3> m_vRecentPositions;
+};
+
+// Pattern verification and confidence tracking
+struct PatternConfidence
+{
+	float m_flBehaviorConsistency = 0.0f;    // EMA of how consistent their patterns are (0-1)
+	int m_nConsistencyChecks = 0;
+	int m_nPatternMatches = 0;
+	int m_nPatternMisses = 0;
+	float m_flLastDecayTime = 0.0f;          // For time-weighted decay
+};
+
+// ============================================================================
+// Per-player behavior profile - learned over the match
+// ============================================================================
+struct PlayerBehavior
+{
+	// Sub-structures for organization
+	StrafeBehavior m_Strafe;
+	CombatBehavior m_Combat;
+	PositioningBehavior m_Positioning;
+	PatternConfidence m_Confidence;
+	
+	// Core tracking
+	int m_nSampleCount = 0;
+	int m_nPlayerClass = 0;
+	float m_flClassAggroModifier = 1.0f;
 	Vec3 m_vLastKnownPos = {};
 	float m_flLastUpdateTime = 0.0f;
 	float m_flLastHealth = 0.0f;
 	bool m_bWasBeingHealed = false;
-	bool m_bWasOnGround = true;              // For bhop detection
-	int m_nConsecutiveAirTicks = 0;          // For bhop detection
+	
+	// ========================================================================
+	// CONVENIENCE ACCESSORS - For backward compatibility and cleaner code
+	// ========================================================================
+	float& CounterStrafeRate() { return m_Strafe.m_flCounterStrafeRate; }
+	float& StrafeIntensity() { return m_Strafe.m_flStrafeIntensity; }
+	float& BunnyHopRate() { return m_Strafe.m_flBunnyHopRate; }
+	float& CornerPeekRate() { return m_Strafe.m_flCornerPeekRate; }
+	float& AggressionScore() { return m_Positioning.m_flAggressionScore; }
+	float& LowHealthRetreatRate() { return m_Positioning.m_flLowHealthRetreatRate; }
+	float& HealedAggroBoost() { return m_Positioning.m_flHealedAggroBoost; }
+	float& ReactionToThreat() { return m_Combat.m_flReactionToThreat; }
+	float& AttackPredictability() { return m_Combat.m_flAttackPredictability; }
+	float& AvgReactionTime() { return m_Combat.m_flAvgReactionTime; }
+	bool& IsAttacking() { return m_Combat.m_bIsAttacking; }
+	float& LastAttackTime() { return m_Combat.m_flLastAttackTime; }
 	
 	void Reset()
 	{
-		m_flCounterStrafeRate = 0.0f;
-		m_flStrafeIntensity = 0.0f;
-		m_flAvgStrafePeriod = 0.0f;
-		m_flBunnyHopRate = 0.0f;
-		m_flAggressionScore = 0.5f;
-		m_flCornerPeekRate = 0.0f;
-		m_flLowHealthRetreatRate = 0.0f;
-		m_flHealedAggroBoost = 0.0f;
-		m_flCartProximityRate = 0.0f;
-		m_flTeamProximityRate = 0.0f;
-		m_flSoloPlayRate = 0.0f;
+		m_Strafe = StrafeBehavior{};
+		m_Combat = CombatBehavior{};
+		m_Positioning = PositioningBehavior{};
+		m_Confidence = PatternConfidence{};
+		m_nSampleCount = 0;
 		m_nPlayerClass = 0;
 		m_flClassAggroModifier = 1.0f;
-		m_flReactionToThreat = 0.5f;
-		m_flRetreatWhenOutnumbered = 0.0f;
-		m_flPushWhenAdvantage = 0.0f;
-		m_bIsAttacking = false;
-		m_flLastAttackTime = 0.0f;
-		m_flAttackPredictability = 0.0f;
-		m_nAttackingSamples = 0;
-		m_nAttackingStillSamples = 0;
-		m_nAttackingMovingSamples = 0;
-		m_flLastShotAtTime = 0.0f;
-		m_flLastAnalyzedShotTime = 0.0f;
-		m_vPosWhenShotAt = {};
-		m_nDodgeLeftCount = 0;
-		m_nDodgeRightCount = 0;
-		m_nDodgeJumpCount = 0;
-		m_nDodgeBackCount = 0;
-		m_nNoReactionCount = 0;
-		m_flAvgReactionTime = 0.3f;
-		m_nReactionSamples = 0;
-		m_nSampleCount = 0;
-		m_nCounterStrafeSamples = 0;
-		m_nBunnyHopSamples = 0;
-		m_nCornerPeekSamples = 0;
-		m_nAggressiveSamples = 0;
-		m_nDefensiveSamples = 0;
-		m_nNearCartSamples = 0;
-		m_nNearTeamSamples = 0;
-		m_nAloneSamples = 0;
-		m_nLowHPRetreatSamples = 0;
-		m_nLowHPFightSamples = 0;
-		m_nHealedPushSamples = 0;
-		m_nHealedPassiveSamples = 0;
-		m_nAirSamples = 0;
-		m_nGroundSamples = 0;
-		m_vRecentYawChanges.clear();
-		m_vRecentYawTimes.clear();
-		m_vRecentHealthPct.clear();
-		m_vRecentPositions.clear();
 		m_vLastKnownPos = {};
 		m_flLastUpdateTime = 0.0f;
 		m_flLastHealth = 0.0f;
 		m_bWasBeingHealed = false;
-		m_bWasOnGround = true;
-		m_nConsecutiveAirTicks = 0;
 	}
 	
 	// Get overall prediction confidence (0-1)
+	// Based on how CONSISTENT/PREDICTABLE the player actually is, not just time watched
 	float GetConfidence() const
 	{
-		return std::min(static_cast<float>(m_nSampleCount) / 100.0f, 1.0f);
+		// Need minimum data before we can be confident
+		if (m_nSampleCount < 30)
+			return 0.1f;  // ~1.5 sec minimum
+		
+		// Base confidence from pattern consistency (how often our predictions match reality)
+		float flConsistencyConf = m_Confidence.m_flBehaviorConsistency;
+		
+		// Boost confidence if we have enough consistency checks to trust the data
+		float flDataTrust = 0.0f;
+		if (m_Confidence.m_nConsistencyChecks > 0)
+		{
+			// More checks = more trust in our consistency score
+			// 10 checks: 50% trust, 30 checks: 80% trust, 50+ checks: 95% trust
+			flDataTrust = std::min(static_cast<float>(m_Confidence.m_nConsistencyChecks) / 50.0f, 0.95f);
+		}
+		
+		// If we don't have enough consistency data yet, fall back to data quality
+		if (m_Confidence.m_nConsistencyChecks < 5)
+		{
+			float flQuality = GetDataQuality();
+			return std::min(0.3f + flQuality * 0.3f, 0.5f);  // Cap at 50% until we verify patterns
+		}
+		
+		// Final confidence = consistency score weighted by how much we trust the data
+		float flQualityBonus = GetDataQuality() * 0.1f;
+		
+		return std::clamp(flConsistencyConf * flDataTrust + flQualityBonus, 0.1f, 0.95f);
+	}
+	
+	// Record a pattern match/miss - call this when verifying predictions
+	void RecordPatternCheck(bool bMatched)
+	{
+		m_Confidence.m_nConsistencyChecks++;
+		if (bMatched)
+			m_Confidence.m_nPatternMatches++;
+		else
+			m_Confidence.m_nPatternMisses++;
+		
+		// Update consistency EMA (0.9/0.1 for smooth updates)
+		float flMatchRate = bMatched ? 1.0f : 0.0f;
+		m_Confidence.m_flBehaviorConsistency = m_Confidence.m_flBehaviorConsistency * 0.9f + flMatchRate * 0.1f;
+	}
+	
+	// Apply time-weighted decay to old data - call periodically
+	// This allows the system to adapt if a player changes playstyle
+	void ApplyDecay(float flCurTime)
+	{
+		// Only decay every 30 seconds
+		if (flCurTime - m_Confidence.m_flLastDecayTime < 30.0f)
+			return;
+		m_Confidence.m_flLastDecayTime = flCurTime;
+		
+		// Decay factor - reduces old data influence by ~10% every 30 sec
+		const float flDecay = 0.9f;
+		
+		// Decay sample counts (keeps ratios but reduces absolute counts)
+		m_Strafe.m_nCounterStrafeSamples = static_cast<int>(m_Strafe.m_nCounterStrafeSamples * flDecay);
+		m_Strafe.m_nBunnyHopSamples = static_cast<int>(m_Strafe.m_nBunnyHopSamples * flDecay);
+		m_Strafe.m_nCornerPeekSamples = static_cast<int>(m_Strafe.m_nCornerPeekSamples * flDecay);
+		m_Strafe.m_nAirSamples = static_cast<int>(m_Strafe.m_nAirSamples * flDecay);
+		m_Strafe.m_nGroundSamples = static_cast<int>(m_Strafe.m_nGroundSamples * flDecay);
+		
+		m_Positioning.m_nAggressiveSamples = static_cast<int>(m_Positioning.m_nAggressiveSamples * flDecay);
+		m_Positioning.m_nDefensiveSamples = static_cast<int>(m_Positioning.m_nDefensiveSamples * flDecay);
+		m_Positioning.m_nNearCartSamples = static_cast<int>(m_Positioning.m_nNearCartSamples * flDecay);
+		m_Positioning.m_nNearTeamSamples = static_cast<int>(m_Positioning.m_nNearTeamSamples * flDecay);
+		m_Positioning.m_nAloneSamples = static_cast<int>(m_Positioning.m_nAloneSamples * flDecay);
+		
+		// Decay total sample count too (but keep minimum for stability)
+		m_nSampleCount = std::max(static_cast<int>(m_nSampleCount * flDecay), 50);
+	}
+	
+	// Get pattern match rate (0-1)
+	float GetPatternMatchRate() const
+	{
+		if (m_Confidence.m_nConsistencyChecks == 0)
+			return 0.0f;
+		return static_cast<float>(m_Confidence.m_nPatternMatches) / 
+		       static_cast<float>(m_Confidence.m_nConsistencyChecks);
+	}
+	
+	// Get data quality score (0-1) - how diverse is our data?
+	// Higher = we've seen them in more situations = better predictions
+	float GetDataQuality() const
+	{
+		int nFactors = 0;
+		constexpr int nMaxFactors = 12;
+		
+		// Movement patterns
+		if (m_Strafe.m_flStrafeIntensity > 0.5f) nFactors++;
+		if (m_Strafe.m_nBunnyHopSamples > 2) nFactors++;
+		if (m_Strafe.m_nCornerPeekSamples > 2) nFactors++;
+		
+		// Aggression/positioning
+		if (m_Positioning.m_nAggressiveSamples > 10) nFactors++;
+		if (m_Positioning.m_nDefensiveSamples > 10) nFactors++;
+		if (m_Positioning.m_nNearTeamSamples + m_Positioning.m_nAloneSamples > 10) nFactors++;
+		
+		// Health-based behavior
+		if (m_Positioning.m_nLowHPRetreatSamples + m_Positioning.m_nLowHPFightSamples > 3) nFactors++;
+		if (m_Positioning.m_nHealedPushSamples + m_Positioning.m_nHealedPassiveSamples > 2) nFactors++;
+		
+		// Combat behavior
+		if (m_Combat.m_nReactionSamples > 2) nFactors++;
+		if (m_Combat.m_nAttackingSamples > 5) nFactors++;
+		
+		// Air time (important for projectile prediction)
+		if (m_Strafe.m_nAirSamples > 50) nFactors++;
+		if (m_Strafe.m_nGroundSamples > 50) nFactors++;
+		
+		return static_cast<float>(nFactors) / static_cast<float>(nMaxFactors);
+	}
+	
+	// Get learning rate indicator (0-1) - how fast are we still learning?
+	// Higher = still gathering new data, lower = behavior is stable/known
+	float GetLearningRate() const
+	{
+		if (m_nSampleCount < 50)
+			return 1.0f;  // Still in initial learning phase (~2.5 sec)
+		
+		// Learning rate decreases as we get more samples (EMA converges)
+		float flRate = 50.0f / static_cast<float>(m_nSampleCount);
+		return std::clamp(flRate * 3.0f, 0.05f, 1.0f);
 	}
 	
 	// Get movement prediction modifier based on current situation
@@ -159,23 +288,31 @@ struct PlayerBehavior
 		float flMod = 1.0f;
 		
 		// Low health behavior
-		if (bLowHealth && m_flLowHealthRetreatRate > 0.5f)
+		if (bLowHealth && m_Positioning.m_flLowHealthRetreatRate > 0.5f)
 			flMod *= 0.6f;  // Likely to retreat/slow down
 		
 		// Being healed behavior  
-		if (bBeingHealed && m_flHealedAggroBoost > 0.5f)
+		if (bBeingHealed && m_Positioning.m_flHealedAggroBoost > 0.5f)
 			flMod *= 1.3f;  // Likely to push harder
 		
 		// Near cart behavior (payload)
-		if (bNearCart && m_flCartProximityRate > 0.5f)
+		if (bNearCart && m_Positioning.m_flCartProximityRate > 0.5f)
 			flMod *= 0.7f;  // Likely to stay near cart
 		
 		// Team proximity
-		if (bNearTeam && m_flTeamProximityRate > 0.5f)
+		if (bNearTeam && m_Positioning.m_flTeamProximityRate > 0.5f)
 			flMod *= 0.85f; // Moves with team, more predictable
 		
 		return flMod;
 	}
+	
+	// ========================================================================
+	// PLAYSTYLE ANALYSIS - Think logically about what kind of player this is
+	// Returns: -1.0 (very defensive/scared) to +1.0 (very aggressive/brave)
+	// Also provides category name for display
+	// Implementation in MovementSimulation.cpp (uses TF_CLASS constants)
+	// ========================================================================
+	float GetPlaystyle(const char** pOutCategory = nullptr) const;
 };
 
 struct MoveStorage
@@ -202,6 +339,12 @@ struct MoveStorage
 	
 	// Counter-strafe spam detection (A-D spam)
 	bool m_bCounterStrafeSpam = false;
+	
+	// Cached values for RunTick performance (set in Initialize)
+	PlayerBehavior* m_pCachedBehavior = nullptr;
+	bool m_bCachedLowHealth = false;
+	bool m_bCachedBeingHealed = false;
+	bool m_bCachedAiming = false;
 };
 
 struct MoveData
@@ -222,7 +365,6 @@ private:
 	bool SetupMoveData(MoveStorage& tStorage);
 	void GetAverageYaw(MoveStorage& tStorage, int iSamples);
 	bool StrafePrediction(MoveStorage& tStorage, int iSamples);
-	void DetectCounterStrafeSpam(MoveStorage& tStorage);  // A-D spam detection
 
 	bool m_bOldInPrediction = false;
 	bool m_bOldFirstTimePredicted = false;
@@ -240,7 +382,6 @@ private:
 	// Behavior learning
 	void UpdatePlayerBehavior(C_TFPlayer* pPlayer);
 	void LearnCounterStrafe(int nEntIndex, PlayerBehavior& behavior);
-	void LearnAggression(C_TFPlayer* pPlayer, PlayerBehavior& behavior);
 	void LearnHealthBehavior(C_TFPlayer* pPlayer, PlayerBehavior& behavior);
 	void LearnTeamBehavior(C_TFPlayer* pPlayer, PlayerBehavior& behavior);
 	void LearnObjectiveBehavior(C_TFPlayer* pPlayer, PlayerBehavior& behavior);
@@ -255,11 +396,16 @@ private:
 	C_BaseEntity* FindPayloadCart();
 	int CountNearbyTeammates(C_TFPlayer* pPlayer, float flRadius);
 	int CountNearbyEnemies(C_TFPlayer* pPlayer, float flRadius);
+	
+	// Bounds adjustment for origin compression fix (non-local players)
+	void SetBounds(C_TFPlayer* pPlayer);
+	void RestoreBounds(C_TFPlayer* pPlayer);
 
 public:
 	void Store();
 	void ClearBehaviors() { m_mPlayerBehaviors.clear(); }  // Call on map change
-	PlayerBehavior* GetPlayerBehavior(int nEntIndex);
+	PlayerBehavior* GetPlayerBehavior(int nEntIndex);      // Read-only access (returns nullptr if not found)
+	PlayerBehavior& GetOrCreateBehavior(int nEntIndex);    // Write access (creates if not found)
 	
 	// Call when local player fires a projectile at a target
 	void OnShotFired(int nTargetEntIndex);
@@ -268,16 +414,16 @@ public:
 	int GetPredictedDodge(int nEntIndex)
 	{
 		auto* pBehavior = GetPlayerBehavior(nEntIndex);
-		if (!pBehavior || pBehavior->m_nReactionSamples < 5)
+		if (!pBehavior || pBehavior->m_Combat.m_nReactionSamples < 5)
 			return 0;
 		
-		int nMax = pBehavior->m_nNoReactionCount;
+		int nMax = pBehavior->m_Combat.m_nNoReactionCount;
 		int nDir = 0;
 		
-		if (pBehavior->m_nDodgeLeftCount > nMax) { nMax = pBehavior->m_nDodgeLeftCount; nDir = -1; }
-		if (pBehavior->m_nDodgeRightCount > nMax) { nMax = pBehavior->m_nDodgeRightCount; nDir = 1; }
-		if (pBehavior->m_nDodgeJumpCount > nMax) { nMax = pBehavior->m_nDodgeJumpCount; nDir = 2; }
-		if (pBehavior->m_nDodgeBackCount > nMax) { nMax = pBehavior->m_nDodgeBackCount; nDir = 3; }
+		if (pBehavior->m_Combat.m_nDodgeLeftCount > nMax) { nMax = pBehavior->m_Combat.m_nDodgeLeftCount; nDir = -1; }
+		if (pBehavior->m_Combat.m_nDodgeRightCount > nMax) { nMax = pBehavior->m_Combat.m_nDodgeRightCount; nDir = 1; }
+		if (pBehavior->m_Combat.m_nDodgeJumpCount > nMax) { nMax = pBehavior->m_Combat.m_nDodgeJumpCount; nDir = 2; }
+		if (pBehavior->m_Combat.m_nDodgeBackCount > nMax) { nMax = pBehavior->m_Combat.m_nDodgeBackCount; nDir = 3; }
 		
 		return nDir;
 	}
