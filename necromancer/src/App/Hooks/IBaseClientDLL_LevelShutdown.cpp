@@ -5,6 +5,7 @@
 #include "../Features/WorldModulation/WorldModulation.h"
 #include "../Features/Paint/Paint.h"
 #include "../Features/SeedPred/SeedPred.h"
+#include "../Features/MovementSimulation/MovementSimulation.h"
 
 // Quick debug log
 static void DebugLog(const char* msg)
@@ -60,6 +61,9 @@ MAKE_HOOK(IBaseClientDLL_LevelShutdown, Memory::GetVFunc(I::BaseClientDLL, 7), v
 
 	DebugLog("LevelShutdown: Shifting Reset");
 	Shifting::Reset();
+	
+	DebugLog("LevelShutdown: Clear player behaviors");
+	F::MovementSimulation->ClearBehaviors();
 	
 	DebugLog("LevelShutdown: END");
 }

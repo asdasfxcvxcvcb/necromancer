@@ -368,6 +368,30 @@ namespace Math
 		out[1] = in1.Dot(in2[1]);
 		out[2] = in1.Dot(in2[2]);
 	}
+
+	// Fix movement inputs when changing view angles (for silent aim, movement simulation, etc.)
+	// Converts movement from one view angle space to another
+	inline void FixMovement(float& flForwardMove, float& flSideMove, const Vec3& vCurAngle, const Vec3& vTargetAngle)
+	{
+		bool bCurOOB = fabsf(NormalizeAngle(vCurAngle.x)) > 90.f;
+		bool bTargetOOB = fabsf(NormalizeAngle(vTargetAngle.x)) > 90.f;
+
+		Vec3 vMove = { flForwardMove, flSideMove * (bCurOOB ? -1.f : 1.f), 0.f };
+		float flSpeed = vMove.Length2D();
+		
+		if (flSpeed < 0.001f)
+			return;
+		
+		Vec3 vMoveAng = {};
+		VectorAngles(vMove, vMoveAng);
+
+		float flCurYaw = vCurAngle.y + (bCurOOB ? 180.f : 0.f);
+		float flTargetYaw = vTargetAngle.y + (bTargetOOB ? 180.f : 0.f);
+		float flYaw = DEG2RAD(flTargetYaw - flCurYaw + vMoveAng.y);
+
+		flForwardMove = cosf(flYaw) * flSpeed;
+		flSideMove = sinf(flYaw) * flSpeed * (bTargetOOB ? -1.f : 1.f);
+	}
 }
 
 #pragma warning (pop)

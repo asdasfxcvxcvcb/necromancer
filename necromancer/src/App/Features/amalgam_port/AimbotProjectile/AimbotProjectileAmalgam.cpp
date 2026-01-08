@@ -1324,6 +1324,12 @@ bool CAmalgamAimbotProjectile::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeap
 		// Only draw on the tick we actually fire, or if enough time has passed since last draw
 		if (bJustFired || (bFiringNow && I::GlobalVars->tickcount - nLastDrawTick > 66)) // ~1 second between redraws if holding
 		{
+			// Notify movement simulation that we fired at this target (for reaction learning)
+			if (bJustFired && tTarget.m_iTargetType == TargetEnum::Player && tTarget.m_pEntity)
+			{
+				F::MovementSimulation->OnShotFired(tTarget.m_pEntity->entindex());
+			}
+			
 			// Clear previous overlays
 			I::DebugOverlay->ClearAllOverlays();
 			nLastDrawTick = I::GlobalVars->tickcount;

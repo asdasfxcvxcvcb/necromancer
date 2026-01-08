@@ -3,6 +3,7 @@
 #include "../Features/CFG.h"
 #include "../Features/WorldModulation/WorldModulation.h"
 #include "../Features/LagRecords/LagRecords.h"
+#include "../Features/MovementSimulation/MovementSimulation.h"
 #include "../Features/MiscVisuals/MiscVisuals.h"
 #include "../Features/Crits/Crits.h"
 #include "../Features/Weather/Weather.h"
@@ -99,6 +100,7 @@ MAKE_HOOK(IBaseClientDLL_FrameStageNotify, Memory::GetVFunc(I::BaseClientDLL, 35
 
 			F::LagRecords->UpdateDatagram();
 			F::LagRecords->UpdateRecords();
+			F::MovementSimulation->Store(); // Store movement records for strafe prediction
 
 			if (G::mapVelFixRecords.size() > 64)
 			{
