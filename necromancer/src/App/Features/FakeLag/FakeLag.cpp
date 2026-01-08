@@ -167,21 +167,6 @@ EFakeLagThreatType CFakeLag::CheckSniperThreat(C_TFPlayer* pLocal, int& outMinTi
 	if (!CFG::Exploits_FakeLag_Enabled)
 		return EFakeLagThreatType::None;
 
-	// Throttle expensive checks - only run every 3 ticks (~45ms at 66 tick)
-	// This is still responsive enough for sniper threat detection
-	static int s_nThrottleCounter = 0;
-	static EFakeLagThreatType s_eLastThreat = EFakeLagThreatType::None;
-	static int s_nLastMinTicks = 4;
-	static int s_nLastMaxTicks = 7;
-	
-	if (++s_nThrottleCounter < 3)
-	{
-		outMinTicks = s_nLastMinTicks;
-		outMaxTicks = s_nLastMaxTicks;
-		return s_eLastThreat;
-	}
-	s_nThrottleCounter = 0;
-
 	// Default values for no tag (will be overridden based on threat type)
 	outMinTicks = 4;
 	outMaxTicks = 7;
@@ -313,11 +298,6 @@ EFakeLagThreatType CFakeLag::CheckSniperThreat(C_TFPlayer* pLocal, int& outMinTi
 		outMaxTicks = nHighestMaxTicks;
 	}
 
-	// Cache results for throttling
-	s_eLastThreat = eHighestThreat;
-	s_nLastMinTicks = outMinTicks;
-	s_nLastMaxTicks = outMaxTicks;
-
 	return eHighestThreat;
 }
 
@@ -331,26 +311,21 @@ void CFakeLag::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd, 
 	if (!m_iGoal)
 		m_iGoal = 22;
 	
-	// Check for new entities and force unchoke - only check every 22 ticks (~0.33 sec) to save CPU
+	// Check for new entities and force unchoke
 	static int nLastPlayerCount = 0;
-	static int nCheckCounter = 0;
-	if (++nCheckCounter >= 22)
+	int nCurrentPlayerCount = 0;
+	for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PLAYERS_ENEMIES))
 	{
-		nCheckCounter = 0;
-		int nCurrentPlayerCount = 0;
-		for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PLAYERS_ENEMIES))
+		if (auto pPlayer = pEntity->As<C_TFPlayer>())
 		{
-			if (auto pPlayer = pEntity->As<C_TFPlayer>())
-			{
-				if (!pPlayer->deadflag())
-					nCurrentPlayerCount++;
-			}
+			if (!pPlayer->deadflag())
+				nCurrentPlayerCount++;
 		}
-		
-		if (nCurrentPlayerCount > nLastPlayerCount)
-			m_iNewEntityUnchokeTicks = 5;
-		nLastPlayerCount = nCurrentPlayerCount;
 	}
+	
+	if (nCurrentPlayerCount > nLastPlayerCount)
+		m_iNewEntityUnchokeTicks = 5;
+	nLastPlayerCount = nCurrentPlayerCount;
 	
 	if (m_iNewEntityUnchokeTicks > 0)
 	{
