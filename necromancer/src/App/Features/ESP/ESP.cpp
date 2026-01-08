@@ -200,32 +200,27 @@ void CESP::DrawBones(C_TFPlayer* pPlayer, Color_t color)
 	if (!pStudioHdr)
 		return;
 
-	// Use cached bone data instead of calling SetupBones every frame - MASSIVE performance gain
-	const auto pCachedBoneData = pPlayer->GetCachedBoneData();
-	if (!pCachedBoneData || pCachedBoneData->Count() <= 0)
+	matrix3x4_t boneMatrix[MAXSTUDIOBONES];
+
+	if (!pPlayer->SetupBones(boneMatrix, MAXSTUDIOBONES, BONE_USED_BY_HITBOX, I::GlobalVars->curtime))
 		return;
 
 	Vec3 p1 = {}, p2 = {};
 	Vec3 p1s = {}, p2s = {};
 
-	const int nBoneCount = std::min(pStudioHdr->numbones, pCachedBoneData->Count());
-
-	for (int n = 0; n < nBoneCount; n++)
+	for (int n = 0; n < pStudioHdr->numbones; n++)
 	{
 		const mstudiobone_t* pBone = pStudioHdr->pBone(n);
 
 		if (!pBone || pBone->parent == -1 || !(pBone->flags & BONE_USED_BY_HITBOX))
 			continue;
 
-		if (pBone->parent >= pCachedBoneData->Count())
-			continue;
-
-		MatrixPosition((*pCachedBoneData)[n], p1);
+		MatrixPosition(boneMatrix[n], p1);
 
 		if (!H::Draw->W2S(p1, p1s))
 			continue;
 
-		MatrixPosition((*pCachedBoneData)[pBone->parent], p2);
+		MatrixPosition(boneMatrix[pBone->parent], p2);
 
 		if (!H::Draw->W2S(p2, p2s))
 			continue;
