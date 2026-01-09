@@ -3737,11 +3737,11 @@ void CMenu::MainWindow()
 			auto [col5, ord5] = LoadGroupBoxPosition(CFG::Menu_GroupBox_Exploits_RegionSelector);
 			auto [col6, ord6] = LoadGroupBoxPosition(CFG::Menu_GroupBox_Exploits_AntiAim);
 
-			// Sizes: Shifting=Medium, FakeLag=Small, Crithack=Small, NoSpread=ExtraSmall, RegionSelector=Medium, AntiAim=Big
-			RegisterGroupBox("Exploits", "Shifting", col1, ord1, 150, EGroupBoxSize::MEDIUM);
+			// Sizes: Shifting=VeryBig, FakeLag=Small, Crithack=Medium, NoSpread=ExtraSmall, RegionSelector=Medium, AntiAim=Big
+			RegisterGroupBox("Exploits", "Shifting", col1, ord1, 150, EGroupBoxSize::VERY_BIG);
 			RegisterGroupBox("Exploits", "FakeLag", col2, ord2, 150, EGroupBoxSize::SMALL);
 			RegisterGroupBox("Exploits", "AntiAim", col6, ord6, 145, EGroupBoxSize::BIG);
-			RegisterGroupBox("Exploits", "Crithack", col3, ord3, 150, EGroupBoxSize::SMALL);
+			RegisterGroupBox("Exploits", "Crithack", col3, ord3, 150, EGroupBoxSize::MEDIUM);
 			RegisterGroupBox("Exploits", "No Spread", col4, ord4, 150, EGroupBoxSize::EXTRA_SMALL);
 			RegisterGroupBox("Exploits", "Region Selector", col5, ord5, 150, EGroupBoxSize::MEDIUM);
 			bExploitsInitialized = true;
@@ -5607,12 +5607,14 @@ void CMenu::HandleGroupBoxDrag()
 			
 			// Validation for Exploits tab using size categories
 			// Rules:
+			// - 1 very_big + up to 1 extrasmall allowed in 1 lane (very_big takes most of the column)
 			// - 1 big + 1 medium + 1 extrasmall allowed in 1 lane
 			// - 1 big + 1 extrasmall + 2 small allowed in 1 lane
 			// - 2 medium + 2 small + 1 extrasmall allowed in 1 lane (can swap 1 extrasmall for 1 small = 2 medium + 3 small)
 			if (szTab == "Exploits")
 			{
 				// Count sizes in target column (excluding the dragged one)
+				int nVeryBigInTarget = 0;
 				int nBigInTarget = 0;
 				int nMediumInTarget = 0;
 				int nSmallInTarget = 0;
@@ -5626,6 +5628,7 @@ void CMenu::HandleGroupBoxDrag()
 					{
 						switch (pair.second.m_eSize)
 						{
+							case EGroupBoxSize::VERY_BIG: nVeryBigInTarget++; break;
 							case EGroupBoxSize::BIG: nBigInTarget++; break;
 							case EGroupBoxSize::MEDIUM: nMediumInTarget++; break;
 							case EGroupBoxSize::SMALL: nSmallInTarget++; break;
@@ -5635,35 +5638,37 @@ void CMenu::HandleGroupBoxDrag()
 				}
 				
 				// Add the dragged box counts
+				int nNewVeryBig = nVeryBigInTarget + (gb.m_eSize == EGroupBoxSize::VERY_BIG ? 1 : 0);
 				int nNewBig = nBigInTarget + (gb.m_eSize == EGroupBoxSize::BIG ? 1 : 0);
 				int nNewMedium = nMediumInTarget + (gb.m_eSize == EGroupBoxSize::MEDIUM ? 1 : 0);
 				int nNewSmall = nSmallInTarget + (gb.m_eSize == EGroupBoxSize::SMALL ? 1 : 0);
 				int nNewExtraSmall = nExtraSmallInTarget + (gb.m_eSize == EGroupBoxSize::EXTRA_SMALL ? 1 : 0);
 				
 				// Check valid combinations:
-				// 1. 1 big + 1 medium + 1 extrasmall
-				// 2. 1 big + 1 extrasmall + 2 small
-				// 3. 2 medium + 1 small + 1 extrasmall (or 2 medium + 2 small with no extrasmall)
 				bool bValidPlacement = false;
 				
-				// Rule 1: 1 big + 1 medium + 1 extrasmall (no small)
-				if (nNewBig == 1 && nNewMedium <= 1 && nNewSmall == 0 && nNewExtraSmall <= 1)
+				// Rule 0a: 1 very_big + 1 medium + 1 small + 1 extrasmall (no big) - Shifting+Crithack+FakeLag+NoSpread
+				if (nNewVeryBig == 1 && nNewBig == 0 && nNewMedium <= 1 && nNewSmall <= 1 && nNewExtraSmall <= 1)
 					bValidPlacement = true;
 				
-				// Rule 2: 1 big + 1 extrasmall + up to 2 small (no medium)
-				if (nNewBig == 1 && nNewMedium == 0 && nNewSmall <= 2 && nNewExtraSmall <= 1)
+				// Rule 0b: 1 very_big + 2 medium + (1 small OR 1 extrasmall, not both) (no big) - Shifting+RegionSelector+Crithack+FakeLag/NoSpread
+				if (nNewVeryBig == 1 && nNewBig == 0 && nNewMedium == 2 && (nNewSmall + nNewExtraSmall) <= 1)
 					bValidPlacement = true;
 				
-				// Rule 3: 2 medium + 1 small + 1 extrasmall (no big)
-				if (nNewBig == 0 && nNewMedium <= 2 && nNewSmall <= 1 && nNewExtraSmall <= 1)
+				// Rule 1: 1 big + 1 medium + 1 extrasmall (no small, no very_big)
+				if (nNewVeryBig == 0 && nNewBig == 1 && nNewMedium <= 1 && nNewSmall == 0 && nNewExtraSmall <= 1)
 					bValidPlacement = true;
 				
-				// Rule 3 variant: 2 medium + 1 small (no big, no extrasmall)
-				if (nNewBig == 0 && nNewMedium <= 2 && nNewSmall <= 1 && nNewExtraSmall == 0)
+				// Rule 2: 1 big + up to 1 small + 1 extrasmall (no medium, no very_big)
+				if (nNewVeryBig == 0 && nNewBig == 1 && nNewMedium == 0 && nNewSmall <= 1 && nNewExtraSmall <= 1)
+					bValidPlacement = true;
+				
+				// Rule 3: 2 medium + 1 small + 1 extrasmall (no big, no very_big) - RegionSelector+Crithack+FakeLag+NoSpread
+				if (nNewVeryBig == 0 && nNewBig == 0 && nNewMedium <= 2 && nNewSmall <= 1 && nNewExtraSmall <= 1)
 					bValidPlacement = true;
 				
 				// Also allow empty or single-item columns
-				int totalInColumn = nNewBig + nNewMedium + nNewSmall + nNewExtraSmall;
+				int totalInColumn = nNewVeryBig + nNewBig + nNewMedium + nNewSmall + nNewExtraSmall;
 				if (totalInColumn <= 1)
 					bValidPlacement = true;
 				
