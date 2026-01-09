@@ -65,5 +65,8 @@ MAKE_HOOK(IBaseClientDLL_LevelShutdown, Memory::GetVFunc(I::BaseClientDLL, 7), v
 	DebugLog("LevelShutdown: Clear player behaviors");
 	F::MovementSimulation->ClearBehaviors();
 	
+	// Clear level transition flag - cleanup is done, menu should work again
+	G::bLevelTransition = false;
+	
 	DebugLog("LevelShutdown: END");
 }

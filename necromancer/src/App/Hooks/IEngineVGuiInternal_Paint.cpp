@@ -20,10 +20,6 @@ MAKE_HOOK(IEngineVGuiInternal_Paint, Memory::GetVFunc(I::EngineVGui, 14), void, 
 {
 	CALL_ORIGINAL(ecx, mode);
 
-	// Skip during level transitions
-	if (G::bLevelTransition)
-		return;
-
 	if (mode & PAINT_UIPANELS)
 	{
 		H::Draw->UpdateW2SMatrix();
