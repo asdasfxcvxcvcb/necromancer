@@ -12,7 +12,7 @@ static inline int GetJitter(uint32_t uHash)
 	return mJitter[uHash] ? 1 : -1;
 }
 
-// Simple hash for jitter keys
+// Simple hash for jitter keys 1
 static constexpr uint32_t HashJitter(const char* str)
 {
 	uint32_t hash = 2166136261u;
@@ -84,19 +84,9 @@ bool CFakeAngle::ShouldRun(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd
 	if (pLocal->InCond(TF_COND_SHIELD_CHARGE))
 		return false;
 	
-	// ONLY disable anti-aim on the EXACT tick when the bullet fires (G::Attacking == 1)
-	// This matches Amalgam's behavior - anti-aim should run on all other ticks
-	// even when holding attack, so you maintain your fake angles between shots
-	// 
-	// G::Attacking values:
-	// 0 = not attacking (or can't attack yet - weapon on cooldown)
-	// 1 = attacking THIS tick (bullet fires now)
-	// 2 = attack queued (reloading)
+	// Only disable anti-aim on the EXACT tick when attacking (G::Attacking == 1)
+	// This matches Amalgam's behavior - anti-aim runs between shots
 	if (G::Attacking == 1)
-		return false;
-	
-	// Don't anti-aim during doubletap (like Amalgam's m_bDoubletap check)
-	if (Shifting::bShifting && !Shifting::bShiftingWarp)
 		return false;
 	
 	// Don't anti-aim during recharging
@@ -437,7 +427,7 @@ void CFakeAngle::MinWalk(CUserCmd* pCmd, C_TFPlayer* pLocal)
 	}
 }
 
-void CFakeAngle::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, bool bSendPacket)
+void CFakeAngle::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, bool bSendPacket, const Vec3& vOriginalAngles)
 {
 	// Set global anti-aim flag (like Amalgam's G::AntiAim)
 	// ShouldRun checks G::Attacking == 1, which is now updated AFTER aimbot runs
@@ -463,7 +453,7 @@ void CFakeAngle::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon
 	
 	// Pitch: Amalgam uses a single GetPitch that combines real+fake into exploit pitch
 	// The pitch is the SAME for both ticks - the exploit is in the value itself
-	vAngles.x = GetPitch(pCmd->viewangles.x);
+	vAngles.x = GetPitch(vOriginalAngles.x);
 	
 	// Yaw: Different for real vs fake
 	// bSendPacket = true means fake yaw (what enemies see)
@@ -475,13 +465,13 @@ void CFakeAngle::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon
 	if (bSendPacket)
 	{
 		// This is the fake tick, also calculate real angles for storage
-		m_vRealAngles.x = GetPitch(pCmd->viewangles.x);
+		m_vRealAngles.x = GetPitch(vOriginalAngles.x);
 		m_vRealAngles.y = GetYaw(pLocal, pCmd, false); // false = real yaw
 	}
 	else
 	{
 		// This is the real tick, also calculate fake angles for storage
-		m_vFakeAngles.x = GetPitch(pCmd->viewangles.x);
+		m_vFakeAngles.x = GetPitch(vOriginalAngles.x);
 		m_vFakeAngles.y = GetYaw(pLocal, pCmd, true); // true = fake yaw
 	}
 	
@@ -492,10 +482,11 @@ void CFakeAngle::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon
 	if (CFG::Misc_AntiCheat_Enabled)
 		Math::ClampAngles(vCmdAngles);
 	
-	// Fix movement using the angles we're applying
-	// Use clamped pitch for movement fix to avoid issues
+	// Fix movement from ORIGINAL view angles to the new anti-aim angles
+	// This is critical - we need to convert movement from where the player is looking
+	// to where the anti-aim angles are pointing
 	Vec3 vClampedForMovement = { std::clamp(vAngles.x, -89.0f, 89.0f), vAngles.y, 0.0f };
-	H::AimUtils->FixMovement(pCmd, vClampedForMovement);
+	H::AimUtils->FixMovement(pCmd, vOriginalAngles, vClampedForMovement);
 	
 	// Apply angles
 	pCmd->viewangles.x = vCmdAngles.x;

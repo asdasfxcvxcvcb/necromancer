@@ -3,6 +3,8 @@
 #include "../CFG.h"
 #include "AntiCheatCompat/AntiCheatCompat.h"
 #include "../Aimbot/AimbotMelee/AimbotMelee.h"
+#include "../FakeAngle/FakeAngle.h"
+#include "../amalgam_port/AmalgamCompat.h"
 
 void CMisc::Bunnyhop(CUserCmd* pCmd)
 {
@@ -310,8 +312,14 @@ void CMisc::FastAccelerate(CUserCmd* pCmd)
 	if (CFG::Misc_AntiCheat_Enabled)
 		return;
 
-	// Skip on attack, doubletap, speedhack, recharge, anti-aim, or every other tick
-	if (G::Attacking == 1 || I::GlobalVars->tickcount % 2)
+	// Skip on attack, doubletap, recharge, or every other tick
+	// Also skip when anti-aim is active (like Amalgam) - they're incompatible
+	if (G::Attacking == 1 || Shifting::bRecharging || I::GlobalVars->tickcount % 2)
+		return;
+	
+	// Skip when anti-aim is active - FastAccelerate and anti-aim both manipulate
+	// viewangles and movement in incompatible ways
+	if (F::FakeAngle->AntiAimOn())
 		return;
 
 	// Only apply when pressing movement keys

@@ -166,18 +166,34 @@ EWeaponType CAimUtils::GetWeaponType(C_TFWeaponBase *pWeapon)
 #pragma warning (disable : 4244)
 #pragma warning (disable : 26451)
 
-void CAimUtils::FixMovement(CUserCmd *pCmd, const Vec3 &vTargetAngle)
+// Two-argument version that takes both current and target angles
+// This properly handles out-of-bounds pitch (>90 degrees) for anti-aim
+void CAimUtils::FixMovement(CUserCmd *pCmd, const Vec3 &vCurAngle, const Vec3 &vTargetAngle)
 {
-	Vec3 vMove(pCmd->forwardmove, pCmd->sidemove, pCmd->upmove);
-	Vec3 vMoveDir = {};
+	// Check if pitch is out of bounds (>90 degrees) - happens with anti-aim exploit pitches
+	bool bCurOOB = fabsf(Math::NormalizeAngle(vCurAngle.x)) > 90.f;
+	bool bTargetOOB = fabsf(Math::NormalizeAngle(vTargetAngle.x)) > 90.f;
 
-	Math::VectorAngles(vMove, vMoveDir);
+	// When pitch is OOB, sidemove is inverted
+	Vec3 vMove = { pCmd->forwardmove, pCmd->sidemove * (bCurOOB ? -1.f : 1.f), pCmd->upmove };
+	float flSpeed = vMove.Length2D();
+	
+	Vec3 vMoveAng = {};
+	Math::VectorAngles(vMove, vMoveAng);
 
-	float flSpeed = Math::FastSqrt(vMove.x * vMove.x + vMove.y * vMove.y);
-	float flYaw = DEG2RAD(vTargetAngle.y - pCmd->viewangles.y + vMoveDir.y);
+	// When pitch is OOB, yaw is effectively rotated 180 degrees
+	float flCurYaw = vCurAngle.y + (bCurOOB ? 180.f : 0.f);
+	float flTargetYaw = vTargetAngle.y + (bTargetOOB ? 180.f : 0.f);
+	float flYaw = DEG2RAD(flTargetYaw - flCurYaw + vMoveAng.y);
 
 	pCmd->forwardmove = cos(flYaw) * flSpeed;
-	pCmd->sidemove = sin(flYaw) * flSpeed;
+	pCmd->sidemove = sin(flYaw) * flSpeed * (bTargetOOB ? -1.f : 1.f);
+}
+
+// Single-argument version uses current cmd viewangles as the "from" angle
+void CAimUtils::FixMovement(CUserCmd *pCmd, const Vec3 &vTargetAngle)
+{
+	FixMovement(pCmd, pCmd->viewangles, vTargetAngle);
 }
 
 #pragma warning (pop)

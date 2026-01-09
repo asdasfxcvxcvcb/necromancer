@@ -589,7 +589,7 @@ bool CAimbotHitscan::ShouldAim(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWea
 
 	return true;
 }
-
+//
 void CAimbotHitscan::Aim(CUserCmd* pCmd, C_TFPlayer* pLocal, const Vec3& vAngles)
 {
 	Vec3 vAngleTo = vAngles - pLocal->m_vecPunchAngle();
@@ -609,15 +609,12 @@ void CAimbotHitscan::Aim(CUserCmd* pCmd, C_TFPlayer* pLocal, const Vec3& vAngles
 		// Silent (only set angles on the EXACT tick when firing)
 		case 1:
 		{
-			// CRITICAL: Only set silent angles on the EXACT tick when the bullet fires
-			// G::Attacking == 1 means we're firing THIS tick
-			// This allows anti-aim to run on all other ticks (between shots)
-			// while still aiming correctly when the shot actually fires
-			//
-			// Previously this checked (pCmd->buttons & IN_ATTACK) which was wrong
-			// because it would set silent angles every tick you hold attack,
-			// preventing anti-aim from running between shots
-			if (G::Attacking == 1)
+			// Check if we're actually going to fire THIS tick
+			// G::Attacking is set BEFORE aimbot runs, so we need to check directly
+			// We fire when: can attack AND pressing attack (or aimbot added IN_ATTACK)
+			const bool bWillFire = G::bCanPrimaryAttack && (pCmd->buttons & IN_ATTACK);
+			
+			if (bWillFire)
 			{
 				H::AimUtils->FixMovement(pCmd, vAngleTo);
 				pCmd->viewangles = vAngleTo;

@@ -18,7 +18,7 @@ public:
 	bool AntiAimOn();
 	bool YawOn();
 	bool ShouldRun(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd);
-	void Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, bool bSendPacket);
+	void Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, bool bSendPacket, const Vec3& vOriginalAngles);
 	void MinWalk(CUserCmd* pCmd, C_TFPlayer* pLocal);
 	void SetupFakeModel(C_TFPlayer* pLocal);
 	void StoreSentBones(C_TFPlayer* pLocal); // Store bones when packet is sent

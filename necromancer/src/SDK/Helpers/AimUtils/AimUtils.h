@@ -26,6 +26,7 @@ public:
 	bool TracePositionWorld(const Vec3 &vFrom, const Vec3 &vTo);
 	EWeaponType GetWeaponType(C_TFWeaponBase *pWeapon);
 	void FixMovement(CUserCmd *pCmd, const Vec3 &vTargetAngle);
+	void FixMovement(CUserCmd *pCmd, const Vec3 &vCurAngle, const Vec3 &vTargetAngle);
 	bool IsWeaponCapableOfHeadshot(C_TFWeaponBase *pWeapon);
 	void GetProjectileFireSetup(const Vec3 &vViewAngles, Vec3 vOffset, Vec3 *vSrc);
 	bool IsBehindAndFacingTarget(const Vec3 &vPlayerCenter, const Vec3 &vTargetCenter, const Vec3 &vPlayerViewAngles, const Vec3 &vTargetEyeAngles);

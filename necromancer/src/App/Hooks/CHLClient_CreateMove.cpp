@@ -522,7 +522,7 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 	// ============================================
 	// AMALGAM ORDER: AntiAim.Run
 	// ============================================
-	F::FakeAngle->Run(pCmd, pLocal, pWeapon, *pSendPacket);
+	F::FakeAngle->Run(pCmd, pLocal, pWeapon, *pSendPacket, vOldAngles);
 
 	// ============================================
 	// AMALGAM ORDER: EnginePrediction.End (AFTER anti-aim)
