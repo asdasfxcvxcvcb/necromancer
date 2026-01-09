@@ -84,26 +84,18 @@ bool CFakeAngle::ShouldRun(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd
 	if (pLocal->InCond(TF_COND_SHIELD_CHARGE))
 		return false;
 	
-	// Don't anti-aim when attacking
-	// G::Attacking can be 0, 1, or 2:
-	// 0 = not attacking (or can't attack yet)
-	// 1 = attacking this tick
+	// ONLY disable anti-aim on the EXACT tick when the bullet fires (G::Attacking == 1)
+	// This matches Amalgam's behavior - anti-aim should run on all other ticks
+	// even when holding attack, so you maintain your fake angles between shots
+	// 
+	// G::Attacking values:
+	// 0 = not attacking (or can't attack yet - weapon on cooldown)
+	// 1 = attacking THIS tick (bullet fires now)
 	// 2 = attack queued (reloading)
-	// We should also check IN_ATTACK directly because G::Attacking might be 0
-	// even when holding attack (weapon on cooldown between shots)
-	if (G::Attacking == 1 || G::bFiring || G::bSilentAngles || G::bPSilentAngles)
+	if (G::Attacking == 1)
 		return false;
 	
-	// Also don't anti-aim if we're holding attack with a hitscan weapon
-	// This prevents the second shot issue where anti-aim overwrites aimbot angles
-	if (pCmd && (pCmd->buttons & IN_ATTACK) && pWeapon)
-	{
-		EWeaponType eType = H::AimUtils->GetWeaponType(pWeapon);
-		if (eType == EWeaponType::HITSCAN)
-			return false;
-	}
-	
-	// Don't anti-aim during doubletap shifting
+	// Don't anti-aim during doubletap (like Amalgam's m_bDoubletap check)
 	if (Shifting::bShifting && !Shifting::bShiftingWarp)
 		return false;
 	
