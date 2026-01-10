@@ -99,6 +99,11 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 	G::LastUserCmd = G::CurrentUserCmd ? G::CurrentUserCmd : pCmd;
 	G::CurrentUserCmd = pCmd;
 	G::OriginalCmd = *pCmd;
+	
+	// Store TRUE original angles before ANY modification
+	// This is used for view restoration and should NEVER be modified by anti-cheat
+	G::vTrueOriginalAngles = pCmd->viewangles;
+	G::bHasTrueOriginalAngles = true;
 
 	if (!pCmd || !pCmd->command_number)
 		return CALL_ORIGINAL(ecx, flInputSampleTime, pCmd);
@@ -534,6 +539,13 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 	// ============================================
 	F::AntiCheatCompat->ProcessCommand(pCmd, pSendPacket);
 
+	// If anti-cheat modified angles, we need to restore view to original
+	// The modified angles are sent to server, but player should see original view
+	if (F::AntiCheatCompat->DidModifyAngles())
+	{
+		G::bSilentAngles = true;  // Force silent angle restoration
+	}
+
 	// Store bones when packet is sent (for fakelag visualization)
 	if (*pSendPacket)
 		F::FakeAngle->StoreSentBones(pLocal);
@@ -550,18 +562,37 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 	// Silent aim handling
 	if (G::bSilentAngles || G::bPSilentAngles)
 	{
-		// Use smooth aim angles if smooth aimbot is active, otherwise use original angles
-		Vec3 vRestoreAngles = G::bUseSmoothAimAngles ? G::vSmoothAimAngles : vOldAngles;
+		// Use TRUE original angles for view restoration
+		// This ensures anti-cheat lerping doesn't affect what the player sees
+		Vec3 vRestoreAngles;
+		if (G::bUseSmoothAimAngles)
+		{
+			// Smooth aimbot is active - use smooth angles
+			vRestoreAngles = G::vSmoothAimAngles;
+		}
+		else if (G::bHasTrueOriginalAngles)
+		{
+			// Use the TRUE original angles (before any modification)
+			vRestoreAngles = G::vTrueOriginalAngles;
+		}
+		else
+		{
+			// Fallback to vOldAngles (shouldn't happen)
+			vRestoreAngles = vOldAngles;
+		}
+		
 		I::EngineClient->SetViewAngles(vRestoreAngles);
 		I::Prediction->SetLocalViewAngles(vRestoreAngles);
 		
-		// Reset smooth aim flag for next tick
+		// Reset flags for next tick
 		G::bUseSmoothAimAngles = false;
+		G::bHasTrueOriginalAngles = false;
 		return false;
 	}
 	
-	// Reset smooth aim flag for next tick
+	// Reset flags for next tick
 	G::bUseSmoothAimAngles = false;
+	G::bHasTrueOriginalAngles = false;
 
 	return CALL_ORIGINAL(ecx, flInputSampleTime, pCmd);
 }

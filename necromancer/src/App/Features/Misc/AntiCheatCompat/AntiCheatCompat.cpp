@@ -11,6 +11,9 @@ static bool g_bSavedOriginals = false;
 
 void CAntiCheatCompat::ProcessCommand(CUserCmd* pCmd, bool* pSendPacket)
 {
+	// Reset modified flag at start
+	m_bModifiedAngles = false;
+	
 	// Handle feature disabling when anti-cheat is enabled
 	if (CFG::Misc_AntiCheat_Enabled)
 	{
@@ -73,6 +76,7 @@ void CAntiCheatCompat::ProcessCommand(CUserCmd* pCmd, bool* pSendPacket)
 				pCmd->viewangles = m_vHistory[0].m_vAngle + Vec3(0.f, REAL_EPSILON * 2, 0.f);
 			m_vHistory[0].m_vAngle = pCmd->viewangles;
 			m_vHistory[0].m_bSendingPacket = *pSendPacket = m_vHistory[1].m_bSendingPacket;
+			m_bModifiedAngles = true;  // Mark that we modified angles
 
 			if (g_bDebugAntiCheat)
 			{
@@ -98,6 +102,7 @@ void CAntiCheatCompat::ProcessCommand(CUserCmd* pCmd, bool* pSendPacket)
 				pCmd->viewangles.y += SNAP_NOISE_EPSILON * 2;
 				m_vHistory[0].m_vAngle = pCmd->viewangles;
 				m_vHistory[0].m_bSendingPacket = *pSendPacket = m_vHistory[1].m_bSendingPacket;
+				m_bModifiedAngles = true;  // Mark that we modified angles
 
 				if (g_bDebugAntiCheat)
 				{

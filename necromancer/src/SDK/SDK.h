@@ -331,6 +331,11 @@ namespace G
 	// Smooth aimbot view angles - used to restore view when AA is active
 	inline Vec3 vSmoothAimAngles = {};
 	inline bool bUseSmoothAimAngles = false;
+	
+	// True original angles before ANY modification (aimbot, anti-aim, anti-cheat, etc.)
+	// Used to restore view after silent aim - AntiCheatCompat should NOT affect this
+	inline Vec3 vTrueOriginalAngles = {};
+	inline bool bHasTrueOriginalAngles = false;
 
 	struct VelFixRecord_t
 	{

@@ -30,6 +30,13 @@ public:
 	bool ShouldLimitBhop(int& iJumpCount, bool bGrounded, bool bLastGrounded, bool bJumping);
 	float ClampBacktrackInterp(float flInterp);
 
+	// Returns true if ProcessCommand modified the angles this tick
+	// Used to know if we need to restore view angles
+	bool DidModifyAngles() const { return m_bModifiedAngles; }
+	
+	// Reset the modified flag (call at start of CreateMove)
+	void ResetModifiedFlag() { m_bModifiedAngles = false; }
+
 	// Tracked sent values
 	float m_flSentInterp = -1.f;
 	int m_iSentCmdrate = -1;
@@ -38,6 +45,7 @@ public:
 private:
 	std::deque<CmdHistory_t> m_vHistory;
 	int m_iBhopCount = 0;
+	bool m_bModifiedAngles = false;  // True if we modified angles this tick
 
 	// Detection thresholds - exact values from Amalgam
 	static constexpr float MATH_EPSILON = 1.f / 16.f;
