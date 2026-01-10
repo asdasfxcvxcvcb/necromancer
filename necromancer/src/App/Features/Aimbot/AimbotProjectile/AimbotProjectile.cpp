@@ -298,16 +298,18 @@ bool CAimbotProjectile::GetProjectileInfo(C_TFWeaponBase* pWeapon)
 	return m_CurProjInfo.Speed > 0.0f;
 }
 
-// Helper to solve basic parabolic trajectory
-// i hate physics but here we are
+// Helper to solve basic parabolic trajectory - OPTIMIZED
+// Precompute values that don't change, use fast math where possible
 static bool SolveParabolic(const Vec3& vFrom, const Vec3& vTo, float flSpeed, float flGravity, float& flPitchOut, float& flYawOut, float& flTimeOut)
 {
 	const Vec3 v = vTo - vFrom;
-	const float dx = v.Length2D();
-	const float dy = v.z;
-
-	if (dx < 0.001f)
+	const float dx = v.x * v.x + v.y * v.y; // Length2D squared - avoid sqrt
+	
+	if (dx < 0.000001f)
 		return false;
+
+	const float dxSqrt = sqrtf(dx); // Only sqrt once
+	const float dy = v.z;
 
 	flYawOut = RAD2DEG(atan2f(v.y, v.x));
 
@@ -315,19 +317,25 @@ static bool SolveParabolic(const Vec3& vFrom, const Vec3& vTo, float flSpeed, fl
 	{
 		const float v2 = flSpeed * flSpeed;
 		const float v4 = v2 * v2;
-		const float root = v4 - flGravity * (flGravity * dx * dx + 2.0f * dy * v2);
+		const float gDx2 = flGravity * dx; // dx is already squared
+		const float root = v4 - flGravity * (gDx2 + 2.0f * dy * v2);
 
 		if (root < 0.0f)
 			return false;
 
-		flPitchOut = -RAD2DEG(atanf((v2 - sqrtf(root)) / (flGravity * dx)));
-		flTimeOut = dx / (cosf(-DEG2RAD(flPitchOut)) * flSpeed);
+		const float gDxSqrt = flGravity * dxSqrt;
+		flPitchOut = -RAD2DEG(atanf((v2 - sqrtf(root)) / gDxSqrt));
+		
+		// Avoid redundant trig: cos(-x) = cos(x)
+		const float cosPitch = cosf(DEG2RAD(flPitchOut));
+		flTimeOut = dxSqrt / (cosPitch * flSpeed);
 	}
 	else
 	{
-		const Vec3 vAngle = Math::CalcAngle(vFrom, vTo);
-		flPitchOut = vAngle.x;
-		flTimeOut = vFrom.DistTo(vTo) / flSpeed;
+		// For no gravity, simplified calculation
+		const float dist = sqrtf(dx + v.z * v.z);
+		flPitchOut = -RAD2DEG(atan2f(v.z, dxSqrt));
+		flTimeOut = dist / flSpeed;
 	}
 
 	return true;
@@ -798,7 +806,26 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 		if (!F::MovementSimulation->Initialize(pPlayer))
 			return false;
 
-		for (int nTick = 0; nTick < TIME_TO_TICKS(CFG::Aimbot_Projectile_Max_Simulation_Time); nTick++)
+		// Pre-calculate max simulation ticks once
+		const int nMaxSimTicks = TIME_TO_TICKS(CFG::Aimbot_Projectile_Max_Simulation_Time);
+		
+		// Pre-calculate latency once
+		const float flLatency = SDKUtils::GetLatency();
+		
+		// Pre-calculate sticky arm time if needed
+		const bool bIsSticky = pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER;
+		const float flStickyArmTime = bIsSticky ? SDKUtils::AttribHookValue(0.8f, "sticky_arm_time", pLocal) : 0.0f;
+
+		// Early distance check - if target is way too far, skip expensive simulation
+		const float flInitialDist = vLocalPos.DistTo(target.Position);
+		const float flMaxPossibleDist = m_CurProjInfo.Speed * CFG::Aimbot_Projectile_Max_Simulation_Time;
+		if (flInitialDist > flMaxPossibleDist * 1.5f)
+		{
+			F::MovementSimulation->Restore();
+			return false;
+		}
+
+		for (int nTick = 0; nTick < nMaxSimTicks; nTick++)
 		{
 			m_TargetPath.push_back(F::MovementSimulation->GetOrigin());
 
@@ -815,22 +842,14 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 
 			target.TimeToTarget = flTimeToTarget;
 
-			int nTargetTick = TIME_TO_TICKS(flTimeToTarget + SDKUtils::GetLatency());
+			int nTargetTick = TIME_TO_TICKS(flTimeToTarget + flLatency);
 
-			//fuck you KGB
-			/*if (CFG::Aimbot_Projectile_Aim_Type == 1)
-				nTargetTick += 1;*/
-
-				// credits: m-fed for the original code
-				// todellinen menninkäinen: "crazy cant u do me like kgb"
-				// no we cant lol
-
-			if (pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)
+			// Use pre-calculated sticky arm time
+			if (bIsSticky)
 			{
-				const auto sticky_arm_time{ SDKUtils::AttribHookValue(0.8f, "sticky_arm_time", pLocal) };
-				if (TICKS_TO_TIME(nTargetTick) < sticky_arm_time)
+				if (TICKS_TO_TIME(nTargetTick) < flStickyArmTime)
 				{
-					nTargetTick += TIME_TO_TICKS(fabsf(flTimeToTarget - sticky_arm_time));
+					nTargetTick += TIME_TO_TICKS(fabsf(flTimeToTarget - flStickyArmTime));
 				}
 			}
 
@@ -873,26 +892,32 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 
 						auto center{ F::MovementSimulation->GetOrigin() + Vec3(0.0f, 0.0f, (mins.z + maxs.z) * 0.5f) };
 
-						// fibonacci sphere go brrrr
-						constexpr int numPoints = 80;
-
+						// 45 points with rotation each tick for better coverage
+						constexpr int numPoints = 45;
+						constexpr float goldenAngle = 2.39996323f; // PI * (3 - sqrt(5))
+						
+						// Rotate sphere each tick using tick count - spreads points differently each frame
+						const float flRotation = static_cast<float>(I::GlobalVars->tickcount % 360) * DEG2RAD(1.0f);
+						
 						std::vector<Vec3> potential{};
+						potential.reserve(numPoints);
+						
+						CTraceFilterWorldCustom filter{};
+						
 						for (int n = 0; n < numPoints; n++)
 						{
-							auto a1{ acosf(1.0f - 2.0f * (static_cast<float>(n) / static_cast<float>(numPoints))) };
-							auto a2{ (static_cast<float>(PI) * (3.0f - sqrtf(5.0f))) * static_cast<float>(n) };
+							const float t = static_cast<float>(n) / static_cast<float>(numPoints);
+							const float a1 = acosf(1.0f - 2.0f * t);
+							const float a2 = goldenAngle * static_cast<float>(n) + flRotation; // Add rotation offset
+							
+							const float sinA1 = sinf(a1);
+							auto point = center + Vec3{ sinA1 * cosf(a2), sinA1 * sinf(a2), cosf(a1) }.Scale(radius);
 
-							auto point{ center + Vec3{ sinf(a1) * cosf(a2), sinf(a1) * sinf(a2), cosf(a1) }.Scale(radius) };
-
-							CTraceFilterWorldCustom filter{};
 							trace_t trace{};
-
 							H::AimUtils->Trace(center, point, MASK_SOLID, &filter, &trace);
 
 							if (trace.fraction > 0.99f)
-							{
 								continue;
-							}
 
 							potential.push_back(trace.endpos);
 						}
@@ -1046,26 +1071,32 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 
 				const auto center{ target.Entity->GetCenter() };
 
-				constexpr auto numPoints{ 80 };
+				// 45 points with rotation each tick for better coverage
+				constexpr auto numPoints{ 45 };
+				constexpr float goldenAngle = 2.39996323f; // PI * (3 - sqrt(5))
+				
+				// Rotate sphere each tick
+				const float flRotation = static_cast<float>(I::GlobalVars->tickcount % 360) * DEG2RAD(1.0f);
 
 				std::vector<Vec3> potential{};
+				potential.reserve(numPoints);
+				
+				CTraceFilterWorldCustom filter{};
 
 				for (int n = 0; n < numPoints; n++)
 				{
-					const auto a1{ acosf(1.0f - 2.0f * (static_cast<float>(n) / static_cast<float>(numPoints))) };
-					const auto a2{ (static_cast<float>(PI) * (3.0f - sqrtf(5.0f))) * static_cast<float>(n) };
+					const float t = static_cast<float>(n) / static_cast<float>(numPoints);
+					const float a1 = acosf(1.0f - 2.0f * t);
+					const float a2 = goldenAngle * static_cast<float>(n) + flRotation;
+					
+					const float sinA1 = sinf(a1);
+					auto point = center + Vec3{ sinA1 * cosf(a2), sinA1 * sinf(a2), cosf(a1) }.Scale(radius);
 
-					auto point{ center + Vec3{ sinf(a1) * cosf(a2), sinf(a1) * sinf(a2), cosf(a1) }.Scale(radius) };
-
-					CTraceFilterWorldCustom filter{};
 					trace_t trace{};
-
 					H::AimUtils->Trace(center, point, MASK_SOLID, &filter, &trace);
 
 					if (trace.fraction > 0.99f)
-					{
 						continue;
-					}
 
 					potential.push_back(trace.endpos);
 				}
@@ -1263,22 +1294,16 @@ bool CAimbotProjectile::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, c
 
 	for (auto& target : m_vecTargets)
 	{
-		if (target.Position.DistTo(vLocalPos) > 400.0f && targetsScanned >= maxTargets)
-		{
-			continue;
-		}
+		if (targetsScanned >= maxTargets)
+			break;
+
+		targetsScanned++;
 
 		if (!SolveTarget(pLocal, pWeapon, pCmd, target))
-		{
-			targetsScanned++;
-
 			continue;
-		}
 
 		if (CFG::Aimbot_Projectile_Sort == 0 && Math::CalcFov(vLocalAngles, target.AngleTo) > CFG::Aimbot_Projectile_FOV)
-		{
 			continue;
-		}
 
 		outTarget = target;
 		return true;
