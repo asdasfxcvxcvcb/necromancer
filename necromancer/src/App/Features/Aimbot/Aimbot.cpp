@@ -2,9 +2,8 @@
 
 #include "AimbotHitscan/AimbotHitscan.h"
 #include "AimbotMelee/AimbotMelee.h"
-#include "AimbotWrangler/AimbotWrangler.h"
-#include "../amalgam_port/AimbotProjectile/AimbotProjectile.h"
-#include "AimbotProjectileArc/AimbotProjectileArc.h"
+#include "AimbotProjectile/AimbotProjectile.h"
+#include "../amalgam_port/AimbotProjectile/AimbotProjectileAmalgam.h"
 #include "../RapidFire/RapidFire.h"
 
 #include "../CFG.h"
@@ -24,6 +23,11 @@ void CAimbot::RunMain(CUserCmd* pCmd)
 
 	if (Shifting::bRecharging)
 		return;
+
+	// Skip aimbot during doubletap shifts - we use the saved command angles
+	// This is critical for DT to work properly, the reference project does the same
+	if (Shifting::bShifting && !Shifting::bShiftingWarp)
+		return;
 	
 	// Skip aimbot when AutoFaN is running (it needs to control viewangles for the jump boost)
 	if (F::Misc->IsAutoFaNRunning())
@@ -42,13 +46,6 @@ void CAimbot::RunMain(CUserCmd* pCmd)
 		|| pWeapon->m_iItemDefinitionIndex() == Soldier_m_RocketJumper || pWeapon->m_iItemDefinitionIndex() == Demoman_s_StickyJumper)
 		return;
 
-	// Wrangler gets special handling - it controls the sentry gun
-	if (F::AimbotWrangler->IsWrangler(pWeapon))
-	{
-		F::AimbotWrangler->Run(pCmd, pLocal, pWeapon);
-		return;
-	}
-
 	switch (H::AimUtils->GetWeaponType(pWeapon))
 	{
 		case EWeaponType::HITSCAN:
@@ -59,15 +56,17 @@ void CAimbot::RunMain(CUserCmd* pCmd)
 
 		case EWeaponType::PROJECTILE:
 		{
-			if (CFG::Aimbot_Amalgam_Projectile_Active)
+			const int nWeaponID = pWeapon->GetWeaponID();
+			// Always use Amalgam projectile aimbot for rocket launchers
+			if (nWeaponID == TF_WEAPON_ROCKETLAUNCHER || 
+				nWeaponID == TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT || 
+				nWeaponID == TF_WEAPON_PARTICLE_CANNON)
 			{
-				// All arc weapons (pipes, stickies, huntsman, etc.) -> arc aimbot
-				// Rockets, etc. -> Amalgam projectile aimbot
-				if (CAimbotProjectileArc::IsArcWeapon(pWeapon))
-					F::AimbotProjectileArc->Run(pCmd, pLocal, pWeapon);
-				else
-					F::AimbotProjectile->Run(pLocal, pWeapon, pCmd);
+				F::AmalgamAimbotProjectile->Run(pLocal, pWeapon, pCmd);
+				break;
 			}
+			// Use normal projectile aimbot for all other projectile weapons
+			F::AimbotProjectile->Run(pCmd, pLocal, pWeapon);
 			break;
 		}
 
@@ -110,20 +109,7 @@ void CAimbot::Run(CUserCmd* pCmd)
 
 			case EWeaponType::PROJECTILE:
 			{
-				// Route firing detection based on weapon type
-				if (CAimbotProjectileArc::IsArcWeapon(pWeapon))
-					G::bFiring = F::AimbotProjectileArc->IsFiring(pCmd, pLocal, pWeapon);
-				else
-				{
-					// For doubletap to work, we need G::bFiring to be true when:
-					// 1. We're pressing attack AND can fire normally, OR
-					// 2. We have a valid aimbot target AND pressing attack AND have DT ticks available
-					// This allows RapidFire to trigger even when weapon is on cooldown
-					bool bNormalFiring = (pCmd->buttons & IN_ATTACK) && G::bCanPrimaryAttack;
-					bool bDTFiring = (pCmd->buttons & IN_ATTACK) && G::nTargetIndex > 1 && 
-						F::RapidFire->IsWeaponSupported(pWeapon) && Shifting::nAvailableTicks >= CFG::Exploits_RapidFire_Ticks;
-					G::bFiring = bNormalFiring || bDTFiring;
-				}
+				G::bFiring = F::AimbotProjectile->IsFiring(pCmd, pLocal, pWeapon);
 				break;
 			}
 

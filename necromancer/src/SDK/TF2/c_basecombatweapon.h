@@ -23,6 +23,11 @@ public:
 	NETVAR(m_hOwner, EHANDLE, "CBaseCombatWeapon", "m_hOwner");
 
 	// Amalgam-style offset netvars
+	bool& m_bInReload() {
+		static int nOffset = NetVars::GetNetVar("CBaseCombatWeapon", "m_flTimeWeaponIdle") + 4;
+		return *reinterpret_cast<bool*>(reinterpret_cast<std::uintptr_t>(this) + nOffset);
+	}
+	
 	bool& m_bReloadsSingly() {
 		static int nOffset = NetVars::GetNetVar("CBaseCombatWeapon", "m_iClip2") + 24;
 		return *reinterpret_cast<bool*>(reinterpret_cast<std::uintptr_t>(this) + nOffset);

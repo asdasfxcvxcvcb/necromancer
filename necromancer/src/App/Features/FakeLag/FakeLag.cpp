@@ -50,7 +50,7 @@ bool CFakeLag::IsAllowed(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* 
 	// Calculate max allowed fakelag ticks
 	static auto sv_maxusrcmdprocessticks = I::CVar->FindVar("sv_maxusrcmdprocessticks");
 	int nMaxTicks = sv_maxusrcmdprocessticks ? sv_maxusrcmdprocessticks->GetInt() : 24;
-	if (CFG::Misc_AntiCheat_Enabled)
+	if (CFG::Misc_AntiCheat_Enabled && !CFG::Misc_AntiCheat_IgnoreTickLimit)
 		nMaxTicks = std::min(nMaxTicks, 8);
 	
 	// Reserve ticks for anti-aim if it's active
@@ -74,8 +74,10 @@ bool CFakeLag::IsAllowed(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* 
 		return true;
 	}
 	
-	// Unchoke on attack
-	if (G::Attacking == 1)
+	// ONLY unchoke when actually firing a shot (G::Attacking == 1 or G::bFiring)
+	// This is set by aimbot when it wants to shoot, not just when holding attack
+	// Don't unchoke just because IN_ATTACK is held - wait for actual shot
+	if (G::Attacking == 1 || G::bFiring)
 		return false;
 	
 	// Don't fakelag during auto rocket jump
@@ -127,7 +129,7 @@ int CFakeLag::CalculateMaxAllowedTicks(C_TFPlayer* pLocal, C_TFWeaponBase* pWeap
 	int nMaxTicks = sv_maxusrcmdprocessticks ? sv_maxusrcmdprocessticks->GetInt() : 24;
 	
 	// Anti-cheat compatibility limits to 8 ticks
-	if (CFG::Misc_AntiCheat_Enabled)
+	if (CFG::Misc_AntiCheat_Enabled && !CFG::Misc_AntiCheat_IgnoreTickLimit)
 		nMaxTicks = std::min(nMaxTicks, 8);
 	
 	// Reserve ticks for anti-aim if active (max 22 ticks when anti-aiming)
@@ -161,6 +163,10 @@ EFakeLagThreatType CFakeLag::CheckSniperThreat(C_TFPlayer* pLocal, int& outMinTi
 	if (!CFG::Exploits_FakeLag_Activate_On_Sightline)
 		return EFakeLagThreatType::None;
 
+	// Early exit if fakelag is disabled entirely
+	if (!CFG::Exploits_FakeLag_Enabled)
+		return EFakeLagThreatType::None;
+
 	// Default values for no tag (will be overridden based on threat type)
 	outMinTicks = 4;
 	outMaxTicks = 7;
@@ -173,6 +179,12 @@ EFakeLagThreatType CFakeLag::CheckSniperThreat(C_TFPlayer* pLocal, int& outMinTi
 	EFakeLagThreatType eHighestThreat = EFakeLagThreatType::None;
 	int nHighestMinTicks = 0;
 	int nHighestMaxTicks = 0;
+
+	// Cache local player data
+	const Vec3 vLocalOrigin = pLocal->m_vecOrigin();
+	const Vec3 vLocalMins = pLocal->m_vecMins();
+	const Vec3 vLocalMaxs = pLocal->m_vecMaxs();
+	const auto& localTransform = pLocal->RenderableToWorldTransform();
 
 	for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PLAYERS_ENEMIES))
 	{
@@ -191,10 +203,6 @@ EFakeLagThreatType CFakeLag::CheckSniperThreat(C_TFPlayer* pLocal, int& outMinTi
 		if (!pWeapon || pWeapon->GetSlot() != WEAPON_SLOT_PRIMARY || pWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW)
 			continue;
 
-		// Get player tag info
-		PlayerPriority pInfo{};
-		const bool bHasTag = F::Players->GetInfo(pEnemy->entindex(), pInfo);
-
 		// Check if enemy is scoped (required for all threat types)
 		bool bZoomed = pEnemy->InCond(TF_COND_ZOOMED);
 		if (pWeapon->GetWeaponID() == TF_WEAPON_SNIPERRIFLE_CLASSIC)
@@ -202,13 +210,18 @@ EFakeLagThreatType CFakeLag::CheckSniperThreat(C_TFPlayer* pLocal, int& outMinTi
 			bZoomed = pWeapon->As<C_TFSniperRifleClassic>()->m_bCharging();
 		}
 
+		// Skip if not zoomed - no threat
+		if (!bZoomed)
+			continue;
+
+		// Get player tag info
+		PlayerPriority pInfo{};
+		const bool bHasTag = F::Players->GetInfo(pEnemy->entindex(), pInfo);
+
 		// Determine threat type based on tag
 		if (bHasTag && pInfo.Cheater)
 		{
 			// CHEATER TAG: 19-24 ticks, no sightline distance check needed, just needs to be scoped
-			if (!bZoomed)
-				continue;
-			
 			// Cheater is highest priority threat
 			if (eHighestThreat != EFakeLagThreatType::Cheater)
 			{
@@ -222,12 +235,9 @@ EFakeLagThreatType CFakeLag::CheckSniperThreat(C_TFPlayer* pLocal, int& outMinTi
 		if (bHasTag && pInfo.RetardLegit)
 		{
 			// RETARD LEGIT TAG: 6-12 ticks, 2x sightline distance
-			if (!bZoomed)
-				continue;
-			
 			// Use 2x the base sightline distance for retard legit
-			auto vMins = pLocal->m_vecMins();
-			auto vMaxs = pLocal->m_vecMaxs();
+			auto vMins = vLocalMins;
+			auto vMaxs = vLocalMaxs;
 
 			vMins.x *= flBaseDistMultX * 2.0f;
 			vMins.y *= flBaseDistMultY * 2.0f;
@@ -240,7 +250,7 @@ EFakeLagThreatType CFakeLag::CheckSniperThreat(C_TFPlayer* pLocal, int& outMinTi
 			Vec3 vForward{};
 			Math::AngleVectors(pEnemy->GetEyeAngles(), &vForward);
 
-			if (!Math::RayToOBB(pEnemy->GetShootPos(), vForward, pLocal->m_vecOrigin(), vMins, vMaxs, pLocal->RenderableToWorldTransform()))
+			if (!Math::RayToOBB(pEnemy->GetShootPos(), vForward, vLocalOrigin, vMins, vMaxs, localTransform))
 				continue;
 			
 			// Retard legit is second priority (only upgrade if not already cheater)
@@ -254,12 +264,9 @@ EFakeLagThreatType CFakeLag::CheckSniperThreat(C_TFPlayer* pLocal, int& outMinTi
 		}
 
 		// NO TAG: 4-7 ticks, base sightline distance, must be scoped
-		if (!bZoomed)
-			continue;
-
 		// Use base sightline distance for no tag
-		auto vMins = pLocal->m_vecMins();
-		auto vMaxs = pLocal->m_vecMaxs();
+		auto vMins = vLocalMins;
+		auto vMaxs = vLocalMaxs;
 
 		vMins.x *= flBaseDistMultX;
 		vMins.y *= flBaseDistMultY;
@@ -272,7 +279,7 @@ EFakeLagThreatType CFakeLag::CheckSniperThreat(C_TFPlayer* pLocal, int& outMinTi
 		Vec3 vForward{};
 		Math::AngleVectors(pEnemy->GetEyeAngles(), &vForward);
 
-		if (!Math::RayToOBB(pEnemy->GetShootPos(), vForward, pLocal->m_vecOrigin(), vMins, vMaxs, pLocal->RenderableToWorldTransform()))
+		if (!Math::RayToOBB(pEnemy->GetShootPos(), vForward, vLocalOrigin, vMins, vMaxs, localTransform))
 			continue;
 
 		// No tag is lowest priority (only set if no higher threat)
@@ -376,6 +383,18 @@ void CFakeLag::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd, 
 		m_eCurrentThreat = eThreat;
 		
 		if (eThreat == EFakeLagThreatType::None)
+		{
+			m_iGoal = 0;
+			m_iCurrentChokeTicks = 0;
+			m_iTargetChokeTicks = 0;
+			m_vLastPosition = pLocal->m_vecOrigin();
+			m_bEnabled = false;
+			return;
+		}
+		
+		// ONLY unchoke when actually firing a shot - not just holding attack
+		// This ensures we stay fakelagged until the moment we shoot
+		if (G::Attacking == 1 || G::bFiring)
 		{
 			m_iGoal = 0;
 			m_iCurrentChokeTicks = 0;

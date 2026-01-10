@@ -3,7 +3,6 @@
 
 #include "../Features/CFG.h"
 #include "../Features/MiscVisuals/MiscVisuals.h"
-#include "../Features/amalgam_port/TrajectoryPreview/TrajectoryPreview.h"
 
 MAKE_HOOK(ClientModeShared_DoPostScreenSpaceEffects, Memory::GetVFunc(I::ClientModeShared, 39), bool, __fastcall,
 	CClientModeShared* ecx, const CViewSetup* pSetup)
@@ -17,7 +16,7 @@ MAKE_HOOK(ClientModeShared_DoPostScreenSpaceEffects, Memory::GetVFunc(I::ClientM
 	{
 		if (auto pWeapon = H::Entities->GetWeapon())
 		{
-			F::TrajectoryPreview->ProjectileTrace(pLocal, pWeapon, true);
+
 		}
 	}
 

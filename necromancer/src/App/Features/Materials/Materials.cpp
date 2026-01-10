@@ -349,6 +349,10 @@ void CMaterials::RunLagRecords()
 	if (CFG::Materials_Players_No_Depth)
 		pRenderContext->DepthRange(0.0f, 0.2f);
 
+	// Cache style and alpha for the loop
+	const int nStyle = CFG::Materials_LagRecords_Style;
+	const float flAlpha = CFG::Materials_LagRecords_Alpha;
+
 	for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PLAYERS_ENEMIES))
 	{
 		if (!pEntity)
@@ -367,7 +371,7 @@ void CMaterials::RunLagRecords()
 		if (nRecords <= 0)
 			continue;
 
-		if (CFG::Materials_LagRecords_Style == 0)
+		if (nStyle == 0)
 		{
 			for (int n = 1; n < nRecords; n++)
 			{
@@ -376,7 +380,7 @@ void CMaterials::RunLagRecords()
 				if (!pRecord || !F::VisualUtils->IsOnScreenNoEntity(pLocal, pRecord->AbsOrigin) || !F::LagRecords->DiffersFromCurrent(pRecord))
 					continue;
 
-				I::RenderView->SetBlend(Math::RemapValClamped(static_cast<float>(n), 1.0f, static_cast<float>(nRecords), CFG::Materials_LagRecords_Alpha, 0.01f));
+				I::RenderView->SetBlend(Math::RemapValClamped(static_cast<float>(n), 1.0f, static_cast<float>(nRecords), flAlpha, 0.01f));
 
 				F::LagRecordMatrixHelper->Set(pRecord);
 				m_bRendering = true;
@@ -395,7 +399,7 @@ void CMaterials::RunLagRecords()
 			if (!pRecord || !F::VisualUtils->IsOnScreenNoEntity(pLocal, pRecord->AbsOrigin) || !F::LagRecords->DiffersFromCurrent(pRecord))
 				continue;
 
-			I::RenderView->SetBlend(CFG::Materials_LagRecords_Alpha);
+			I::RenderView->SetBlend(flAlpha);
 
 			F::LagRecordMatrixHelper->Set(pRecord);
 			m_bRendering = true;

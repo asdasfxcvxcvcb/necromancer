@@ -3,6 +3,8 @@
 #include "../CFG.h"
 #include "AntiCheatCompat/AntiCheatCompat.h"
 #include "../Aimbot/AimbotMelee/AimbotMelee.h"
+#include "../FakeAngle/FakeAngle.h"
+#include "../amalgam_port/AmalgamCompat.h"
 
 void CMisc::Bunnyhop(CUserCmd* pCmd)
 {
@@ -58,12 +60,11 @@ void CMisc::CrouchWhileAirborne(CUserCmd* pCmd)
 		// Don't crouch while projectile aimbot is actively aiming
 		// This prevents messing up the shoot position calculation
 		// G::nTargetIndex is set by aimbot when it has a valid target
-		// NOTE: Hitscan aimbot now properly accounts for duck state via GetPredictedShootPos()
 		if (G::nTargetIndex > 0)
 		{
+			// Check if we're using a projectile weapon
 			if (const auto pWeapon = H::Entities->GetWeapon())
 			{
-				// Skip for projectile weapons - they need consistent shoot position
 				switch (pWeapon->GetWeaponID())
 				{
 				case TF_WEAPON_ROCKETLAUNCHER:
@@ -311,8 +312,14 @@ void CMisc::FastAccelerate(CUserCmd* pCmd)
 	if (CFG::Misc_AntiCheat_Enabled)
 		return;
 
-	// Skip on attack, doubletap, speedhack, recharge, anti-aim, or every other tick
-	if (G::Attacking == 1 || I::GlobalVars->tickcount % 2)
+	// Skip on attack, doubletap, recharge, or every other tick
+	// Also skip when anti-aim is active (like Amalgam) - they're incompatible
+	if (G::Attacking == 1 || Shifting::bRecharging || I::GlobalVars->tickcount % 2)
+		return;
+	
+	// Skip when anti-aim is active - FastAccelerate and anti-aim both manipulate
+	// viewangles and movement in incompatible ways
+	if (F::FakeAngle->AntiAimOn())
 		return;
 
 	// Only apply when pressing movement keys
@@ -909,7 +916,6 @@ void CMisc::AutoMedigun(CUserCmd* cmd)
 		
 		C_TFPlayer* pBestTarget = nullptr;
 		float flLowestHealth = 1.0f;
-		bool bBestIsFriend = false;
 
 		for (const auto ent : H::Entities->GetGroup(EEntGroup::PLAYERS_TEAMMATES))
 		{
@@ -922,20 +928,14 @@ void CMisc::AutoMedigun(CUserCmd* cmd)
 			float flPercent = getHealthPercent(pl);
 			if (flPercent >= 0.99f) continue;
 			
-			// Only do trace for potential best targets
-			bool bIsFriend = CFG::AutoUber_AutoHeal_Prioritize_Friends && isFriend(pl);
-			bool bIsBetter = false;
+			// Skip non-friends if Friends Only is enabled
+			if (CFG::AutoUber_AutoHeal_Friends_Only && !isFriend(pl))
+				continue;
 			
-			if (bIsFriend && !bBestIsFriend)
-				bIsBetter = true;
-			else if (bIsFriend == bBestIsFriend && flPercent < flLowestHealth)
-				bIsBetter = true;
-			
-			if (bIsBetter && isFullyValid(pl))
+			if (flPercent < flLowestHealth && isFullyValid(pl))
 			{
 				pBestTarget = pl;
 				flLowestHealth = flPercent;
-				bBestIsFriend = bIsFriend;
 			}
 		}
 		
@@ -1320,11 +1320,6 @@ void CMisc::AutoUber(CUserCmd* cmd)
             if (flCurrentDist < flSplashRadius)
             {
                 flTotalLethalDamage += flDamage;
-                
-                const char* projType = bIsRocket ? "ROCKET" : (bIsSticky ? "STICKY" : "PIPE");
-                I::CVar->ConsoleColorPrintf({ 255, 100, 100, 255 }, 
-                    "[AutoUber] LETHAL THREAT: %s dist=%.0f time=%.2fs dmg=%.0f crit=%d\n", 
-                    projType, flCurrentDist, flTimeToImpact, flDamage, isCrit ? 1 : 0);
             }
         }
 
@@ -1378,13 +1373,6 @@ void CMisc::AutoUber(CUserCmd* cmd)
 
             flTotalDamage += flDamage;
             nNearbyStickies++;
-        }
-
-        // Only consider it a trap if there are multiple stickies
-        if (nNearbyStickies >= 2 && flTotalDamage > 0.0f)
-        {
-            I::CVar->ConsoleColorPrintf({ 255, 165, 0, 255 }, 
-                "[AutoUber] STICKY TRAP: %d stickies, total dmg=%.0f\n", nNearbyStickies, flTotalDamage);
         }
 
         return (nNearbyStickies >= 2) ? flTotalDamage : 0.0f;
@@ -1463,9 +1451,6 @@ void CMisc::AutoUber(CUserCmd* cmd)
                 flDamage = flBaseDamage * TF_DAMAGE_MINICRIT_MULTIPLIER;
 
             flTotalDamage += flDamage;
-
-            I::CVar->ConsoleColorPrintf({ 255, 200, 100, 255 }, 
-                "[AutoUber] HITSCAN THREAT: dist=%.0f dmg=%.0f weaponID=%d\n", flDist, flDamage, weaponID);
         }
 
         return flTotalDamage;
@@ -1533,8 +1518,6 @@ void CMisc::AutoUber(CUserCmd* cmd)
             // Only pop if it would actually kill us
             if (static_cast<float>(who->m_iHealth()) <= flHsDmg)
             {
-                I::CVar->ConsoleColorPrintf({ 255, 0, 0, 255 }, 
-                    "[AutoUber] SNIPER THREAT: charge=%.0f dmg=%.0f hp=%d\n", flCharge, flHsDmg, who->m_iHealth());
                 return true;
             }
         }
@@ -1580,17 +1563,8 @@ void CMisc::AutoUber(CUserCmd* cmd)
             bShouldPop = true;
     }
 
-    // DEBUG: Print when we decide to pop
-    if (bShouldPop)
-    {
-        bool bCanPopNow = canPop();
-        I::CVar->ConsoleColorPrintf({ 255, 0, 255, 255 }, "[AutoUber] SHOULD POP! canPop=%d charge=%.2f releasing=%d canAttack2=%d\n", 
-            bCanPopNow ? 1 : 0, medigun->m_flChargeLevel(), medigun->m_bChargeRelease() ? 1 : 0, G::bCanSecondaryAttack ? 1 : 0);
-    }
-
     if (bShouldPop && canPop())
     {
-        I::CVar->ConsoleColorPrintf({ 0, 255, 0, 255 }, "[AutoUber] POPPING UBER!\n");
         cmd->buttons |= IN_ATTACK2;
     }
 }

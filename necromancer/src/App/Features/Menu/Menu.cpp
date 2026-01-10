@@ -10,6 +10,39 @@
 #include "../Chat/Chat.h"
 #include "../../CheaterDatabase/CheaterDatabase.h"
 
+#include <filesystem>
+#include <fstream>
+
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
+// Background image state - managed carefully to avoid crashes on level change
+namespace MenuBackground
+{
+	static int g_nTextureId = -1;
+	static int g_nWidth = 0;
+	static int g_nHeight = 0;
+	static std::vector<unsigned char> g_vecImageData;
+	static bool g_bNeedRefresh = true;
+	static bool g_bImageLoaded = false;
+	static std::string g_strLastMap = "";
+	
+	void Invalidate()
+	{
+		g_nTextureId = -1;
+	}
+	
+	void Reset()
+	{
+		g_nTextureId = -1;
+		g_nWidth = 0;
+		g_nHeight = 0;
+		g_vecImageData.clear();
+		g_bImageLoaded = false;
+		g_bNeedRefresh = true;
+	}
+}
+
 #define multiselect(label, unique, ...) static std::vector<std::pair<const char *, bool &>> unique##multiselect = __VA_ARGS__; \
 SelectMulti(label, unique##multiselect)
 
@@ -1512,6 +1545,118 @@ bool CMenu::ColorPicker(const char* szLabel, Color_t& colVar)
 
 void CMenu::MainWindow()
 {
+	// ========== BACKGROUND IMAGE SYSTEM ==========
+	// Check for level change - invalidate texture if map changed
+	const char* currentMap = I::EngineClient->GetLevelName();
+	std::string currentMapStr = currentMap ? currentMap : "";
+	if (currentMapStr != MenuBackground::g_strLastMap)
+	{
+		MenuBackground::g_strLastMap = currentMapStr;
+		MenuBackground::Invalidate(); // Texture IDs become invalid on level change
+	}
+	
+	// Load image from disk if needed (only when menu is open and feature enabled)
+	if (CFG::Menu_Background_Image_Enabled && MenuBackground::g_bNeedRefresh && !MenuBackground::g_bImageLoaded)
+	{
+		MenuBackground::g_bNeedRefresh = false;
+		
+		std::string strFolderPath = "C:\\necromancer_tf2\\menu_backgrounds";
+		std::string strReadmePath = strFolderPath + "\\README.txt";
+		
+		try
+		{
+			// Create folder if it doesn't exist
+			if (!std::filesystem::exists(strFolderPath))
+				std::filesystem::create_directories(strFolderPath);
+			
+			// Create readme file if it doesn't exist
+			if (!std::filesystem::exists(strReadmePath))
+			{
+				std::ofstream readme(strReadmePath);
+				if (readme.is_open())
+				{
+					readme << "Place your background image in this folder.\n\n";
+					readme << "Rename your image to 'image' with one of these extensions:\n";
+					readme << "  - image.png\n";
+					readme << "  - image.jpg\n";
+					readme << "  - image.jpeg\n";
+					readme << "  - image.bmp\n\n";
+					readme << "Recommended resolution: " << CFG::Menu_Width << " x " << CFG::Menu_Height << " pixels.\n";
+					readme << "Click 'Refresh' in menu to reload after changing the image.\n";
+					readme.close();
+				}
+			}
+			
+			// Look for image file
+			std::string strImagePath = "";
+			const char* extensions[] = { ".png", ".jpg", ".jpeg", ".bmp" };
+			for (const char* ext : extensions)
+			{
+				std::string testPath = strFolderPath + "\\image" + ext;
+				if (std::filesystem::exists(testPath))
+				{
+					strImagePath = testPath;
+					break;
+				}
+			}
+			
+			// Load the image
+			if (!strImagePath.empty())
+			{
+				int nChannels = 0;
+				unsigned char* pImageData = stbi_load(strImagePath.c_str(), &MenuBackground::g_nWidth, &MenuBackground::g_nHeight, &nChannels, 4);
+				
+				if (pImageData && MenuBackground::g_nWidth > 0 && MenuBackground::g_nHeight > 0)
+				{
+					// Convert RGBA to BGRA for Source engine
+					for (int i = 0; i < MenuBackground::g_nWidth * MenuBackground::g_nHeight; i++)
+					{
+						std::swap(pImageData[i * 4 + 0], pImageData[i * 4 + 2]);
+					}
+					
+					// Store image data for texture recreation
+					size_t dataSize = static_cast<size_t>(MenuBackground::g_nWidth) * MenuBackground::g_nHeight * 4;
+					MenuBackground::g_vecImageData.assign(pImageData, pImageData + dataSize);
+					MenuBackground::g_bImageLoaded = true;
+					MenuBackground::g_nTextureId = -1; // Will be created when needed
+					
+					stbi_image_free(pImageData);
+				}
+				else if (pImageData)
+				{
+					stbi_image_free(pImageData);
+				}
+			}
+		}
+		catch (...) { }
+	}
+	
+	// Create texture if we have image data but no valid texture
+	if (CFG::Menu_Background_Image_Enabled && MenuBackground::g_bImageLoaded && MenuBackground::g_nTextureId == -1)
+	{
+		if (!MenuBackground::g_vecImageData.empty() && I::MatSystemSurface)
+		{
+			MenuBackground::g_nTextureId = I::MatSystemSurface->CreateNewTextureID(true);
+			if (MenuBackground::g_nTextureId != -1)
+			{
+				I::MatSystemSurface->DrawSetTextureRGBAEx(
+					MenuBackground::g_nTextureId,
+					MenuBackground::g_vecImageData.data(),
+					MenuBackground::g_nWidth,
+					MenuBackground::g_nHeight,
+					IMAGE_FORMAT_BGRA8888
+				);
+			}
+		}
+	}
+	
+	// Reset if feature disabled
+	if (!CFG::Menu_Background_Image_Enabled && MenuBackground::g_bImageLoaded)
+	{
+		MenuBackground::Reset();
+	}
+	// ========== END BACKGROUND IMAGE SYSTEM ==========
+
 	Drag(
 		CFG::Menu_Pos_X,
 		CFG::Menu_Pos_Y,
@@ -1552,6 +1697,15 @@ void CMenu::MainWindow()
 	Color_t bgColor = CFG::Menu_Background;
 	bgColor.a = static_cast<byte>((bgColor.a / 255.0f) * alpha);
 	H::Draw->Rect(menuX, menuY, scaledW, scaledH, bgColor);
+	
+	// Draw background image if enabled and texture is valid
+	if (CFG::Menu_Background_Image_Enabled && MenuBackground::g_nTextureId != -1 && I::MatSystemSurface)
+	{
+		byte imgAlpha = static_cast<byte>(CFG::Menu_Background_Image_Transparency * 255 * (alpha / 255.0f));
+		I::MatSystemSurface->DrawSetColor(255, 255, 255, imgAlpha);
+		I::MatSystemSurface->DrawSetTexture(MenuBackground::g_nTextureId);
+		I::MatSystemSurface->DrawTexturedRect(menuX, menuY, menuX + scaledW, menuY + scaledH);
+	}
 	
 	// Border with accent primary color
 	Color_t borderColor = CFG::Menu_Accent_Primary;
@@ -2428,47 +2582,79 @@ void CMenu::MainWindow()
 
 			GroupBoxStart("Projectile", 150);
 			{
-				CheckBox("Active", CFG::Aimbot_Amalgam_Projectile_Active);
-				CheckBox("Use Prime Time", CFG::Aimbot_Amalgam_Projectile_Mod_PrimeTime);
+				CheckBox("Active", CFG::Aimbot_Projectile_Active);
+				CheckBox("No Spread", CFG::Aimbot_Projectile_NoSpread);
 				CheckBox("Midpoint Aim", CFG::Aimbot_Projectile_Midpoint_Aim);
-				CheckBox("Timed Double Donk", CFG::Aimbot_Projectile_Timed_Double_Donk);
-				CheckBox("Cancel Charge", CFG::Aimbot_Projectile_Cannon_Cancel_Charge);
+				CheckBox("Auto Double Donk", CFG::Aimbot_Projectile_Auto_Double_Donk);
+				CheckBox("Advanced Head Aim", CFG::Aimbot_Projectile_Advanced_Head_Aim);
 				
+				CheckBox("Ground Strafe Prediction", CFG::Aimbot_Projectile_Ground_Strafe_Prediction);
+				CheckBox("Air Strafe Prediction", CFG::Aimbot_Projectile_Air_Strafe_Prediction);
+				CheckBox("Dodge Prediction", CFG::Aimbot_Projectile_Use_Dodge_Prediction);
+				CheckBox("Prioritize Feet", CFG::Aimbot_Amalgam_Projectile_Hitbox_PrioritizeFeet);
+				CheckBox("Neckbreaker", CFG::Aimbot_Projectile_Neckbreaker);
+				if (CFG::Aimbot_Projectile_Neckbreaker)
+				{
+					SliderInt("Neckbreaker Step", CFG::Aimbot_Projectile_NeckbreakerStep, 15, 180, 15);
+				}
+//				CheckBox("BBOX Multipoint", CFG::Aimbot_Projectile_BBOX_Multipoint);
+				
+				// Splashbot (Rockets Only) - Off = direct hits, Include/Prefer/Only = splash prediction
+				SelectSingle("Splashbot (Rockets)", CFG::Aimbot_Amalgam_Projectile_Splash,
+					{
+						{ "Off", 0 },
+						{ "Include", 1 },
+						{ "Prefer", 2 },
+						{ "Only", 3 }
+					});
+				
+				// Rocket Splash mode (only show when splashbot is not Off)
+				if (CFG::Aimbot_Amalgam_Projectile_Splash > 0)
+				{
+					SelectSingle("Rocket Splash", CFG::Aimbot_Amalgam_Projectile_RocketSplashMode,
+					{
+						{ "Regular", 0 },
+						{ "Special Light", 1 },
+						{ "Special Heavy", 2 }
+					});
+				}
+				
+				// Normal projectile splash (show for non-rocket weapons)
+				SelectSingle("Splash", CFG::Aimbot_Projectile_Rocket_Splash,
+					{
+						{ "Disabled", 0 },
+						{ "Enabled", 1 },
+						{ "Preferred", 2 }
+					});
+
 				SelectSingle("Aim Type", CFG::Aimbot_Projectile_Aim_Type, {
-					{ "Plain", 0 },
+					{ "Normal", 0 },
 					{ "Silent", 1 }
 					});
 
-				SelectSingle("Splash", CFG::Aimbot_Amalgam_Projectile_Splash, {
-					{ "Off", 0 },
-					{ "Include", 1 },
-					{ "Prefer", 2 },
-					{ "Only", 3 }
+				SelectSingle("Aim Position", CFG::Aimbot_Projectile_Aim_Position, {
+					{ "Feet", 0 },
+					{ "Body", 1 },
+					{ "Head", 2 },
+					{ "Auto", 3 }
 					});
 
-				multiselect("Hitbox", AmalgamProjHitbox, {
-					{ "Auto", CFG::Aimbot_Amalgam_Projectile_Hitbox_Auto },
-					{ "Head", CFG::Aimbot_Amalgam_Projectile_Hitbox_Head },
-					{ "Body", CFG::Aimbot_Amalgam_Projectile_Hitbox_Body },
-					{ "Feet", CFG::Aimbot_Amalgam_Projectile_Hitbox_Feet },
-					{ "Bodyaim If Lethal", CFG::Aimbot_Amalgam_Projectile_Hitbox_BodyaimLethal },
-					{ "Prioritize Feet", CFG::Aimbot_Amalgam_Projectile_Hitbox_PrioritizeFeet }
+				SelectSingle("Sort", CFG::Aimbot_Projectile_Sort, {
+					{ "FOV", 0 },
+					{ "Distance", 1 }
+					});
+
+				SelectSingle("Prediction Method", CFG::Aimbot_Projectile_Aim_Prediction_Method, {
+					{ "Full Acceleration", 0 },
+					{ "Current Velocity", 1 }
 					});
 
 				SliderFloat("FOV", CFG::Aimbot_Projectile_FOV, 1.0f, 180.0f, 1.0f, "%.0f");
-				SliderInt("Max Targets", CFG::Aimbot_Projectile_Max_Targets, 1, 5, 1);
-				SliderInt("Splash Points", CFG::Aimbot_Amalgam_Projectile_SplashPoints, 50, 400, 25);
-				SliderFloat("Max Sim Time", CFG::Aimbot_Projectile_Max_Simulation_Time, 0.5f, 5.0f, 0.1f, "%.1fs");
-				CheckBox("Neckbreaker", CFG::Aimbot_Projectile_Neckbreaker);
-				SelectSingle("Neckbreaker Step ZAngle", CFG::Aimbot_Projectile_NeckbreakerStep, {
-					{ "20z", 20 },
-					{ "45z", 45 },
-					{ "90z", 90 },
-					{ "180z", 180 }
-					});
+				SliderFloat("Max Simulation Time", CFG::Aimbot_Projectile_Max_Simulation_Time, 1.0f, 5.0f, 0.5f, "%.1fs");
+				SliderInt("Max Targets", CFG::Aimbot_Projectile_Max_Processing_Targets, 1, 6, 1);
+				SliderInt("Splash Points", CFG::Aimbot_Amalgam_Projectile_SplashPoints, 25, 200, 5);
 			}
 			GroupBoxEnd();
-
 		}
 
 		if (AimTab == EAimTabs::TRIGGERBOT)
@@ -2486,7 +2672,6 @@ void CMenu::MainWindow()
 			{
 				CheckBox("Active", CFG::Triggerbot_AutoAirblast_Active);
 				CheckBox("Aim Assist", CFG::Triggerbot_AutoAirblast_Aim_Assist);
-				CheckBox("Aimbot Support (BETA)", CFG::Triggerbot_AutoAirblast_Aimbot_Support);
 
 				SelectSingle("Mode", CFG::Triggerbot_AutoAirblast_Mode,
 				{
@@ -2559,7 +2744,7 @@ void CMenu::MainWindow()
 				CheckBox("Auto Heal", CFG::AutoUber_AutoHeal_Active);
 				if (CFG::AutoUber_AutoHeal_Active)
 				{
-					CheckBox("Prioritize Friends", CFG::AutoUber_AutoHeal_Prioritize_Friends);
+					CheckBox("Friends Only", CFG::AutoUber_AutoHeal_Friends_Only);
 				}
 			}
 			GroupBoxEnd();
@@ -2763,7 +2948,8 @@ void CMenu::MainWindow()
 					{ "Conds", CFG::ESP_Players_Conds },
 					{ "Sniper Lines", CFG::ESP_Players_Sniper_Lines },
 					{ "F2P Tag", CFG::ESP_Players_Show_F2P },
-					{ "Party Tag", CFG::ESP_Players_Show_Party }
+					{ "Party Tag", CFG::ESP_Players_Show_Party },
+					{ "Behavior Debug", CFG::ESP_Players_Behavior_Debug }
 					});
 
 				CheckBox("Show Team Medics", CFG::ESP_Players_Show_Teammate_Medics);
@@ -3165,28 +3351,22 @@ void CMenu::MainWindow()
 					{ "Random (No Zap)", 8 }
 					});
 
-				SelectSingle("Movement Sim", CFG::Visuals_Simulation_Movement_Style, {
-					{ "Off", 0 },
-					{ "Line", 1 },
-					{ "Dashed", 3 },  // Spaced style = dashed lines
-					{ "Arrows", 4 }
+
+				SelectSingle("Movement Path Style", CFG::Visuals_Draw_Movement_Path_Style,
+					{
+						{ "Disabled", 0 },
+						{ "Line", 1 },
+						{ "Dashed Line", 2 },
+						{ "Alt Line", 3 }
 					});
 
-				SelectSingle("Projectile Sim", CFG::Visuals_Simulation_Projectile_Style, {
-					{ "Off", 0 },
-					{ "Line", 1 },
-					{ "Dashed", 3 },  // Spaced style = dashed lines
-					{ "Arrows", 4 }
+				SelectSingle("Projectile Path Style", CFG::Visuals_Draw_Predicted_Path_Style,
+					{
+						{ "Disabled", 0 },
+						{ "Line", 1 },
+						{ "Dashed Line", 2 },
+						{ "Alt Line", 3 }
 					});
-
-				// Trajectory Preview (real-time projectile path before shooting)
-				SelectSingle("Trajectory Style", CFG::Visuals_Trajectory_Preview_Style, {
-					{ "Off", 0 },
-					{ "Line", 1 },
-					{ "Arrows", 4 }
-					});
-				CheckBox("Trajectory Impact Box", CFG::Visuals_Trajectory_Preview_Box);
-
 			}
 			GroupBoxEnd();
 
@@ -3252,6 +3432,13 @@ void CMenu::MainWindow()
 					{ "Rain", 1 },
 					{ "Light Rain", 2 }
 				});
+			}
+			GroupBoxEnd();
+
+			GroupBoxStart("Freecam", 150);
+			{
+				InputKey("Toggle Key", CFG::Visuals_Freecam_Key);
+				SliderFloat("Speed", CFG::Visuals_Freecam_Speed, 100.0f, 2000.0f, 50.0f, "%.0f");
 			}
 			GroupBoxEnd();
 
@@ -3460,7 +3647,7 @@ void CMenu::MainWindow()
 				ColorPicker("Prop Modulation", CFG::Color_Props);
 				ColorPicker("Movement Sim", CFG::Color_Simulation_Movement);
 				ColorPicker("Projectile Sim", CFG::Color_Simulation_Projectile);
-				ColorPicker("Trajectory", CFG::Color_Trajectory);
+//				ColorPicker("Trajectory", CFG::Color_Trajectory);
 				ColorPicker("FakeLag", CFG::Color_FakeLag);
 				ColorPicker("Fake Model", CFG::Color_FakeModel);
 				ColorPicker("Lag Record", CFG::Color_LagRecord);
@@ -3498,6 +3685,31 @@ void CMenu::MainWindow()
 				ColorPicker("Party 12", CFG::Color_Party_12);
 			}
 			GroupBoxEnd();
+			
+			GroupBoxStart("Background Image", 150);
+			{
+				CheckBox("Enable", CFG::Menu_Background_Image_Enabled);
+				if (CFG::Menu_Background_Image_Enabled)
+				{
+					SliderFloat("Opacity", CFG::Menu_Background_Image_Transparency, 0.1f, 1.0f, 0.05f, "%.2f");
+					if (Button("Refresh"))
+					{
+						MenuBackground::g_bNeedRefresh = true;
+						MenuBackground::g_bImageLoaded = false;
+						MenuBackground::g_nTextureId = -1;
+					}
+					if (Button("Open Folder"))
+					{
+						std::string folderPath = "C:\\necromancer_tf2\\menu_backgrounds";
+						try {
+							if (!std::filesystem::exists(folderPath))
+								std::filesystem::create_directories(folderPath);
+						} catch (...) {}
+						ShellExecuteA(NULL, "open", folderPath.c_str(), NULL, NULL, SW_SHOWDEFAULT);
+					}
+				}
+			}
+			GroupBoxEnd();
 		}
 	}
 
@@ -3526,11 +3738,11 @@ void CMenu::MainWindow()
 			auto [col5, ord5] = LoadGroupBoxPosition(CFG::Menu_GroupBox_Exploits_RegionSelector);
 			auto [col6, ord6] = LoadGroupBoxPosition(CFG::Menu_GroupBox_Exploits_AntiAim);
 
-			// Sizes: Shifting=Medium, FakeLag=Small, Crithack=Small, NoSpread=ExtraSmall, RegionSelector=Medium, AntiAim=Big
-			RegisterGroupBox("Exploits", "Shifting", col1, ord1, 150, EGroupBoxSize::MEDIUM);
+			// Sizes: Shifting=VeryBig, FakeLag=Small, Crithack=Medium, NoSpread=ExtraSmall, RegionSelector=Medium, AntiAim=Big
+			RegisterGroupBox("Exploits", "Shifting", col1, ord1, 150, EGroupBoxSize::VERY_BIG);
 			RegisterGroupBox("Exploits", "FakeLag", col2, ord2, 150, EGroupBoxSize::SMALL);
 			RegisterGroupBox("Exploits", "AntiAim", col6, ord6, 145, EGroupBoxSize::BIG);
-			RegisterGroupBox("Exploits", "Crithack", col3, ord3, 150, EGroupBoxSize::SMALL);
+			RegisterGroupBox("Exploits", "Crithack", col3, ord3, 150, EGroupBoxSize::MEDIUM);
 			RegisterGroupBox("Exploits", "No Spread", col4, ord4, 150, EGroupBoxSize::EXTRA_SMALL);
 			RegisterGroupBox("Exploits", "Region Selector", col5, ord5, 150, EGroupBoxSize::MEDIUM);
 			bExploitsInitialized = true;
@@ -3574,18 +3786,24 @@ void CMenu::MainWindow()
 		// Set up render functions for each GroupBox
 		m_mapGroupBoxes["Exploits_Shifting"].m_fnRenderContent = [this]() {
 			InputKey("Recharge Key", CFG::Exploits_Shifting_Recharge_Key);
+			
+			// Recharge limit slider: 2-24 (accounts for fakeangle 2 ticks, anticheat)
+			SliderInt("Recharge Limit", CFG::Exploits_Shifting_Recharge_Limit, 2, 24, 1);
+			
 			InputKey("Double Tap Key", CFG::Exploits_RapidFire_Key);
 			
-			// DT ticks slider: 2-22 normal, 23 = MAX (which is 24 without AA, 22 with AA)
-			const int nMaxSlider = CFG::Misc_AntiCheat_Enabled ? 8 : 23;
-			const bool bIsMax = (CFG::Exploits_RapidFire_Ticks >= 23);
-			std::string sTicksLabel = CFG::Misc_AntiCheat_Enabled ? "Safe Double Tap Ticks" : "Double Tap Ticks";
-			if (bIsMax && !CFG::Misc_AntiCheat_Enabled)
-				sTicksLabel += " (MAX)";
+			// DT ticks slider: 2-22 (max is 22 to match reference project)
+			const bool bLimitTicks = CFG::Misc_AntiCheat_Enabled && !CFG::Misc_AntiCheat_IgnoreTickLimit;
+			const int nMaxSlider = bLimitTicks ? 8 : 22;
+			std::string sTicksLabel = bLimitTicks ? "Safe Double Tap Ticks" : "Double Tap Ticks";
 			SliderInt(sTicksLabel.c_str(), CFG::Exploits_RapidFire_Ticks, 2, nMaxSlider, 1);
 			
 			SliderInt("Double Tap Delay Ticks", CFG::Exploits_RapidFire_Min_Ticks_Target_Same, 0, 5, 1);
 			CheckBox("Double Tap Antiwarp", CFG::Exploits_RapidFire_Antiwarp);
+			SliderInt("Cmds/Packet", CFG::Exploits_RapidFire_Max_Commands, 2, 15, 1);
+			SelectSingle("Tick Tracking", CFG::Exploits_RapidFire_Tick_Tracking, {
+				{ "Disabled", 0 }, { "Linear", 1 }
+			});
 			InputKey("Warp Key", CFG::Exploits_Warp_Key);
 			SelectSingle("Warp Mode", CFG::Exploits_Warp_Mode, {
 				{ "Slow", 0 }, { "Full", 1 }
@@ -3598,8 +3816,9 @@ void CMenu::MainWindow()
 
 		m_mapGroupBoxes["Exploits_FakeLag"].m_fnRenderContent = [this]() {
 			CheckBox("Enabled (Adaptive)", CFG::Exploits_FakeLag_Enabled);
-			const int nMaxFakeLagTicks = CFG::Misc_AntiCheat_Enabled ? 8 : 21;
-			SliderInt(CFG::Misc_AntiCheat_Enabled ? "Safe Max Ticks" : "Max Ticks", 
+			const bool bLimitTicks = CFG::Misc_AntiCheat_Enabled && !CFG::Misc_AntiCheat_IgnoreTickLimit;
+			const int nMaxFakeLagTicks = bLimitTicks ? 8 : 21;
+			SliderInt(bLimitTicks ? "Safe Max Ticks" : "Max Ticks", 
 				CFG::Exploits_FakeLag_Max_Ticks, 1, nMaxFakeLagTicks, 1);
 			CheckBox("Only When Moving", CFG::Exploits_FakeLag_Only_Moving);
 			CheckBox("Activate on Sightline", CFG::Exploits_FakeLag_Activate_On_Sightline);
@@ -3884,6 +4103,7 @@ void CMenu::MainWindow()
 			// Anti-Cheat toggle with save/restore of fakelag and doubletap values
 			{
 				static bool s_bWasAntiCheatEnabled = CFG::Misc_AntiCheat_Enabled;
+				static bool s_bWasIgnoreTickLimit = CFG::Misc_AntiCheat_IgnoreTickLimit;
 				static int s_nSavedRapidFireTicks = 0;
 				static int s_nSavedFakeLagTicks = 0;
 				
@@ -3893,7 +4113,7 @@ void CMenu::MainWindow()
 				// Detect toggle
 				if (CFG::Misc_AntiCheat_Enabled != bOldValue)
 				{
-					if (CFG::Misc_AntiCheat_Enabled)
+					if (CFG::Misc_AntiCheat_Enabled && !CFG::Misc_AntiCheat_IgnoreTickLimit)
 					{
 						// Turning ON - save current values and clamp
 						s_nSavedRapidFireTicks = CFG::Exploits_RapidFire_Ticks;
@@ -3916,10 +4136,13 @@ void CMenu::MainWindow()
 				}
 				
 				s_bWasAntiCheatEnabled = CFG::Misc_AntiCheat_Enabled;
+				s_bWasIgnoreTickLimit = CFG::Misc_AntiCheat_IgnoreTickLimit;
 			}
 			
 			if (CFG::Misc_AntiCheat_Enabled)
 				CheckBox("Skip Crit Detection", CFG::Misc_AntiCheat_SkipCritDetection);
+			if (CFG::Misc_AntiCheat_Enabled)
+				CheckBox("Ignore Tick Limit", CFG::Misc_AntiCheat_IgnoreTickLimit);
 			if (Button("Fix Invisible Players"))
 			{
 				// Record and stop demo to refresh client-side state
@@ -3959,6 +4182,12 @@ void CMenu::MainWindow()
 				if (Button("Text Files"))
 				{
 					OpenChatTextFiles();
+				}
+				
+				if (Button("Refresh"))
+				{
+					ReloadChatSpammerMessages();
+					ReloadKillsayMessages();
 				}
 			}
 		};
@@ -5379,12 +5608,14 @@ void CMenu::HandleGroupBoxDrag()
 			
 			// Validation for Exploits tab using size categories
 			// Rules:
+			// - 1 very_big + up to 1 extrasmall allowed in 1 lane (very_big takes most of the column)
 			// - 1 big + 1 medium + 1 extrasmall allowed in 1 lane
 			// - 1 big + 1 extrasmall + 2 small allowed in 1 lane
 			// - 2 medium + 2 small + 1 extrasmall allowed in 1 lane (can swap 1 extrasmall for 1 small = 2 medium + 3 small)
 			if (szTab == "Exploits")
 			{
 				// Count sizes in target column (excluding the dragged one)
+				int nVeryBigInTarget = 0;
 				int nBigInTarget = 0;
 				int nMediumInTarget = 0;
 				int nSmallInTarget = 0;
@@ -5398,6 +5629,7 @@ void CMenu::HandleGroupBoxDrag()
 					{
 						switch (pair.second.m_eSize)
 						{
+							case EGroupBoxSize::VERY_BIG: nVeryBigInTarget++; break;
 							case EGroupBoxSize::BIG: nBigInTarget++; break;
 							case EGroupBoxSize::MEDIUM: nMediumInTarget++; break;
 							case EGroupBoxSize::SMALL: nSmallInTarget++; break;
@@ -5407,35 +5639,37 @@ void CMenu::HandleGroupBoxDrag()
 				}
 				
 				// Add the dragged box counts
+				int nNewVeryBig = nVeryBigInTarget + (gb.m_eSize == EGroupBoxSize::VERY_BIG ? 1 : 0);
 				int nNewBig = nBigInTarget + (gb.m_eSize == EGroupBoxSize::BIG ? 1 : 0);
 				int nNewMedium = nMediumInTarget + (gb.m_eSize == EGroupBoxSize::MEDIUM ? 1 : 0);
 				int nNewSmall = nSmallInTarget + (gb.m_eSize == EGroupBoxSize::SMALL ? 1 : 0);
 				int nNewExtraSmall = nExtraSmallInTarget + (gb.m_eSize == EGroupBoxSize::EXTRA_SMALL ? 1 : 0);
 				
 				// Check valid combinations:
-				// 1. 1 big + 1 medium + 1 extrasmall
-				// 2. 1 big + 1 extrasmall + 2 small
-				// 3. 2 medium + 1 small + 1 extrasmall (or 2 medium + 2 small with no extrasmall)
 				bool bValidPlacement = false;
 				
-				// Rule 1: 1 big + 1 medium + 1 extrasmall (no small)
-				if (nNewBig == 1 && nNewMedium <= 1 && nNewSmall == 0 && nNewExtraSmall <= 1)
+				// Rule 0a: 1 very_big + 1 medium + 1 small + 1 extrasmall (no big) - Shifting+Crithack+FakeLag+NoSpread
+				if (nNewVeryBig == 1 && nNewBig == 0 && nNewMedium <= 1 && nNewSmall <= 1 && nNewExtraSmall <= 1)
 					bValidPlacement = true;
 				
-				// Rule 2: 1 big + 1 extrasmall + up to 2 small (no medium)
-				if (nNewBig == 1 && nNewMedium == 0 && nNewSmall <= 2 && nNewExtraSmall <= 1)
+				// Rule 0b: 1 very_big + 2 medium + (1 small OR 1 extrasmall, not both) (no big) - Shifting+RegionSelector+Crithack+FakeLag/NoSpread
+				if (nNewVeryBig == 1 && nNewBig == 0 && nNewMedium == 2 && (nNewSmall + nNewExtraSmall) <= 1)
 					bValidPlacement = true;
 				
-				// Rule 3: 2 medium + 1 small + 1 extrasmall (no big)
-				if (nNewBig == 0 && nNewMedium <= 2 && nNewSmall <= 1 && nNewExtraSmall <= 1)
+				// Rule 1: 1 big + 1 medium + 1 extrasmall (no small, no very_big)
+				if (nNewVeryBig == 0 && nNewBig == 1 && nNewMedium <= 1 && nNewSmall == 0 && nNewExtraSmall <= 1)
 					bValidPlacement = true;
 				
-				// Rule 3 variant: 2 medium + 1 small (no big, no extrasmall)
-				if (nNewBig == 0 && nNewMedium <= 2 && nNewSmall <= 1 && nNewExtraSmall == 0)
+				// Rule 2: 1 big + up to 1 small + 1 extrasmall (no medium, no very_big)
+				if (nNewVeryBig == 0 && nNewBig == 1 && nNewMedium == 0 && nNewSmall <= 1 && nNewExtraSmall <= 1)
+					bValidPlacement = true;
+				
+				// Rule 3: 2 medium + 1 small + 1 extrasmall (no big, no very_big) - RegionSelector+Crithack+FakeLag+NoSpread
+				if (nNewVeryBig == 0 && nNewBig == 0 && nNewMedium <= 2 && nNewSmall <= 1 && nNewExtraSmall <= 1)
 					bValidPlacement = true;
 				
 				// Also allow empty or single-item columns
-				int totalInColumn = nNewBig + nNewMedium + nNewSmall + nNewExtraSmall;
+				int totalInColumn = nNewVeryBig + nNewBig + nNewMedium + nNewSmall + nNewExtraSmall;
 				if (totalInColumn <= 1)
 					bValidPlacement = true;
 				

@@ -1232,10 +1232,10 @@ namespace Vars
             struct TargetWrapper { int get() const { return (CFG::Aimbot_Target_Players ? TargetEnum::Players : 0) | (CFG::Aimbot_Target_Buildings ? TargetEnum::Building : 0); } __declspec(property(get=get)) int Value; } inline Target;
             struct IgnoreWrapper { int get() const { return (CFG::Aimbot_Ignore_Friends ? IgnoreEnum::Friends : 0) | (CFG::Aimbot_Ignore_Invisible ? IgnoreEnum::Invisible : 0) | (CFG::Aimbot_Ignore_Invulnerable ? IgnoreEnum::Invulnerable : 0) | (CFG::Aimbot_Ignore_Taunting ? IgnoreEnum::Taunting : 0); } __declspec(property(get=get)) int Value; } inline Ignore;
             struct AimFOVWrapper { float get() const { return CFG::Aimbot_Projectile_FOV; } __declspec(property(get=get)) float Value; } inline AimFOV;
-            struct MaxTargetsWrapper { int get() const { return CFG::Aimbot_Projectile_Max_Targets; } __declspec(property(get=get)) int Value; } inline MaxTargets;
             struct AutoShootWrapper { bool get() const { return CFG::Aimbot_AutoShoot; } __declspec(property(get=get)) bool Value; } inline AutoShoot;
             struct { float Value = 25.f; } inline AssistStrength;
             struct { int Value = 4; } inline TickTolerance;
+            struct { int Value = 5; } inline MaxTargets; // Max targets to process
         }
         
         namespace Projectile
@@ -1249,9 +1249,6 @@ namespace Vars
             namespace DeltaModeEnum { enum { Average = 0, Max = 1 }; }
             namespace MovesimFrictionFlagsEnum { enum { RunReduce = 1 << 0, CalculateIncrease = 1 << 1 }; }
             
-            // Dynamic wrappers that read from CFG
-            struct StrafePredictionWrapper { int get() const { return (CFG::Aimbot_Projectile_Strafe_Prediction_Air ? StrafePredictionEnum::Air : 0) | (CFG::Aimbot_Projectile_Strafe_Prediction_Ground ? StrafePredictionEnum::Ground : 0); } __declspec(property(get=get)) int Value; } inline StrafePrediction;
-            struct SplashPredictionWrapper { int get() const { return CFG::Aimbot_Amalgam_Projectile_Splash; } __declspec(property(get=get)) int Value; } inline SplashPrediction;
             struct HitboxesWrapper { int get() const { 
                 return (CFG::Aimbot_Amalgam_Projectile_Hitbox_Auto ? HitboxesEnum::Auto : 0) |
                        (CFG::Aimbot_Amalgam_Projectile_Hitbox_Head ? HitboxesEnum::Head : 0) |
@@ -1298,6 +1295,7 @@ namespace Vars
             struct { int Value = 1; } inline SplashNormalSkip;
             struct { int Value = SplashModeEnum::Multi; } inline SplashMode;
             struct RocketSplashModeWrapper { int get() const { return CFG::Aimbot_Amalgam_Projectile_RocketSplashMode; } __declspec(property(get=get)) int Value; } inline RocketSplashMode;
+            struct SplashPredictionWrapper { int get() const { return CFG::Aimbot_Amalgam_Projectile_Splash; } __declspec(property(get=get)) int Value; } inline SplashPrediction;
             struct { bool Value = true; } inline SplashGrates;
             struct { float Value = 0.f; } inline DragOverride;
             struct { float Value = 0.f; } inline TimeOverride;
@@ -1439,8 +1437,16 @@ namespace F {
         // Get real latency for projectile prediction
         float GetReal() { return SDKUtils::GetRealLatency(); }
         
-        // Get anticipated choke ticks
-        int GetAnticipatedChoke() { return 0; }
+        // Get anticipated choke ticks - accounts for silent aim choking
+        // This is important for projectile timing accuracy
+        int GetAnticipatedChoke() 
+        { 
+            // If using silent aim for projectiles, we'll choke 1 tick
+            // This matches Amalgam's behavior
+            if (CFG::Aimbot_Projectile_Aim_Type == 1) // Silent aim
+                return 1;
+            return 0; 
+        }
         
         // Get bones for a target entity (returns nullptr - no backtrack)
         matrix3x4_t* GetBones(C_BaseEntity* pEntity)

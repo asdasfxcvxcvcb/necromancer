@@ -185,10 +185,21 @@ void COutlines::RunModels()
 	I::RenderView->SetBlend(1.0f);
 	I::RenderView->SetColorModulation(1.0f, 1.0f, 1.0f);
 
+	// Cache frequently accessed config values
+	const float flPlayersAlpha = CFG::Outlines_Players_Alpha;
+	const float flBuildingsAlpha = CFG::Outlines_Buildings_Alpha;
+	const float flWorldAlpha = CFG::Outlines_World_Alpha;
+
 	if (CFG::Outlines_Players_Active)
 	{
 		// Cache local team for faster comparisons
 		const int nLocalTeam = pLocal->m_iTeamNum();
+		const bool bIgnoreLocal = CFG::Outlines_Players_Ignore_Local;
+		const bool bIgnoreFriends = CFG::Outlines_Players_Ignore_Friends;
+		const bool bIgnoreTeammates = CFG::Outlines_Players_Ignore_Teammates;
+		const bool bIgnoreEnemies = CFG::Outlines_Players_Ignore_Enemies;
+		const bool bIgnoreTagged = CFG::Outlines_Players_Ignore_Tagged;
+		const bool bShowTeammateMedics = CFG::Outlines_Players_Show_Teammate_Medics;
 		
 		for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PLAYERS_ALL))
 		{
@@ -202,7 +213,7 @@ void COutlines::RunModels()
 
 			const bool bIsLocal = pPlayer == pLocal;
 
-			if (CFG::Outlines_Players_Ignore_Local && bIsLocal)
+			if (bIgnoreLocal && bIsLocal)
 				continue;
 			
 			// Early screen check before expensive friend check
@@ -211,12 +222,12 @@ void COutlines::RunModels()
 
 			const bool bIsFriend = pPlayer->IsPlayerOnSteamFriendsList();
 
-			if (CFG::Outlines_Players_Ignore_Friends && bIsFriend)
+			if (bIgnoreFriends && bIsFriend)
 				continue;
 
 			// Check if player is tagged (Cheater/RetardLegit/Ignored)
 			bool bIsTagged = false;
-			if (!CFG::Outlines_Players_Ignore_Tagged)
+			if (!bIgnoreTagged)
 			{
 				PlayerPriority playerPriority = {};
 				if (F::Players->GetInfo(pPlayer->entindex(), playerPriority))
@@ -230,19 +241,19 @@ void COutlines::RunModels()
 			{
 				const int nPlayerTeam = pPlayer->m_iTeamNum();
 				
-				if (CFG::Outlines_Players_Ignore_Teammates && nPlayerTeam == nLocalTeam)
+				if (bIgnoreTeammates && nPlayerTeam == nLocalTeam)
 				{
-					if (!CFG::Outlines_Players_Show_Teammate_Medics || pPlayer->m_iClass() != TF_CLASS_MEDIC)
+					if (!bShowTeammateMedics || pPlayer->m_iClass() != TF_CLASS_MEDIC)
 						continue;
 				}
 
-				if (CFG::Outlines_Players_Ignore_Enemies && nPlayerTeam != nLocalTeam)
+				if (bIgnoreEnemies && nPlayerTeam != nLocalTeam)
 					continue;
 			}
 
 			const auto entColor = F::VisualUtils->GetEntityColorForOutlines(pLocal, pPlayer);
 
-			m_vecOutlineEntities.emplace_back(OutlineEntity_t{pPlayer, entColor, CFG::Outlines_Players_Alpha});
+			m_vecOutlineEntities.emplace_back(OutlineEntity_t{pPlayer, entColor, flPlayersAlpha});
 
 			if (!F::Materials->HasDrawn(pPlayer))
 				DrawEntity(pPlayer, true);
@@ -256,7 +267,7 @@ void COutlines::RunModels()
 
 				if (pAttach->ShouldDraw())
 				{
-					m_vecOutlineEntities.emplace_back(OutlineEntity_t{pAttach, entColor, CFG::Outlines_Players_Alpha});
+					m_vecOutlineEntities.emplace_back(OutlineEntity_t{pAttach, entColor, flPlayersAlpha});
 
 					if (!F::Materials->HasDrawn(pAttach))
 						DrawEntity(pAttach, true);
@@ -309,7 +320,7 @@ void COutlines::RunModels()
 
 			const auto entColor = F::VisualUtils->GetEntityColor(pLocal, pBuilding);
 
-			m_vecOutlineEntities.emplace_back(OutlineEntity_t{pBuilding, entColor, CFG::Outlines_Buildings_Alpha});
+			m_vecOutlineEntities.emplace_back(OutlineEntity_t{pBuilding, entColor, flBuildingsAlpha});
 
 			if (!F::Materials->HasDrawn(pBuilding))
 				DrawEntity(pBuilding, true);
@@ -327,7 +338,7 @@ void COutlines::RunModels()
 				if (!pEntity || !F::VisualUtils->IsOnScreen(pLocal, pEntity))
 					continue;
 
-				m_vecOutlineEntities.emplace_back(OutlineEntity_t{pEntity, color, CFG::Outlines_World_Alpha});
+				m_vecOutlineEntities.emplace_back(OutlineEntity_t{pEntity, color, flWorldAlpha});
 
 				if (!F::Materials->HasDrawn(pEntity))
 					DrawEntity(pEntity, true);
@@ -343,7 +354,7 @@ void COutlines::RunModels()
 				if (!pEntity || !F::VisualUtils->IsOnScreen(pLocal, pEntity))
 					continue;
 
-				m_vecOutlineEntities.emplace_back(OutlineEntity_t{pEntity, color, CFG::Outlines_World_Alpha});
+				m_vecOutlineEntities.emplace_back(OutlineEntity_t{pEntity, color, flWorldAlpha});
 
 				if (!F::Materials->HasDrawn(pEntity))
 					DrawEntity(pEntity, true);
@@ -359,7 +370,7 @@ void COutlines::RunModels()
 				if (!pEntity || !pEntity->ShouldDraw() || !F::VisualUtils->IsOnScreen(pLocal, pEntity))
 					continue;
 
-				m_vecOutlineEntities.emplace_back(OutlineEntity_t{pEntity, color, CFG::Outlines_World_Alpha});
+				m_vecOutlineEntities.emplace_back(OutlineEntity_t{pEntity, color, flWorldAlpha});
 
 				if (!F::Materials->HasDrawn(pEntity))
 					DrawEntity(pEntity, true);
@@ -375,7 +386,7 @@ void COutlines::RunModels()
 				if (!pEntity || !pEntity->ShouldDraw() || !F::VisualUtils->IsOnScreen(pLocal, pEntity))
 					continue;
 
-				m_vecOutlineEntities.emplace_back(OutlineEntity_t{pEntity, color, CFG::Outlines_World_Alpha});
+				m_vecOutlineEntities.emplace_back(OutlineEntity_t{pEntity, color, flWorldAlpha});
 
 				if (!F::Materials->HasDrawn(pEntity))
 					DrawEntity(pEntity, true);
@@ -412,7 +423,7 @@ void COutlines::RunModels()
 
 				const auto color = F::VisualUtils->GetEntityColor(pLocal, pEntity);
 
-				m_vecOutlineEntities.emplace_back(OutlineEntity_t{pEntity, color, CFG::Outlines_World_Alpha});
+				m_vecOutlineEntities.emplace_back(OutlineEntity_t{pEntity, color, flWorldAlpha});
 
 				if (!F::Materials->HasDrawn(pEntity))
 					DrawEntity(pEntity, true);

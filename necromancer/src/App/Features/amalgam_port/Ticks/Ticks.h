@@ -17,10 +17,32 @@ private:
 
 public:
     // Save the current shoot position (call in CreateMove)
-    void SaveShootPos(C_TFPlayer* pLocal)
+    // Accounts for CrouchWhileAirborne - if IN_DUCK is set while airborne,
+    // the actual shoot position will be lower even if FL_DUCKING isn't set yet
+    void SaveShootPos(C_TFPlayer* pLocal, CUserCmd* pCmd = nullptr)
     {
-        if (pLocal && pLocal->IsAlive())
-            m_vShootPos = pLocal->GetShootPos();
+        if (!pLocal || !pLocal->IsAlive())
+            return;
+            
+        m_vShootPos = pLocal->GetShootPos();
+        
+        // Account for CrouchWhileAirborne feature
+        // When airborne, ducking is instant - if IN_DUCK is set but FL_DUCKING isn't,
+        // the actual shoot position when firing will be at duck height
+        // TF2 view heights: standing = 68, ducking = 45, difference = 23 units
+        if (pCmd || G::CurrentUserCmd)
+        {
+            CUserCmd* cmd = pCmd ? pCmd : G::CurrentUserCmd;
+            const bool bCurrentlyDucking = (pLocal->m_fFlags() & FL_DUCKING) != 0;
+            const bool bWantsToDuck = (cmd->buttons & IN_DUCK) != 0;
+            const bool bOnGround = (pLocal->m_fFlags() & FL_ONGROUND) != 0;
+            
+            if (bWantsToDuck && !bCurrentlyDucking && !bOnGround)
+            {
+                // Adjust to duck view height (68 -> 45 = -23 units)
+                m_vShootPos.z -= 23.0f * pLocal->m_flModelScale();
+            }
+        }
     }
 
     // Get the saved shoot position
@@ -67,7 +89,7 @@ public:
     // Stub functions for compatibility
     void CreateMove(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd, bool* pSendPacket)
     {
-        SaveShootPos(pLocal);
+        SaveShootPos(pLocal, pCmd);
         SaveShootAngle(pCmd, pSendPacket ? *pSendPacket : true);
     }
 

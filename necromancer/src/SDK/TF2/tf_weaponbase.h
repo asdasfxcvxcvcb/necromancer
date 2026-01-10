@@ -247,7 +247,7 @@ public:
 	}
 	
 	bool IsInReload() {
-		return m_iReloadMode() != 0;
+		return m_bInReload() || m_iReloadMode() != 0;
 	}
 	
 	float GetFireRate() {

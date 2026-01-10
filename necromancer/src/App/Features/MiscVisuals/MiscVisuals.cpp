@@ -391,6 +391,12 @@ void CMiscVisuals::ShiftBar()
 	const int nBarY = (H::Draw->GetScreenH() / 2) + 100;
 	const int circleX = H::Draw->GetScreenW() / 2;
 
+	// Check if DT is possible (uses GetTicks which checks clip >= 2, ticks >= 24, etc.)
+	bool bCanDT = F::RapidFire->GetTicks(pWeapon) > 0;
+	
+	// Alpha: 255 when DT ready, 100 when not ready
+	byte nAlpha = bCanDT ? 255 : 100;
+
 	if (CFG::Exploits_Shifting_Indicator_Style == 0)
 	{
 		H::Draw->Rect(nBarX - 1, nBarY - 1, nBarW + 2, nBarH + 2, CFG::Menu_Background);
@@ -398,7 +404,7 @@ void CMiscVisuals::ShiftBar()
 		// Calculate max ticks budget (shared between DT and fakelag)
 		static auto sv_maxusrcmdprocessticks = I::CVar->FindVar("sv_maxusrcmdprocessticks");
 		int nMaxTicksBudget = sv_maxusrcmdprocessticks ? sv_maxusrcmdprocessticks->GetInt() : 24;
-		if (CFG::Misc_AntiCheat_Enabled)
+		if (CFG::Misc_AntiCheat_Enabled && !CFG::Misc_AntiCheat_IgnoreTickLimit)
 			nMaxTicksBudget = std::min(nMaxTicksBudget, 8);
 		
 		// Get current usage
@@ -426,17 +432,19 @@ void CMiscVisuals::ShiftBar()
 			{
 				const float rate = CFG::Menu_Accent_Secondary_RGB_Rate;
 				
-				// Draw DT ticks (rainbow)
+				// Draw DT ticks (rainbow) - with alpha based on DT ready state
 				for (int i = 0; i < nDTFillWidth; i++)
 				{
 					Color_t color = GetRainbowColor(i, rate);
-					const Color_t colorDim = {color.r, color.g, color.b, static_cast<byte>(25 + (230 * i / nBarW))};
+					color.a = nAlpha;
+					const Color_t colorDim = {color.r, color.g, color.b, static_cast<byte>((25 + (230 * i / nBarW)) * nAlpha / 255)};
 					H::Draw->Line(nBarX + i, nBarY, nBarX + i, nBarY + nBarH - 1, colorDim);
 				}
 				// Outline with rainbow
 				for (int i = 0; i < nDTFillWidth; i++)
 				{
 					Color_t color = GetRainbowColor(i, rate);
+					color.a = nAlpha;
 					H::Draw->Line(nBarX + i, nBarY, nBarX + i, nBarY, color);
 					H::Draw->Line(nBarX + i, nBarY + nBarH - 1, nBarX + i, nBarY + nBarH - 1, color);
 				}
@@ -460,14 +468,17 @@ void CMiscVisuals::ShiftBar()
 				{
 					Color_t leftColor = GetRainbowColor(0, rate);
 					Color_t rightColor = GetRainbowColor(nDTFillWidth, rate);
+					leftColor.a = nAlpha;
+					rightColor.a = nAlpha;
 					H::Draw->Line(nBarX, nBarY, nBarX, nBarY + nBarH - 1, leftColor);
 					H::Draw->Line(nBarX + nDTFillWidth - 1, nBarY, nBarX + nDTFillWidth - 1, nBarY + nBarH - 1, rightColor);
 				}
 			}
 			else
 			{
-				const Color_t color = F::VisualUtils->GetAccentSecondary();
-				const Color_t colorDim = {color.r, color.g, color.b, 25};
+				Color_t color = F::VisualUtils->GetAccentSecondary();
+				color.a = nAlpha;
+				const Color_t colorDim = {color.r, color.g, color.b, static_cast<byte>(25 * nAlpha / 255)};
 				
 				// Draw DT ticks
 				if (nDTFillWidth > 0)
@@ -498,38 +509,10 @@ void CMiscVisuals::ShiftBar()
 		const float end{Math::RemapValClamped(static_cast<float>(Shifting::nAvailableTicks), 0.0f, MAX_COMMANDS, -90.0f, 359.0f)};
 
 		H::Draw->Arc(circleX, nBarY, 21, 6.0f, -90.0f, 359.0f, CFG::Menu_Background);
-		H::Draw->Arc(circleX, nBarY, 20, 4.0f, -90.0f, end, F::VisualUtils->GetAccentSecondary());
-	}
-
-	if (G::nTicksSinceCanFire < 30 && F::RapidFire->IsWeaponSupported(pWeapon))
-	{
-		if (CFG::Exploits_Shifting_Indicator_Style == 0)
-		{
-			H::Draw->Rect(nBarX - 1, (nBarY + nBarH + 4) - 1, nBarW + 2, nBarH + 2, CFG::Menu_Background);
-
-			if (G::nTicksSinceCanFire > 0)
-			{
-				constexpr Color_t color = {241, 196, 15, 255};
-				constexpr Color_t colorDim = {color.r, color.g, color.b, 25};
-
-				const int nFillWidth = static_cast<int>(Math::RemapValClamped(
-					static_cast<float>(G::nTicksSinceCanFire),
-					0.0f, 24.0f,
-					0.0f, static_cast<float>(nBarW)
-				));
-
-				H::Draw->GradientRect(nBarX, nBarY + nBarH + 4, nFillWidth, nBarH, colorDim, color, false);
-				H::Draw->OutlinedRect(nBarX, nBarY + nBarH + 4, nFillWidth, nBarH, color);
-			}
-		}
-
-		if (CFG::Exploits_Shifting_Indicator_Style == 1)
-		{
-			const float end{Math::RemapValClamped(static_cast<float>(G::nTicksSinceCanFire), 0.0f, 24.0f, -90.0f, 359.0f)};
-
-			H::Draw->Arc(circleX, nBarY, 24, 2.0f, -90.0f, 359.0f, CFG::Menu_Background);
-			H::Draw->Arc(circleX, nBarY, 24, 2.0f, -90.0f, end, {241, 196, 15, 255});
-		}
+		
+		Color_t arcColor = F::VisualUtils->GetAccentSecondary();
+		arcColor.a = nAlpha;
+		H::Draw->Arc(circleX, nBarY, 20, 4.0f, -90.0f, end, arcColor);
 	}
 }
 
@@ -708,6 +691,68 @@ void CMiscVisuals::CritIndicator()
 {
 	// Delegate to the advanced crit tracking system
 	F::CritHack->Draw();
+}
+
+void CMiscVisuals::Freecam(CViewSetup* pSetup)
+{
+	// Toggle freecam with key
+	if (!I::MatSystemSurface->IsCursorVisible() && !I::EngineVGui->IsGameUIVisible())
+	{
+		if (H::Input->IsPressed(CFG::Visuals_Freecam_Key))
+		{
+			m_bFreecamActive = !m_bFreecamActive;
+			
+			if (m_bFreecamActive)
+			{
+				// Save player angles and initialize freecam position when enabling
+				m_vSavedPlayerAngles = I::EngineClient->GetViewAngles();
+				m_vFreecamPos = pSetup->origin;
+				m_vFreecamAngles = pSetup->angles;
+			}
+			else
+			{
+				// Restore saved player angles when disabling
+				I::EngineClient->SetViewAngles(m_vSavedPlayerAngles);
+			}
+		}
+	}
+	
+	if (!m_bFreecamActive || !CFG::Visuals_Freecam_Key)
+		return;
+	
+	// Update angles from mouse input
+	m_vFreecamAngles = I::EngineClient->GetViewAngles();
+	
+	// Calculate movement direction
+	Vec3 vForward = {}, vRight = {}, vUp = {};
+	Math::AngleVectors(m_vFreecamAngles, &vForward, &vRight, &vUp);
+	
+	// Get movement input
+	float flSpeed = CFG::Visuals_Freecam_Speed * I::GlobalVars->frametime;
+	
+	// Speed boost with shift
+	if (GetAsyncKeyState(VK_SHIFT) & 0x8000)
+		flSpeed *= 2.0f;
+	
+	// WASD movement
+	if (GetAsyncKeyState('W') & 0x8000)
+		m_vFreecamPos = m_vFreecamPos + vForward * flSpeed;
+	if (GetAsyncKeyState('S') & 0x8000)
+		m_vFreecamPos = m_vFreecamPos - vForward * flSpeed;
+	if (GetAsyncKeyState('A') & 0x8000)
+		m_vFreecamPos = m_vFreecamPos - vRight * flSpeed;
+	if (GetAsyncKeyState('D') & 0x8000)
+		m_vFreecamPos = m_vFreecamPos + vRight * flSpeed;
+	
+	// Up/Down with space/ctrl
+	if (GetAsyncKeyState(VK_SPACE) & 0x8000)
+		m_vFreecamPos = m_vFreecamPos + Vec3(0, 0, flSpeed);
+	if (GetAsyncKeyState(VK_CONTROL) & 0x8000)
+		m_vFreecamPos = m_vFreecamPos - Vec3(0, 0, flSpeed);
+	
+	// Apply freecam view
+	pSetup->origin = m_vFreecamPos;
+	pSetup->angles = m_vFreecamAngles;
 }
 
 

@@ -3,10 +3,10 @@
 #include "../Features/CFG.h"
 
 #include "../Features/Aimbot/Aimbot.h"
-#include "../Features/Aimbot/AimbotProjectileArc/AimbotProjectileArc.h"
-#include "../Features/amalgam_port/AimbotProjectile/AimbotProjectile.h"
+#include "../Features/Aimbot/AimbotProjectile/AimbotProjectile.h"
 #include "../Features/EnginePrediction/EnginePrediction.h"
 #include "../Features/Misc/Misc.h"
+#include "../Features/MiscVisuals/MiscVisuals.h"
 #include "../Features/RapidFire/RapidFire.h"
 #include "../Features/Triggerbot/Triggerbot.h"
 #include "../Features/Triggerbot/AutoVaccinator/AutoVaccinator.h"
@@ -16,8 +16,8 @@
 #include "../Features/FakeAngle/FakeAngle.h"
 #include "../Features/ProjectileDodge/ProjectileDodge.h"
 #include "../Features/Misc/AntiCheatCompat/AntiCheatCompat.h"
-#include "../Features/amalgam_port/Ticks/Ticks.h"
 #include "../Features/amalgam_port/AmalgamCompat.h"
+#include "../Features/amalgam_port/Ticks/Ticks.h"
 
 // Taunt delay processing - defined in IVEngineClient013_ClientCmd.cpp
 extern void ProcessTauntDelay();
@@ -99,9 +99,23 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 	G::LastUserCmd = G::CurrentUserCmd ? G::CurrentUserCmd : pCmd;
 	G::CurrentUserCmd = pCmd;
 	G::OriginalCmd = *pCmd;
+	
+	// Store TRUE original angles before ANY modification
+	// This is used for view restoration and should NEVER be modified by anti-cheat
+	G::vTrueOriginalAngles = pCmd->viewangles;
+	G::bHasTrueOriginalAngles = true;
 
 	if (!pCmd || !pCmd->command_number)
 		return CALL_ORIGINAL(ecx, flInputSampleTime, pCmd);
+
+	// Block player movement when freecam is active
+	if (F::MiscVisuals->IsFreecamActive())
+	{
+		pCmd->forwardmove = 0.0f;
+		pCmd->sidemove = 0.0f;
+		pCmd->upmove = 0.0f;
+		pCmd->buttons &= ~(IN_FORWARD | IN_BACK | IN_MOVELEFT | IN_MOVERIGHT | IN_JUMP | IN_DUCK);
+	}
 
 	// ============================================
 	// TAUNT DELAY HANDLING - Process pending taunt with tick delay
@@ -118,6 +132,21 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 		I::ClientState->last_command_ack,
 		I::ClientState->lastoutgoingcommand + I::ClientState->chokedcommands
 	);
+
+	// Update tick tracking for doubletap high ping compensation
+	{
+		float flLatency = 0.0f;
+		if (const auto pNetChannel = I::EngineClient->GetNetChannelInfo())
+		{
+			if (!pNetChannel->IsLoopback())
+				flLatency = pNetChannel->GetAvgLatency(FLOW_OUTGOING);
+		}
+		Shifting::UpdateTickTracking(
+			I::ClientState->m_nDeltaTick,
+			I::ClientState->last_command_ack,
+			flLatency
+		);
+	}
 
 	F::AutoVaccinator->PreventReload(pCmd);
 
@@ -239,11 +268,12 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 		G::bCanPrimaryAttack = pWeapon->CanPrimaryAttack(pLocal);
 		G::bCanSecondaryAttack = pWeapon->CanSecondaryAttack(pLocal);
 
-		// Minigun special handling
+		// Minigun special handling - only can attack when spun up
 		if (pWeapon->GetWeaponID() == TF_WEAPON_MINIGUN)
 		{
 			int iState = pWeapon->As<C_TFMinigun>()->m_iWeaponState();
-			if ((iState != AC_STATE_FIRING && iState != AC_STATE_SPINNING) || !pWeapon->HasPrimaryAmmoForShot())
+			// Only allow attack when in FIRING or SPINNING state with ammo
+			if (iState == AC_STATE_IDLE || iState == AC_STATE_STARTFIRING || !pWeapon->HasPrimaryAmmoForShot())
 				G::bCanPrimaryAttack = false;
 		}
 
@@ -271,16 +301,44 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 	}
 
 	// Track ticks since can fire
+	// For weapons that reload singly OR can interrupt reload (like SMG), we track ticks even during reload if we have ammo
+	// because pressing attack will interrupt the reload and allow firing
 	{
 		static bool bOldCanFire = G::bCanPrimaryAttack;
-		if (G::bCanPrimaryAttack != bOldCanFire)
+		
+		// Check if we can fire during reload
+		bool bCanFireDuringReload = false;
+		if (pWeapon && G::bReloading && pWeapon->m_iClip1() > 0)
+		{
+			// Single-reload weapons (shotguns, etc.)
+			if (pWeapon->m_bReloadsSingly())
+			{
+				bCanFireDuringReload = true;
+			}
+			// SMG and other weapons that can interrupt reload
+			else
+			{
+				const int nWeaponID = pWeapon->GetWeaponID();
+				if (nWeaponID == TF_WEAPON_SMG || nWeaponID == TF_WEAPON_CHARGED_SMG ||
+					nWeaponID == TF_WEAPON_PISTOL || nWeaponID == TF_WEAPON_PISTOL_SCOUT ||
+					nWeaponID == TF_WEAPON_MINIGUN)
+				{
+					bCanFireDuringReload = true;
+				}
+			}
+		}
+		
+		// Effective "can fire" state includes reload interrupt capability
+		bool bEffectiveCanFire = G::bCanPrimaryAttack || bCanFireDuringReload;
+		
+		if (bEffectiveCanFire != bOldCanFire)
 		{
 			G::nTicksSinceCanFire = 0;
-			bOldCanFire = G::bCanPrimaryAttack;
+			bOldCanFire = bEffectiveCanFire;
 		}
 		else
 		{
-			if (G::bCanPrimaryAttack)
+			if (bEffectiveCanFire)
 				G::nTicksSinceCanFire++;
 			else
 				G::nTicksSinceCanFire = 0;
@@ -289,28 +347,6 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 
 	if (!pLocal)
 		return CALL_ORIGINAL(ecx, flInputSampleTime, pCmd);
-
-	// Update Amalgam Ticks
-	F::Ticks.SaveShootPos(reinterpret_cast<C_TFPlayer*>(pLocal));
-	Vars::Aimbot::General::AimType.Reset();
-
-	// ============================================
-	// RUN PROJECTILE AIMBOT FIRST (before any other feature can interfere)
-	// ============================================
-	{
-		auto pWeaponEarly = H::Entities->GetWeapon();
-		if (pLocal && pWeaponEarly && !pLocal->deadflag() && CFG::Aimbot_Active && CFG::Aimbot_Amalgam_Projectile_Active)
-		{
-			if (H::AimUtils->GetWeaponType(pWeaponEarly) == EWeaponType::PROJECTILE)
-			{
-				// Run projectile aimbot early, before misc features
-				if (CAimbotProjectileArc::IsArcWeapon(pWeaponEarly))
-					F::AimbotProjectileArc->Run(pCmd, pLocal, pWeaponEarly);
-				else
-					F::AimbotProjectile->Run(pLocal, pWeaponEarly, pCmd);
-			}
-		}
-	}
 
 	// ============================================
 	// AMALGAM ORDER: Misc features first
@@ -343,12 +379,12 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 				*pSendPacket = false;
 		}
 
-		// IMPORTANT: CrouchWhileAirborne MUST run BEFORE aimbot!
-		// Crouching changes the shoot position (eye height drops ~20 units).
-		// If aimbot calculates angles first, then crouch is added after,
-		// the shot will come from a different position than expected = miss.
 		F::Misc->CrouchWhileAirborne(pCmd);
-
+		
+		// IMPORTANT: Save shoot position AFTER prediction starts but BEFORE aimbot
+		// This ensures projectile aimbot uses the correct predicted eye position
+		F::Ticks.SaveShootPos(pLocal);
+		
 		F::Misc->AutoMedigun(pCmd);
 		F::Aimbot->Run(pCmd);
 
@@ -457,22 +493,8 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 	if (I::ClientState->chokedcommands > 21)
 		*pSendPacket = true;
 
-	// ============================================
-	// AMALGAM ORDER: RapidFire/Ticks management
-	// ============================================
-	F::RapidFire->Run(pCmd, pSendPacket);
-
-	// ============================================
-	// AMALGAM ORDER: AntiAim.Run
-	// ============================================
-	F::FakeAngle->Run(pCmd, pLocal, pWeapon, *pSendPacket);
-
-	// ============================================
-	// AMALGAM ORDER: EnginePrediction.End (AFTER anti-aim)
-	// ============================================
-	F::EnginePrediction->End(pLocal, pCmd);
-
-	// pSilent handling
+	// pSilent handling - MUST run BEFORE RapidFire (like reference project)
+	// This ensures RapidFire saves the command with aimbot angles, not restored angles
 	{
 		static bool bWasSet = false;
 		if (G::bPSilentAngles)
@@ -498,9 +520,31 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 	}
 
 	// ============================================
+	// RapidFire/Ticks management - AFTER pSilent handling (like reference)
+	// ============================================
+	F::RapidFire->Run(pCmd, pSendPacket);
+
+	// ============================================
+	// AMALGAM ORDER: AntiAim.Run
+	// ============================================
+	F::FakeAngle->Run(pCmd, pLocal, pWeapon, *pSendPacket, vOldAngles);
+
+	// ============================================
+	// AMALGAM ORDER: EnginePrediction.End (AFTER anti-aim)
+	// ============================================
+	F::EnginePrediction->End(pLocal, pCmd);
+
+	// ============================================
 	// AMALGAM ORDER: AntiCheatCompatibility
 	// ============================================
 	F::AntiCheatCompat->ProcessCommand(pCmd, pSendPacket);
+
+	// If anti-cheat modified angles, we need to restore view to original
+	// The modified angles are sent to server, but player should see original view
+	if (F::AntiCheatCompat->DidModifyAngles())
+	{
+		G::bSilentAngles = true;  // Force silent angle restoration
+	}
 
 	// Store bones when packet is sent (for fakelag visualization)
 	if (*pSendPacket)
@@ -518,18 +562,37 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 	// Silent aim handling
 	if (G::bSilentAngles || G::bPSilentAngles)
 	{
-		// Use smooth aim angles if smooth aimbot is active, otherwise use original angles
-		Vec3 vRestoreAngles = G::bUseSmoothAimAngles ? G::vSmoothAimAngles : vOldAngles;
+		// Use TRUE original angles for view restoration
+		// This ensures anti-cheat lerping doesn't affect what the player sees
+		Vec3 vRestoreAngles;
+		if (G::bUseSmoothAimAngles)
+		{
+			// Smooth aimbot is active - use smooth angles
+			vRestoreAngles = G::vSmoothAimAngles;
+		}
+		else if (G::bHasTrueOriginalAngles)
+		{
+			// Use the TRUE original angles (before any modification)
+			vRestoreAngles = G::vTrueOriginalAngles;
+		}
+		else
+		{
+			// Fallback to vOldAngles (shouldn't happen)
+			vRestoreAngles = vOldAngles;
+		}
+		
 		I::EngineClient->SetViewAngles(vRestoreAngles);
 		I::Prediction->SetLocalViewAngles(vRestoreAngles);
 		
-		// Reset smooth aim flag for next tick
+		// Reset flags for next tick
 		G::bUseSmoothAimAngles = false;
+		G::bHasTrueOriginalAngles = false;
 		return false;
 	}
 	
-	// Reset smooth aim flag for next tick
+	// Reset flags for next tick
 	G::bUseSmoothAimAngles = false;
+	G::bHasTrueOriginalAngles = false;
 
 	return CALL_ORIGINAL(ecx, flInputSampleTime, pCmd);
 }

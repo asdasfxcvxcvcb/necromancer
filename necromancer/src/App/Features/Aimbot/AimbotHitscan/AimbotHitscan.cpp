@@ -307,7 +307,7 @@ bool CAimbotHitscan::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, cons
 					
 					int nStartRecord = 1;
 					int nEndRecord = nRecords;
-					const bool bDoubletap = Shifting::bShiftingRapidFire || Shifting::bRapidFireWantShift;
+					const bool bDoubletap = Shifting::bRapidFireWantShift;
 					
 					// When fake latency is 0 and using sniper rifle: add original model as valid target alongside backtrack
 					if (!bFakeLatencyActive && bIsSniper && bIsSniperRifle)
@@ -519,11 +519,16 @@ bool CAimbotHitscan::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, cons
 				{
 					F::LagRecordMatrixHelper->Set(target.LagRecord);
 
-					const bool bTraceResult = H::AimUtils->TraceEntityBullet(target.Entity, vLocalPos, target.Position);
+					int nHitHitbox = -1;
+					const bool bTraceResult = H::AimUtils->TraceEntityBullet(target.Entity, vLocalPos, target.Position, &nHitHitbox);
 
 					F::LagRecordMatrixHelper->Restore();
 
 					if (!bTraceResult)
+						continue;
+
+					// For lag records aiming at head, verify we actually hit the head hitbox
+					if (target.AimedHitbox == HITBOX_HEAD && nHitHitbox != HITBOX_HEAD)
 						continue;
 				}
 
@@ -584,20 +589,13 @@ bool CAimbotHitscan::ShouldAim(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWea
 
 	return true;
 }
-
+//
 void CAimbotHitscan::Aim(CUserCmd* pCmd, C_TFPlayer* pLocal, const Vec3& vAngles)
 {
 	Vec3 vAngleTo = vAngles - pLocal->m_vecPunchAngle();
-	Math::ClampAngles(vAngleTo);
+	
 
-	// During rapid fire shifting, always use silent aim to set angles for each tick
-	if (Shifting::bShiftingRapidFire)
-	{
-		H::AimUtils->FixMovement(pCmd, vAngleTo);
-		pCmd->viewangles = vAngleTo;
-		G::bSilentAngles = true;
-		return;
-	}
+	Math::ClampAngles(vAngleTo);
 
 	switch (CFG::Aimbot_Hitscan_Aim_Type)
 	{
@@ -611,11 +609,12 @@ void CAimbotHitscan::Aim(CUserCmd* pCmd, C_TFPlayer* pLocal, const Vec3& vAngles
 		// Silent (only set angles on the EXACT tick when firing)
 		case 1:
 		{
-			// CRITICAL: Only set angles when ACTUALLY firing this tick
-			// G::bFiring is set BEFORE this function is called in Run()
-			// We must only modify angles on the exact firing tick to avoid view jitter
-			// Using G::bFiring ensures we only snap on the shot tick, not while holding attack
-			if (G::bFiring)
+			// Check if we're actually going to fire THIS tick
+			// G::Attacking is set BEFORE aimbot runs, so we need to check directly
+			// We fire when: can attack AND pressing attack (or aimbot added IN_ATTACK)
+			const bool bWillFire = G::bCanPrimaryAttack && (pCmd->buttons & IN_ATTACK);
+			
+			if (bWillFire)
 			{
 				H::AimUtils->FixMovement(pCmd, vAngleTo);
 				pCmd->viewangles = vAngleTo;
@@ -670,8 +669,7 @@ bool CAimbotHitscan::ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWe
 
 	// Smart Shotgun Damage Prediction - CHECK FIRST before hitchance
 	// This ensures RapidFire won't start if smart shotgun would block the shot
-	// SKIP during rapid fire shifting - once the burst starts, all shots fire regardless
-	if (CFG::Aimbot_Hitscan_Smart_Shotgun && !Shifting::bShiftingRapidFire && target.Entity && target.Entity->GetClassId() == ETFClassIds::CTFPlayer)
+	if (CFG::Aimbot_Hitscan_Smart_Shotgun && target.Entity && target.Entity->GetClassId() == ETFClassIds::CTFPlayer)
 	{
 		const int wid = pWeapon->GetWeaponID();
 		const bool bIsShotgun = (
@@ -720,8 +718,7 @@ bool CAimbotHitscan::ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWe
 	// Hitchance check - calculate if we meet the required hit probability
 	// NOTE: Minigun uses tapfire delay system instead of hitchance blocking
 	// The tapfire delay is checked later and scales with distance + hitchance slider
-	// SKIP during rapid fire shifting - once the burst starts, all shots fire regardless
-	if (CFG::Aimbot_Hitscan_Hitchance > 0 && !Shifting::bShiftingRapidFire && target.Entity && pWeapon->GetWeaponID() != TF_WEAPON_MINIGUN)
+	if (CFG::Aimbot_Hitscan_Hitchance > 0 && target.Entity && pWeapon->GetWeaponID() != TF_WEAPON_MINIGUN)
 	{
 		// Get hitbox radius based on target type
 		float flHitboxRadius = 12.0f; // Default for players (head ~24 units diameter)
@@ -1059,7 +1056,19 @@ bool CAimbotHitscan::IsFiring(const CUserCmd* pCmd, C_TFWeaponBase* pWeapon)
 	if (pWeapon->GetWeaponID() == TF_WEAPON_SNIPERRIFLE_CLASSIC)
 		return !(pCmd->buttons & IN_ATTACK) && (G::nOldButtons & IN_ATTACK);
 
-	return (pCmd->buttons & IN_ATTACK) && G::bCanPrimaryAttack;
+	// Normal case: attacking and can attack
+	if ((pCmd->buttons & IN_ATTACK) && G::bCanPrimaryAttack)
+		return true;
+	
+	// Reload interrupt case: attacking during reload with single-reload weapon that has ammo
+	// For these weapons, pressing attack will abort reload and fire immediately
+	if ((pCmd->buttons & IN_ATTACK) && pWeapon->IsInReload() && 
+		pWeapon->m_bReloadsSingly() && pWeapon->m_iClip1() > 0)
+	{
+		return true;
+	}
+	
+	return false;
 }
 
 void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
@@ -1073,36 +1082,28 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 	else if (CFG::Aimbot_Hitscan_Aim_Type == 3)
 		G::flAimbotFOV = 0.0f; // Disable FOV circle for triggerbot
 
-	// Allow aimbot to run during rapid fire shifting to recalculate angles for each tick
-	// Skip only during warp shifting (not rapid fire)
-	if (Shifting::bShifting && !Shifting::bShiftingRapidFire)
+	// Skip during doubletap shifting (but not warp)
+	if (Shifting::bShifting && !Shifting::bShiftingWarp)
 		return;
 
-	// During rapid fire shifting, we're always firing
-	const bool bRapidFireShifting = Shifting::bShiftingRapidFire;
-	const bool isFiring = bRapidFireShifting ? true : IsFiring(pCmd, pWeapon);
+	const bool isFiring = IsFiring(pCmd, pWeapon);
 
 	HitscanTarget_t target = {};
 	if (GetTarget(pLocal, pWeapon, pCmd, target) && target.Entity)
 	{
 		G::nTargetIndexEarly = target.Entity->entindex();
 
-		// During rapid fire shifting, always aim at target
-		const auto aimKeyDown = H::Input->IsDown(CFG::Aimbot_Key) || bRapidFireShifting;
+		const auto aimKeyDown = H::Input->IsDown(CFG::Aimbot_Key);
 		if (aimKeyDown || isFiring)
 		{
 			G::nTargetIndex = target.Entity->entindex();
 
-			// Skip auto scope during rapid fire shifting
-			if (!bRapidFireShifting)
+			// Auto Scope
+			if (CFG::Aimbot_Hitscan_Auto_Scope
+				&& !pLocal->IsZoomed() && pLocal->m_iClass() == TF_CLASS_SNIPER && pWeapon->GetSlot() == WEAPON_SLOT_PRIMARY && G::bCanPrimaryAttack)
 			{
-				// Auto Scope
-				if (CFG::Aimbot_Hitscan_Auto_Scope
-					&& !pLocal->IsZoomed() && pLocal->m_iClass() == TF_CLASS_SNIPER && pWeapon->GetSlot() == WEAPON_SLOT_PRIMARY && G::bCanPrimaryAttack)
-				{
-					pCmd->buttons |= IN_ATTACK2;
-					return;
-				}
+				pCmd->buttons |= IN_ATTACK2;
+				return;
 			}
 
 			// Auto Shoot
@@ -1129,25 +1130,11 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 				}
 			}
 
-			// During rapid fire shifting, ALWAYS fire - hitchance/smart shotgun were already checked
-			// when the burst started. Once committed to a rapid fire burst, all shots fire.
-			bool bShouldFire = false;
-			if (bRapidFireShifting)
-			{
-				// Rapid fire burst already started - commit to all shots
-				// The initial hitchance and smart shotgun checks were done in ShouldStart/ShouldFire
-				// before the burst began. Don't re-check and potentially skip shots mid-burst.
-				bShouldFire = true;
-			}
-			else
-			{
-				bShouldFire = ShouldFire(pCmd, pLocal, pWeapon, target);
-			}
+			bool bShouldFire = ShouldFire(pCmd, pLocal, pWeapon, target);
 
 			if (bShouldFire)
 			{
-				if (!bRapidFireShifting)
-					HandleFire(pCmd, pWeapon);
+				HandleFire(pCmd, pWeapon);
 			}
 			else
 			{
@@ -1157,13 +1144,12 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 					pCmd->buttons &= ~IN_ATTACK;
 			}
 
-			const bool bIsFiring = bRapidFireShifting ? true : IsFiring(pCmd, pWeapon);
+			const bool bIsFiring = IsFiring(pCmd, pWeapon);
 			G::bFiring = bIsFiring;
 
-			// Are we ready to aim? During rapid fire shifting, always aim
-			if (bRapidFireShifting || ShouldAim(pCmd, pLocal, pWeapon) || bIsFiring)
+			// Are we ready to aim?
+			if (ShouldAim(pCmd, pLocal, pWeapon) || bIsFiring)
 			{
-				// During rapid fire shifting, always aim (aimKeyDown is already true)
 				if (aimKeyDown)
 				{
 					Aim(pCmd, pLocal, target.AngleTo);

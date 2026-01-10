@@ -6,7 +6,7 @@
 
 // Draggable GroupBox system
 enum class EGroupBoxColumn { LEFT = 0, MIDDLE = 1, RIGHT = 2 };
-enum class EGroupBoxSize { EXTRA_SMALL = 0, SMALL = 1, MEDIUM = 2, BIG = 3 };
+enum class EGroupBoxSize { EXTRA_SMALL = 0, SMALL = 1, MEDIUM = 2, BIG = 3, VERY_BIG = 4 };
 
 struct DraggableGroupBox_t
 {

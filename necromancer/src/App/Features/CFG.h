@@ -45,19 +45,27 @@ namespace CFG
 	CFGVAR(Aimbot_Hitscan_FakeLagFix, true); // Shoot on unchoke - when enemy sends update, their position is accurate
 
 	CFGVAR(Aimbot_Projectile_Active, true);
+	CFGVAR(Aimbot_Projectile_NoSpread, true);
+	CFGVAR(Aimbot_Projectile_Auto_Double_Donk, true);
+	CFGVAR(Aimbot_Projectile_Advanced_Head_Aim, true);
+	
+	// Huntsman Advanced Head Aim Settings (lerp-based like Amalgam)
+	CFGVAR(Aimbot_Projectile_Huntsman_Lerp, 50.0f);      // Base lerp % towards top of bbox (0-100)
+	CFGVAR(Aimbot_Projectile_Huntsman_Lerp_Low, 100.0f); // Lerp % when target is above shooter (0-100)
+	CFGVAR(Aimbot_Projectile_Huntsman_Add, 3.0f);        // Base Z offset to add to head position
+	CFGVAR(Aimbot_Projectile_Huntsman_Add_Low, 0.0f);    // Z offset when target is above shooter
+	CFGVAR(Aimbot_Projectile_Huntsman_Clamp, 2.0f);      // Clamp distance from bbox edges
+	CFGVAR(Aimbot_Projectile_Ground_Strafe_Prediction, true);
+	CFGVAR(Aimbot_Projectile_Air_Strafe_Prediction, true);
+	CFGVAR(Aimbot_Projectile_BBOX_Multipoint, true);
+	CFGVAR(Aimbot_Projectile_Rocket_Splash, 1); //0 Disabled 1 Enabled 2 Preferred
 	CFGVAR(Aimbot_Projectile_Aim_Type, 1); //0 Normal 1 Silent
 	CFGVAR(Aimbot_Projectile_Sort, 0); //0 FOV 1 Distance
 	CFGVAR(Aimbot_Projectile_Aim_Position, 3); //0 Feet 1 Body 2 Head 3 Auto
-	CFGVAR(Aimbot_Projectile_FOV, 30.0f);
-	CFGVAR(Aimbot_Projectile_Max_Simulation_Time, 4.0f); // Max simulation time in seconds
-	CFGVAR(Aimbot_Projectile_Max_Targets, 2); // Max targets to simulate (1-5)
-	CFGVAR(Aimbot_Projectile_Auto_Charge, true); // Auto charge sticky/bow for aimbot (hidden, always on)
-	CFGVAR(Aimbot_Projectile_Charge_Ticks, 1); // Minimum ticks to charge before firing (hidden, default 1)
-	// Prediction_Method removed - always uses Movement Simulation now
-	CFGVAR(Aimbot_Projectile_Strafe_Prediction_Ground, true);
-	CFGVAR(Aimbot_Projectile_Strafe_Prediction_Air, true);
-	CFGVAR(Aimbot_Projectile_Aim_Prediction_Method, 1); // 0 = Simple forward, 1 = Calculate from velocity
-	CFGVAR(Aimbot_Projectile_Latency_Compensation, true); // Account for network latency in prediction
+	CFGVAR(Aimbot_Projectile_Aim_Prediction_Method, 0); //0 Full Acceleration 1 Current Velocity
+	CFGVAR(Aimbot_Projectile_FOV, 45.0f);
+	CFGVAR(Aimbot_Projectile_Max_Simulation_Time, 1.5f);
+	CFGVAR(Aimbot_Projectile_Max_Processing_Targets, 1);
 	
 	// Strafe prediction tuning (Amalgam-style)
 	CFGVAR(Aimbot_Projectile_Ground_Samples, 12);
@@ -120,6 +128,9 @@ namespace CFG
 	CFGVAR(Aimbot_Projectile_Timed_Double_Donk, false); // Enable timed double donk for Loose Cannon
 	CFGVAR(Aimbot_Projectile_Double_Donk_Delay, 0.01f); // Fuse expire delay after impact (-0.1 to 0.4 seconds)
 	CFGVAR(Aimbot_Projectile_Cannon_Cancel_Charge, true); // Cancel Loose Cannon charge if target is lost
+
+	// Behavior-based prediction - uses learned player behavior to improve aim
+	CFGVAR(Aimbot_Projectile_Use_Dodge_Prediction, true); // Apply aim offset based on predicted dodge direction
 
 	CFGVAR(Aimbot_Melee_Active, false);
 	CFGVAR(Aimbot_Melee_Always_Active, false);
@@ -207,7 +218,7 @@ namespace CFG
 	CFGVAR(AutoUber_CritProjectile_Check, true);
 	CFGVAR(AutoUber_SniperSightline_Check, true);
 	CFGVAR(AutoUber_AutoHeal_Active, false);
-	CFGVAR(AutoUber_AutoHeal_Prioritize_Friends, true);
+	CFGVAR(AutoUber_AutoHeal_Friends_Only, false);
 
 #pragma endregion
 
@@ -247,6 +258,7 @@ namespace CFG
 	CFGVAR(ESP_Players_Sniper_Lines, true);
 	CFGVAR(ESP_Players_Show_F2P, false); // Show F2P tag on players
 	CFGVAR(ESP_Players_Show_Party, false); // Show party indicator on players
+	CFGVAR(ESP_Players_Behavior_Debug, false); // Debug: Show movement simulation confidence and learned behavior
 
 	CFGVAR(ESP_Buildings_Active, true);
 	CFGVAR(ESP_Buildings_Alpha, 0.7f);
@@ -427,6 +439,7 @@ namespace CFG
 	CFGVAR(Visuals_Crit_Indicator_TextSize, 100); // Percentage: 100-200
 	CFGVAR(Visuals_Crit_Indicator_Debug, false);
 	CFGVAR(Visuals_Draw_Movement_Path_Style, 1); //0 Off 1 Line 2 Separators 3 Spaced 4 Arrows 5 Boxes (Amalgam-style)
+	CFGVAR(Visuals_Draw_Predicted_Path_Style, 1); //0 Off 1 Line 2 Separators 3 Spaced 4 Arrows 5 Boxes (Amalgam-style)
 	
 	// Amalgam Simulation Visuals
 	CFGVAR(Visuals_Simulation_Movement_Style, 1); // 0=Off, 1=Line, 2=Dashed, 3=Arrows
@@ -548,6 +561,10 @@ namespace CFG
 
 	CFGVAR(Visuals_Weather, 0); // 0 = Off, 1 = Rain, 2 = Light Rain
 
+	// Freecam
+	CFGVAR(Visuals_Freecam_Key, 0);
+	CFGVAR(Visuals_Freecam_Speed, 500.0f);
+
 #pragma endregion
 
 #pragma region Misc
@@ -612,13 +629,17 @@ namespace CFG
 
 	CFGVAR(Misc_AntiCheat_Enabled, false);
 	CFGVAR(Misc_AntiCheat_SkipCritDetection, false);
+	CFGVAR(Misc_AntiCheat_IgnoreTickLimit, false);
 
 	CFGVAR(Exploits_Shifting_Recharge_Key, 0);
+	CFGVAR(Exploits_Shifting_Recharge_Limit, 24); // 2-24, max ticks to recharge (accounts for fakeangle 2 ticks, anticheat)
 
 	CFGVAR(Exploits_RapidFire_Key, 0);
 	CFGVAR(Exploits_RapidFire_Ticks, 22);
 	CFGVAR(Exploits_RapidFire_Min_Ticks_Target_Same, 5);
 	CFGVAR(Exploits_RapidFire_Antiwarp, true);
+	CFGVAR(Exploits_RapidFire_Max_Commands, 15);  // Max commands per packet (lower = better for high ping)
+	CFGVAR(Exploits_RapidFire_Tick_Tracking, 1);  // 0=Disabled, 1=Linear
 	CFGVAR(Exploits_Warp_Key, 0);
 	CFGVAR(Exploits_Warp_Mode, 1); //0 Slow 1 Full
 	CFGVAR(Exploits_Warp_Exploit, 0); //0 None 1 Fake Peek 2 0 Velocity
@@ -631,6 +652,7 @@ namespace CFG
 	CFGVAR(Exploits_FakeLag_Enabled, false);
 	CFGVAR(Exploits_FakeLag_Only_Moving, false);
 	CFGVAR(Exploits_FakeLag_Activate_On_Sightline, false);
+;
 	CFGVAR(Exploits_FakeLag_Max_Ticks, 12);
 
 	// Anti-Aim (uses tick shifting to show fake angles)
@@ -820,6 +842,10 @@ namespace CFG
 	CFGVAR(Menu_Background, Color_t({ 0, 6, 20, 255 }));
 
 	CFGVAR(Menu_Snow, false);
+	
+	// Background image
+	CFGVAR(Menu_Background_Image_Enabled, false);
+	CFGVAR(Menu_Background_Image_Transparency, 0.5f);
 
 	// Draggable GroupBox positions (column * 100 + order)
 	// Misc tab

@@ -5,17 +5,104 @@
 #include <iomanip>
 #include <ctime>
 #include <ShlObj.h>
+#include <DbgHelp.h>
 
 #pragma comment(lib, "Psapi.lib")
+#pragma comment(lib, "DbgHelp.lib")
 
 LPTOP_LEVEL_EXCEPTION_FILTER CCrashHandler::s_PreviousFilter = nullptr;
 bool CCrashHandler::s_Initialized = false;
+
+// Quick log function that writes immediately to disk
+static void QuickLog(const char* message)
+{
+    CreateDirectoryA("C:\\necromancer_tf2", nullptr);
+    CreateDirectoryA("C:\\necromancer_tf2\\crashlog", nullptr);
+    
+    FILE* f = nullptr;
+    fopen_s(&f, "C:\\necromancer_tf2\\crashlog\\quicklog.txt", "a");
+    if (f)
+    {
+        auto now = std::time(nullptr);
+        tm timeInfo = {};
+        localtime_s(&timeInfo, &now);
+        char timeStr[64];
+        strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S", &timeInfo);
+        fprintf(f, "[%s] %s\n", timeStr, message);
+        fflush(f);
+        fclose(f);
+    }
+}
+
+// Vectored exception handler - catches exceptions before SEH
+static LONG WINAPI VectoredExceptionHandler(EXCEPTION_POINTERS* pExceptionInfo)
+{
+    DWORD code = pExceptionInfo->ExceptionRecord->ExceptionCode;
+    
+    // Skip non-crash exceptions
+    if (code == EXCEPTION_BREAKPOINT || 
+        code == EXCEPTION_SINGLE_STEP ||
+        code == DBG_PRINTEXCEPTION_C ||
+        code == 0x406D1388 || // Thread naming exception
+        code == 0x4001000A)   // Thread exit
+    {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    
+    // Get module name for the crash address
+    char moduleName[MAX_PATH] = "Unknown";
+    HMODULE hModule = nullptr;
+    void* crashAddr = pExceptionInfo->ExceptionRecord->ExceptionAddress;
+    
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        (LPCSTR)crashAddr, &hModule))
+    {
+        GetModuleFileNameA(hModule, moduleName, MAX_PATH);
+        // Get just the filename
+        char* lastSlash = strrchr(moduleName, '\\');
+        if (lastSlash) memmove(moduleName, lastSlash + 1, strlen(lastSlash));
+    }
+    
+    // Calculate offset within module
+    DWORD64 offset = hModule ? ((DWORD64)crashAddr - (DWORD64)hModule) : 0;
+    
+    // Get access violation details
+    char accessInfo[128] = "";
+    if (code == EXCEPTION_ACCESS_VIOLATION && pExceptionInfo->ExceptionRecord->NumberParameters >= 2)
+    {
+        ULONG_PTR accessType = pExceptionInfo->ExceptionRecord->ExceptionInformation[0];
+        ULONG_PTR targetAddr = pExceptionInfo->ExceptionRecord->ExceptionInformation[1];
+        sprintf_s(accessInfo, " [%s 0x%p]", 
+            accessType == 0 ? "READ" : (accessType == 1 ? "WRITE" : "EXEC"),
+            (void*)targetAddr);
+    }
+    
+    // Log immediately with full details
+    char buf[1024];
+    sprintf_s(buf, "CRASH: Code=0x%08X Module=%s+0x%llX Addr=0x%p%s", 
+        code, moduleName, offset, crashAddr, accessInfo);
+    QuickLog(buf);
+    
+    // Also log register state
+    CONTEXT* ctx = pExceptionInfo->ContextRecord;
+    sprintf_s(buf, "  RIP=0x%llX RSP=0x%llX RBP=0x%llX", ctx->Rip, ctx->Rsp, ctx->Rbp);
+    QuickLog(buf);
+    sprintf_s(buf, "  RAX=0x%llX RBX=0x%llX RCX=0x%llX RDX=0x%llX", ctx->Rax, ctx->Rbx, ctx->Rcx, ctx->Rdx);
+    QuickLog(buf);
+    
+    return EXCEPTION_CONTINUE_SEARCH; // Let the normal handler process it
+}
 
 void CCrashHandler::Initialize()
 {
     if (s_Initialized)
         return;
 
+    QuickLog("CrashHandler initialized");
+    
+    // Add vectored exception handler (first chance)
+    AddVectoredExceptionHandler(1, VectoredExceptionHandler);
+    
     s_PreviousFilter = SetUnhandledExceptionFilter(ExceptionFilter);
     s_Initialized = true;
 }
@@ -341,15 +428,23 @@ void CCrashHandler::ShowCrashDialog(const std::string& report)
 
 LONG WINAPI CCrashHandler::ExceptionFilter(EXCEPTION_POINTERS* pExceptionInfo)
 {
+    QuickLog("ExceptionFilter called");
+    
     if (pExceptionInfo->ExceptionRecord->ExceptionCode == EXCEPTION_BREAKPOINT)
     {
+        QuickLog("Breakpoint exception, continuing search");
         if (s_PreviousFilter)
             return s_PreviousFilter(pExceptionInfo);
         return EXCEPTION_CONTINUE_SEARCH;
     }
 
+    QuickLog("Generating crash report...");
     std::string report = FormatCrashReport(pExceptionInfo);
+    
+    QuickLog("Writing crash log...");
     WriteCrashLog(report);
+    
+    QuickLog("Showing crash dialog...");
     ShowCrashDialog(report);
 
     if (s_PreviousFilter)

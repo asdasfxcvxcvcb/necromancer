@@ -10,6 +10,19 @@
 
 void CWeather::Rain()
 {
+	// Skip during level transitions
+	if (G::bLevelTransition)
+		return;
+		
+	// Safety check - need to be in game
+	if (!I::EngineClient || !I::EngineClient->IsInGame())
+	{
+		// Clear cached pointers when not in game
+		m_pRainEntity = nullptr;
+		m_pRainNetworkable = nullptr;
+		return;
+	}
+
 	constexpr auto PRECIPITATION_INDEX = (MAX_EDICTS - 1);
 
 	// If weather is off, clean up the entity
@@ -26,6 +39,8 @@ void CWeather::Rain()
 			m_pRainEntity->GetClientNetworkable()->OnDataChanged(DATA_UPDATE_CREATED);
 			m_pRainEntity->GetClientNetworkable()->PostDataUpdate(DATA_UPDATE_CREATED);
 		}
+		m_pRainEntity = nullptr;
+		m_pRainNetworkable = nullptr;
 		return;
 	}
 
@@ -48,6 +63,10 @@ void CWeather::Rain()
 
 	if (!pRainEntity)
 	{
+		// Clear our cached pointer since entity doesn't exist
+		m_pRainEntity = nullptr;
+		m_pRainNetworkable = nullptr;
+		
 		// Create the precipitation entity
 		if (!pClass || !pClass->m_pCreateFn)
 			return;
@@ -62,8 +81,9 @@ void CWeather::Rain()
 		if (!m_pRainEntity || !m_pRainEntity->GetClientNetworkable())
 			return;
 	}
-	else if (!m_pRainEntity)
+	else if (!m_pRainEntity || m_pRainEntity != pRainEntity)
 	{
+		// Entity exists but our pointer is stale or null - refresh it
 		m_pRainEntity = static_cast<C_BaseEntity*>(I::ClientEntityList->GetClientEntity(PRECIPITATION_INDEX));
 		m_pRainNetworkable = m_pRainEntity ? m_pRainEntity->GetClientNetworkable() : nullptr;
 	}

@@ -11,6 +11,9 @@ MAKE_HOOK(CViewRender_DrawViewModels, Signatures::CViewRender_DrawViewModels.Get
 {
 	CALL_ORIGINAL(ecx, viewRender, drawViewmodel);
 
-	F::Outlines->Run();
+	// Only run Outlines::Run if outlines are actually enabled and have entities to draw
+	if (CFG::Outlines_Active && (CFG::Outlines_Players_Active || CFG::Outlines_Buildings_Active || CFG::Outlines_World_Active))
+		F::Outlines->Run();
+	
 	F::Paint->Run();
 }

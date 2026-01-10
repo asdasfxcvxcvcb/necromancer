@@ -17,6 +17,12 @@ class CMiscVisuals
 
 	void InitializeBloom();
 
+	// Freecam state
+	bool m_bFreecamActive = false;
+	Vec3 m_vFreecamPos = {};
+	Vec3 m_vFreecamAngles = {};
+	Vec3 m_vSavedPlayerAngles = {}; // Saved player angles to restore when exiting freecam
+
 public:
 	void AimbotFOVCircle();
 	void AimbotFOVCircleBloom();  // Bloom version using shaders
@@ -29,6 +35,9 @@ public:
 
 	void CustomFOV(CViewSetup* pSetup);
 	void Thirdperson(CViewSetup* pSetup);
+	void Freecam(CViewSetup* pSetup);
+	
+	bool IsFreecamActive() const { return m_bFreecamActive; }
 	
 	void CleanUpBloom();
 };
