@@ -38,14 +38,6 @@ void CAntiCheatCompat::ProcessCommand(CUserCmd* pCmd, bool* pSendPacket)
 		return;
 	}
 
-	// Skip anti-cheat processing during rocket jump - we need exact angles for rocket jumping
-	if (F::Misc->IsAutoRocketJumpRunning())
-		return;
-	
-	// Skip anti-cheat processing during FaN jump
-	if (F::Misc->IsAutoFaNRunning())
-		return;
-
 	Math::ClampAngles(pCmd->viewangles); // shouldn't happen, but failsafe
 
 	// Store current command in history - matching Amalgam's exact approach
