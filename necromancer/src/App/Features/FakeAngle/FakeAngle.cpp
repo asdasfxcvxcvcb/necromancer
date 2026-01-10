@@ -89,6 +89,11 @@ bool CFakeAngle::ShouldRun(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd
 	if (G::Attacking == 1)
 		return false;
 	
+	// Don't run anti-aim when pSilent is active (e.g., auto backstab, silent aimbot)
+	// The aim angles need to be preserved for the attack
+	if (G::bPSilentAngles)
+		return false;
+	
 	// Don't anti-aim during recharging
 	if (Shifting::bRecharging)
 		return false;
