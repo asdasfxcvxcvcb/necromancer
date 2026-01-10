@@ -994,7 +994,45 @@ namespace SDK
         if (!pLocal || !pWeapon || pCmd->weaponselect)
             return 0;
         
-        float flTickBase = bTickBase ? I::GlobalVars->curtime : TICKS_TO_TIME(pLocal->m_nTickBase());
+        int iTickBase = bTickBase ? I::GlobalVars->tickcount : pLocal->m_nTickBase();
+        float flTickBase = bTickBase ? I::GlobalVars->curtime : TICKS_TO_TIME(iTickBase);
+        
+        // Melee weapons - check smack time (like Amalgam)
+        if (pWeapon->GetSlot() == WEAPON_SLOT_MELEE)
+        {
+            switch (pWeapon->GetWeaponID())
+            {
+            case TF_WEAPON_KNIFE:
+                // Knife has instant backstab, no swing delay
+                return G::bCanPrimaryAttack && (pCmd->buttons & IN_ATTACK) ? 1 : 0;
+                
+            case TF_WEAPON_BAT_WOOD:
+            case TF_WEAPON_BAT_GIFTWRAP:
+            {
+                // Sandman/Wrap Assassin ball throw
+                static int iThrowTick = -5;
+                {
+                    static int iLastTickBase = iTickBase;
+                    if (iTickBase != iLastTickBase)
+                        iThrowTick = std::max(iThrowTick - 1, -5);
+                    iLastTickBase = iTickBase;
+                }
+
+                if (G::bCanPrimaryAttack && pWeapon->HasPrimaryAmmoForShot() && (pCmd->buttons & IN_ATTACK2) && iThrowTick == -5)
+                    iThrowTick = 12;
+                if (iThrowTick > -5)
+                    G::Throwing = G::bCanSecondaryAttack = true;
+                if (iThrowTick > 1)
+                    G::Throwing = 2;
+                if (iThrowTick == 1)
+                    return 1;
+            }
+            }
+            
+            // For all other melee: attacking when smack is about to happen
+            // This is the key check that disables anti-aim on the smack tick
+            return TIME_TO_TICKS(pWeapon->m_flSmackTime()) == iTickBase - 1 ? 1 : 0;
+        }
         
         switch (pWeapon->GetWeaponID())
         {
