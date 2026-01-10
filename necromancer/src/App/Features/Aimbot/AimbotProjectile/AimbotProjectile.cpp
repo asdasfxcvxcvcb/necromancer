@@ -298,17 +298,17 @@ bool CAimbotProjectile::GetProjectileInfo(C_TFWeaponBase* pWeapon)
 	return m_CurProjInfo.Speed > 0.0f;
 }
 
-// Helper to solve basic parabolic trajectory - OPTIMIZED
-// Precompute values that don't change, use fast math where possible
+// Helper to solve basic parabolic trajectory
+// Low arc (- sqrt) is used as it's faster and more practical for gameplay
 static bool SolveParabolic(const Vec3& vFrom, const Vec3& vTo, float flSpeed, float flGravity, float& flPitchOut, float& flYawOut, float& flTimeOut)
 {
 	const Vec3 v = vTo - vFrom;
-	const float dx = v.x * v.x + v.y * v.y; // Length2D squared - avoid sqrt
+	const float dx = v.x * v.x + v.y * v.y; // Length2D squared
 	
 	if (dx < 0.000001f)
 		return false;
 
-	const float dxSqrt = sqrtf(dx); // Only sqrt once
+	const float dxSqrt = sqrtf(dx);
 	const float dy = v.z;
 
 	flYawOut = RAD2DEG(atan2f(v.y, v.x));
@@ -317,22 +317,21 @@ static bool SolveParabolic(const Vec3& vFrom, const Vec3& vTo, float flSpeed, fl
 	{
 		const float v2 = flSpeed * flSpeed;
 		const float v4 = v2 * v2;
-		const float gDx2 = flGravity * dx; // dx is already squared
+		const float gDx2 = flGravity * dx;
 		const float root = v4 - flGravity * (gDx2 + 2.0f * dy * v2);
 
 		if (root < 0.0f)
-			return false;
+			return false; // Target is out of range - no solution exists
 
+		const float sqrtRoot = sqrtf(root);
 		const float gDxSqrt = flGravity * dxSqrt;
-		flPitchOut = -RAD2DEG(atanf((v2 - sqrtf(root)) / gDxSqrt));
 		
-		// Avoid redundant trig: cos(-x) = cos(x)
-		const float cosPitch = cosf(DEG2RAD(flPitchOut));
-		flTimeOut = dxSqrt / (cosPitch * flSpeed);
+		// Low arc solution (faster arrival time)
+		flPitchOut = -RAD2DEG(atanf((v2 - sqrtRoot) / gDxSqrt));
+		flTimeOut = dxSqrt / (cosf(DEG2RAD(flPitchOut)) * flSpeed);
 	}
 	else
 	{
-		// For no gravity, simplified calculation
 		const float dist = sqrtf(dx + v.z * v.z);
 		flPitchOut = -RAD2DEG(atan2f(v.z, dxSqrt));
 		flTimeOut = dist / flSpeed;
@@ -712,12 +711,14 @@ bool CAimbotProjectile::CanArcReach(const Vec3& vFrom, const Vec3& vTo, const Ve
 
 		if (trace.DidHit())
 		{
+			// If we hit something past the target, we're good
 			if (info.m_pos.DistTo(trace.endpos) > info.m_pos.DistTo(vTo))
 			{
 				return true;
 			}
 
-			if (trace.endpos.DistTo(vTo) > 40.0f)
+			// If we hit something close enough to target, check if we can splash them
+			if (trace.endpos.DistTo(vTo) > 100.0f) // Increased from 40 to 100 for splash radius
 			{
 				return false;
 			}
@@ -806,24 +807,11 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 		if (!F::MovementSimulation->Initialize(pPlayer))
 			return false;
 
-		// Pre-calculate max simulation ticks once
+		// Pre-calculate values outside the loop
 		const int nMaxSimTicks = TIME_TO_TICKS(CFG::Aimbot_Projectile_Max_Simulation_Time);
-		
-		// Pre-calculate latency once
 		const float flLatency = SDKUtils::GetLatency();
-		
-		// Pre-calculate sticky arm time if needed
 		const bool bIsSticky = pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER;
 		const float flStickyArmTime = bIsSticky ? SDKUtils::AttribHookValue(0.8f, "sticky_arm_time", pLocal) : 0.0f;
-
-		// Early distance check - if target is way too far, skip expensive simulation
-		const float flInitialDist = vLocalPos.DistTo(target.Position);
-		const float flMaxPossibleDist = m_CurProjInfo.Speed * CFG::Aimbot_Projectile_Max_Simulation_Time;
-		if (flInitialDist > flMaxPossibleDist * 1.5f)
-		{
-			F::MovementSimulation->Restore();
-			return false;
-		}
 
 		for (int nTick = 0; nTick < nMaxSimTicks; nTick++)
 		{
