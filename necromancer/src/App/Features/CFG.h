@@ -129,6 +129,9 @@ namespace CFG
 	CFGVAR(Aimbot_Projectile_Double_Donk_Delay, 0.01f); // Fuse expire delay after impact (-0.1 to 0.4 seconds)
 	CFGVAR(Aimbot_Projectile_Cannon_Cancel_Charge, true); // Cancel Loose Cannon charge if target is lost
 
+	// Behavior-based prediction - uses learned player behavior to improve aim
+	CFGVAR(Aimbot_Projectile_Use_Dodge_Prediction, true); // Apply aim offset based on predicted dodge direction
+
 	CFGVAR(Aimbot_Melee_Active, false);
 	CFGVAR(Aimbot_Melee_Always_Active, false);
 	CFGVAR(Aimbot_Melee_Target_LagRecords, true);

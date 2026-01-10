@@ -1363,6 +1363,51 @@ bool CAmalgamAimbotProjectile::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeap
 			}
 		}
 
+		// Apply dodge prediction offset for players
+		if (CFG::Aimbot_Projectile_Use_Dodge_Prediction && tTarget.m_iTargetType == TargetEnum::Player && tTarget.m_pEntity)
+		{
+			const int nTargetIdx = tTarget.m_pEntity->entindex();
+			auto* pBehavior = F::MovementSimulation->GetPlayerBehavior(nTargetIdx);
+			
+			if (pBehavior && pBehavior->GetConfidence() > 0.5f && pBehavior->m_Combat.m_nReactionSamples >= 5)
+			{
+				const int nDodgeDir = F::MovementSimulation->GetPredictedDodge(nTargetIdx);
+				
+				// Only apply if they have a clear dodge preference (not "no reaction")
+				if (nDodgeDir != 0)
+				{
+					// Scale offset by:
+					// - Confidence: how sure we are about their dodge pattern
+					// - Time to target: longer flight = more time to dodge = bigger offset
+					// - Reaction rate: how often they actually dodge vs stand still
+					const float flConfidence = pBehavior->GetConfidence();
+					const float flReactionRate = pBehavior->m_Combat.m_flReactionToThreat;
+					
+					// Time scaling: 0.3s = minimal offset, 1.0s+ = full offset
+					const float flTimeScale = Math::RemapValClamped(m_flTimeTo, 0.3f, 1.0f, 0.1f, 1.0f);
+					
+					// Base offset in degrees, scaled by all factors
+					const float flBaseOffset = 2.0f;
+					const float flOffset = flBaseOffset * flConfidence * flTimeScale * flReactionRate;
+					
+					switch (nDodgeDir)
+					{
+					case -1: // Dodge left - aim slightly right
+						tTarget.m_vAngleTo.y -= flOffset;
+						break;
+					case 1:  // Dodge right - aim slightly left
+						tTarget.m_vAngleTo.y += flOffset;
+						break;
+					case 2:  // Dodge jump - aim slightly higher
+						tTarget.m_vAngleTo.x -= flOffset * 0.7f;
+						break;
+					case 3:  // Dodge back - already handled by movement prediction
+						break;
+					}
+				}
+			}
+		}
+
 		Aim(pCmd, tTarget.m_vAngleTo, Vars::Aimbot::General::AimType.Value, bIsFiring);
 		return true;
 	}

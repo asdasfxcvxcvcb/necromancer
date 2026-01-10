@@ -1494,18 +1494,61 @@ void CAimbotProjectile::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* 
 
 		if (ShouldAim(pCmd, pLocal, pWeapon) || bIsFiring)
 		{
-			/*const Vec3 ang_center{ Math::CalcAngle(pLocal->GetShootPos(), Target.m_vPosition) };
-			const Vec3 ang_offset{ Math::CalcAngle(getOffsetShootPos(pLocal, pWeapon, pCmd), Target.m_vPosition)};
+			// Apply dodge prediction offset for players
+			Vec3 vFinalAngles = target.AngleTo;
+			if (target.Entity->GetClassId() == ETFClassIds::CTFPlayer && CFG::Aimbot_Projectile_Use_Dodge_Prediction)
+			{
+				const int nTargetIdx = target.Entity->entindex();
+				auto* pBehavior = F::MovementSimulation->GetPlayerBehavior(nTargetIdx);
+				
+				if (pBehavior && pBehavior->GetConfidence() > 0.5f && pBehavior->m_Combat.m_nReactionSamples >= 5)
+				{
+					const int nDodgeDir = F::MovementSimulation->GetPredictedDodge(nTargetIdx);
+					
+					// Only apply if they have a clear dodge preference (not "no reaction")
+					if (nDodgeDir != 0)
+					{
+						// Scale offset by:
+						// - Confidence (0.5-1.0): how sure we are about their dodge pattern
+						// - Time to target: longer flight = more time to dodge = bigger offset
+						// - Reaction rate: how often they actually dodge vs stand still
+						const float flConfidence = pBehavior->GetConfidence();
+						const float flReactionRate = pBehavior->m_Combat.m_flReactionToThreat;
+						
+						// Time scaling: 0.3s = minimal offset, 1.0s+ = full offset
+						// Projectiles arriving in <0.3s give almost no time to react
+						const float flTimeScale = Math::RemapValClamped(target.TimeToTarget, 0.3f, 1.0f, 0.1f, 1.0f);
+						
+						// Base offset in degrees, scaled by all factors
+						const float flBaseOffset = 2.0f;
+						const float flOffset = flBaseOffset * flConfidence * flTimeScale * flReactionRate;
+						
+						switch (nDodgeDir)
+						{
+						case -1: // Dodge left - aim slightly right
+							vFinalAngles.y -= flOffset;
+							break;
+						case 1:  // Dodge right - aim slightly left
+							vFinalAngles.y += flOffset;
+							break;
+						case 2:  // Dodge jump - aim slightly higher
+							vFinalAngles.x -= flOffset * 0.7f;
+							break;
+						case 3:  // Dodge back - aim slightly forward (lead more)
+							// Already handled by movement prediction
+							break;
+						}
+					}
+				}
+			}
 
-			const float correction_scale{ Math::RemapValClamped(pLocal->GetShootPos().DistTo(Target.m_vPosition), 0.0f, 19202.0f, 0.0f, 1.0f) };
+			Aim(pCmd, pLocal, pWeapon, vFinalAngles);
 
-			const float base_val{ pWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW ? 5.3f : 6.5f };
-
-			const Vec3 correction{ (ang_offset - ang_center) * (base_val * correction_scale) };
-
-			Target.m_vAngleTo -= correction;*/
-
-			Aim(pCmd, pLocal, pWeapon, target.AngleTo);
+			// Notify behavior system that we fired at this target
+			if (bIsFiring && target.Entity->GetClassId() == ETFClassIds::CTFPlayer)
+			{
+				F::MovementSimulation->OnShotFired(target.Entity->entindex());
+			}
 
 			if (bIsFiring && m_TargetPath.size() > 1)
 			{

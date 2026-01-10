@@ -440,6 +440,7 @@ void CMovementSimulation::Store()
 		
 		const Vec3 vVelocity = pPlayer->m_vecVelocity();
 		
+		// Handle stationary players - clear records but don't apply any prediction bias
 		if (vVelocity.IsZero())
 		{
 			if (!vRecords.empty()) vRecords.clear();
@@ -459,6 +460,59 @@ void CMovementSimulation::Store()
 		const int nWaterLevel = pPlayer->m_nWaterLevel();
 		const bool bSwimming = nWaterLevel >= 2;
 		const int iMode = bSwimming ? 2 : (nFlags & FL_ONGROUND) ? 0 : 1;
+
+		// =====================================================================
+		// KNOCKBACK DETECTION - Don't record velocity changes from damage
+		// If velocity changed drastically without matching expected movement,
+		// it's likely knockback from a rocket/explosion
+		// =====================================================================
+		bool bLikelyKnockback = false;
+		if (!vRecords.empty())
+		{
+			const auto& tLastRecord = vRecords.front();
+			const Vec3 vExpectedPos = tLastRecord.m_vOrigin + tLastRecord.m_vVelocity * flDeltaTime;
+			const Vec3 vActualDelta = vOrigin - tLastRecord.m_vOrigin;
+			const Vec3 vExpectedDelta = tLastRecord.m_vVelocity * flDeltaTime;
+			
+			// Check if velocity direction changed drastically (knockback indicator)
+			Vec3 vOldDir = tLastRecord.m_vVelocity;
+			vOldDir.z = 0;
+			Vec3 vNewDir = vVelocity;
+			vNewDir.z = 0;
+			
+			const float flOldSpeed = vOldDir.Length();
+			const float flNewSpeed = vNewDir.Length();
+			
+			if (flOldSpeed > 50.0f && flNewSpeed > 50.0f)
+			{
+				vOldDir = vOldDir * (1.0f / flOldSpeed);
+				vNewDir = vNewDir * (1.0f / flNewSpeed);
+				const float flDot = vOldDir.Dot(vNewDir);
+				
+				// Sudden direction change (>60 degrees) with speed increase = knockback
+				if (flDot < 0.5f && flNewSpeed > flOldSpeed * 1.2f)
+				{
+					bLikelyKnockback = true;
+				}
+				// Or sudden large speed increase without direction change = also knockback
+				else if (flNewSpeed > flOldSpeed * 1.5f && flNewSpeed > 300.0f)
+				{
+					bLikelyKnockback = true;
+				}
+			}
+			// Sudden velocity from near-stationary = knockback
+			else if (flOldSpeed < 30.0f && flNewSpeed > 200.0f)
+			{
+				bLikelyKnockback = true;
+			}
+		}
+		
+		// If knockback detected, clear records and skip this sample
+		if (bLikelyKnockback)
+		{
+			vRecords.clear();
+			continue;
+		}
 
 		// Wall collision detection - only if we have records and velocity is significant
 		if (!vRecords.empty() && vVelocity.Length2DSqr() > 100.0f)
@@ -766,38 +820,53 @@ static inline bool GetYawDifference(MoveData& tRecord1, MoveData& tRecord2, bool
 
 	*pYaw = Math::NormalizeAngle(flYaw1 - flYaw2);
 	
+	// Scale yaw by speed ratio for ground movement (slower = less turn)
 	if (flMaxSpeed > 0.0f && tRecord1.m_iMode != 1)
 		*pYaw *= std::clamp(tRecord1.m_vVelocity.Length2D() / flMaxSpeed, 0.f, 1.f);
 	
+	// Apply air friction scaling for air strafing
 	if (tRecord1.m_iMode == 1) // Air
 		*pYaw /= GetFrictionScale(tRecord1.m_vVelocity.Length2D(), *pYaw, 
 			tRecord1.m_vVelocity.z + GetGravity() * TICK_INTERVAL, 0.f, 56.f);
 	
+	// Reject extreme yaw changes (likely knockback or teleport)
 	if (fabsf(*pYaw) > 45.f)
 		return false;
 
 	const int iLastSign = iStaticSign;
 	const int iCurrSign = iStaticSign = *pYaw ? (*pYaw > 0 ? 1 : -1) : iStaticSign;
 
-	const bool iLastZero = bStaticZero;
-	const bool iCurrZero = bStaticZero = !*pYaw;
+	const bool bCurrZero = bStaticZero = fabsf(*pYaw) < 0.5f; // More lenient zero check
 
-	const bool bChanged = iCurrSign != iLastSign || (iCurrZero && iLastZero);
+	// Direction changed = sign flipped (not just zero)
+	const bool bSignChanged = iLastSign != 0 && iCurrSign != iLastSign;
+	// Straight = very small yaw change relative to speed
 	const bool bStraight = fabsf(*pYaw) * tRecord1.m_vVelocity.Length2D() * iTicks < flStraightFuzzyValue;
 
 	if (bStart)
 	{
 		iChanges = 0;
 		iStart = TIME_TO_TICKS(flTime1);
+		// On start, only count as change if going straight
 		if (bStraight && ++iChanges > iMaxChanges)
 			return false;
 		return true;
 	}
 	else
 	{
-		if ((bChanged || bStraight) && ++iChanges > iMaxChanges)
+		// For circle strafing: sign should stay consistent
+		// Only count as "change" if sign actually flipped OR went straight
+		if (bSignChanged || (bStraight && !bCurrZero))
+		{
+			if (++iChanges > iMaxChanges)
+				return false;
+		}
+		
+		// Time limit check
+		if (iChanges && iStart - TIME_TO_TICKS(flTime2) > iMaxChangeTime)
 			return false;
-		return iChanges && iStart - TIME_TO_TICKS(flTime2) > iMaxChangeTime ? false : true;
+		
+		return true;
 	}
 }
 
@@ -895,7 +964,103 @@ bool CMovementSimulation::StrafePrediction(MoveStorage& tStorage, int iSamples)
 			return false;
 	}
 
+	auto pPlayer = tStorage.m_pPlayer;
+	const int nEntIndex = pPlayer->entindex();
+	auto* pBehavior = (nEntIndex >= 1 && nEntIndex < 64) ? GetPlayerBehavior(nEntIndex) : nullptr;
+
+	// Normal strafe prediction (circle strafing) - do this FIRST
+	// This is the primary prediction method
 	GetAverageYaw(tStorage, iSamples);
+	
+	// If we got a valid strafe prediction, use it
+	if (tStorage.m_flAverageYaw != 0.0f)
+	{
+		// Base: Use average yaw (this is the Amalgam approach that works well)
+		// Enhancement: If we have learned quadrant data, enable quadrant mode for fine-tuning
+		tStorage.m_bCircleStrafeMode = false;
+		
+		// Only enable quadrant mode if we have GOOD data (many samples, low variance)
+		if (pBehavior && pBehavior->m_Strafe.m_bIsCircleStrafing)
+		{
+			// Check if we have enough samples in each quadrant
+			int nMinSamples = 999;
+			for (int i = 0; i < 4; i++)
+				nMinSamples = std::min(nMinSamples, pBehavior->m_Strafe.m_nQuadrantSamples[i]);
+			
+			// Only use quadrant mode if we have at least 3 samples in EVERY quadrant
+			// AND the variance is low (consistent strafing)
+			if (nMinSamples >= 3 && pBehavior->m_Strafe.m_flYawRateVariance < 2.0f)
+			{
+				tStorage.m_bCircleStrafeMode = true;
+				tStorage.m_nCircleStrafeDir = pBehavior->m_Strafe.m_nCircleStrafeDirection;
+				tStorage.m_nCurrentQuadrant = pBehavior->m_Strafe.m_nLastQuadrant;
+				if (tStorage.m_nCurrentQuadrant < 0 || tStorage.m_nCurrentQuadrant > 3)
+					tStorage.m_nCurrentQuadrant = 0;
+				
+				// Copy learned quadrant yaw rates
+				for (int i = 0; i < 4; i++)
+				{
+					tStorage.m_flQuadrantTiming[i] = pBehavior->m_Strafe.m_flQuadrantTime[i];
+					tStorage.m_flQuadrantYawRate[i] = pBehavior->m_Strafe.m_flQuadrantYawRate[i];
+				}
+				
+				// Calculate how long they've been in current quadrant
+				const float flCurTime = I::GlobalVars ? I::GlobalVars->curtime : 0.0f;
+				tStorage.m_flTimeInQuadrant = flCurTime - pBehavior->m_Strafe.m_flLastQuadrantChangeTime;
+				if (tStorage.m_flTimeInQuadrant < 0.0f || tStorage.m_flTimeInQuadrant > 0.5f)
+					tStorage.m_flTimeInQuadrant = 0.0f;
+				
+				// Use the yaw rate for current quadrant (fallback to average if invalid)
+				tStorage.m_flYawPerTick = tStorage.m_flQuadrantYawRate[tStorage.m_nCurrentQuadrant];
+				if (fabsf(tStorage.m_flYawPerTick) < 0.5f || fabsf(tStorage.m_flYawPerTick) > 15.0f)
+					tStorage.m_flYawPerTick = tStorage.m_flAverageYaw;
+			}
+		}
+		
+		return true;
+	}
+
+	// Only check for counter-strafe if normal strafe prediction failed
+	// Counter-strafing (A-D spam) results in near-zero average yaw
+	if (nEntIndex >= 1 && nEntIndex < 64 && tStorage.m_bDirectMove)
+	{
+		// Check learned behavior - only use if we have strong evidence
+		if (ShouldPredictCounterStrafe(nEntIndex))
+		{
+			tStorage.m_bCounterStrafeSpam = true;
+			
+			// Initialize counter-strafe simulation state
+			if (pBehavior)
+			{
+				// Get current strafe direction from behavior tracking
+				tStorage.m_nCSCurrentDir = pBehavior->m_Strafe.m_nLastStrafeSign;
+				if (tStorage.m_nCSCurrentDir == 0)
+					tStorage.m_nCSCurrentDir = 1;  // Default to right if unknown
+				
+				// Calculate how long they've been in current direction
+				const float flCurTime = I::GlobalVars ? I::GlobalVars->curtime : 0.0f;
+				tStorage.m_flCSTimeInCurrentDir = flCurTime - pBehavior->m_Strafe.m_flLastDirectionChangeTime;
+				if (tStorage.m_flCSTimeInCurrentDir < 0.0f || tStorage.m_flCSTimeInCurrentDir > 1.0f)
+					tStorage.m_flCSTimeInCurrentDir = 0.0f;
+				
+				// Get their learned timing for direction switches
+				// Use the timing for the CURRENT direction (when will they switch?)
+				if (tStorage.m_nCSCurrentDir == -1)  // Going left, will switch to right
+					tStorage.m_flCSTimeToSwitch = pBehavior->m_Strafe.m_flAvgTimeLeftToRight;
+				else  // Going right, will switch to left
+					tStorage.m_flCSTimeToSwitch = pBehavior->m_Strafe.m_flAvgTimeRightToLeft;
+				
+				// Clamp to reasonable values
+				tStorage.m_flCSTimeToSwitch = std::clamp(tStorage.m_flCSTimeToSwitch, 0.08f, 0.35f);
+				
+				// Store starting yaw for reference
+				tStorage.m_flCSStartYaw = tStorage.m_MoveData.m_vecViewAngles.y;
+			}
+			
+			return true;
+		}
+	}
+
 	return true;
 }
 
@@ -913,214 +1078,141 @@ void CMovementSimulation::RunTick(MoveStorage& tStorage, bool bPath)
 	I::GlobalVars->frametime = I::Prediction->m_bEnginePaused ? 0.f : TICK_INTERVAL;
 
 	float flCorrection = 0.f;
+	float flStrafeMultiplier = 1.0f;
 	
 	// =========================================================================
-	// BEHAVIOR-BASED PREDICTION - Adjust predicted DIRECTION based on playstyle
-	// Instead of scaling movement, we adjust WHERE we think they'll go
+	// BEHAVIOR-BASED STRAFE MULTIPLIER - Reduce strafe prediction for certain states
 	// =========================================================================
 	PlayerBehavior* pBehavior = tStorage.m_pCachedBehavior;
-	float flDirectionBias = 0.0f;  // Positive = predict forward, Negative = predict retreat
-	float flStrafeMultiplier = 1.0f;  // How much to trust their strafe pattern
-	
-	if (pBehavior && pBehavior->m_nSampleCount > 20)
+	if (pBehavior && pBehavior->m_nSampleCount > 30)
 	{
 		const float flCurTime = I::GlobalVars->curtime;
-		const bool bLowHealth = tStorage.m_bCachedLowHealth;
-		const bool bBeingHealed = tStorage.m_bCachedBeingHealed;
 		const bool bRecentlyAttacking = (flCurTime - pBehavior->m_Combat.m_flLastAttackTime) < 0.5f;
 		
-		// Get playstyle score (-1 = defensive, +1 = aggressive)
-		const float flPlaystyle = pBehavior->GetPlaystyle();
-		
-		// =====================================================================
-		// IMMEDIATE OVERRIDES - Current state trumps learned behavior
-		// =====================================================================
-		
-		// Melee + looking at us = charging straight, predict FORWARD
-		if (pBehavior->m_Combat.m_bHasMeleeOut && pBehavior->m_Combat.m_bIsLookingAtUs)
-		{
-			flDirectionBias = 0.6f;  // Strong forward prediction - they're charging
-			flStrafeMultiplier = 0.2f;  // Almost ignore strafe pattern, they're beelining
-		}
 		// Currently attacking = focused on aiming, less strafe
-		else if (bRecentlyAttacking && pBehavior->m_Combat.m_flAttackPredictability > 0.5f)
+		if (bRecentlyAttacking && pBehavior->m_Combat.m_flAttackPredictability > 0.5f)
 		{
-			flStrafeMultiplier = 0.4f;  // They stand still when shooting
+			flStrafeMultiplier = 0.4f + (1.0f - pBehavior->m_Combat.m_flAttackPredictability) * 0.4f;
 		}
 		
-		// =====================================================================
-		// HEALTH-BASED DIRECTION PREDICTION
-		// =====================================================================
-		
-		// Low HP + known retreater = predict BACKWARD movement
-		if (bLowHealth && pBehavior->m_Positioning.m_flLowHealthRetreatRate > 0.5f)
-		{
-			flDirectionBias = -0.5f * pBehavior->m_Positioning.m_flLowHealthRetreatRate;  // Strong retreat prediction
-		}
-		// Low HP + known fighter = predict they'll keep pushing
-		else if (bLowHealth && pBehavior->m_Positioning.m_flLowHealthRetreatRate < 0.3f)
-		{
-			flDirectionBias = 0.25f;  // They fight when hurt
-		}
-		
-		// Being healed + aggressive = predict FORWARD push
-		if (bBeingHealed && pBehavior->m_Positioning.m_flHealedAggroBoost > 0.5f)
-		{
-			flDirectionBias += 0.35f * pBehavior->m_Positioning.m_flHealedAggroBoost;  // Uber push prediction
-		}
-		
-		// =====================================================================
-		// PLAYSTYLE-BASED DIRECTION PREDICTION
-		// =====================================================================
-		
-		// Aggressive players approach - predict forward
-		if (flPlaystyle > 0.3f)
-		{
-			flDirectionBias += 0.25f * flPlaystyle;  // Up to +0.25 for very aggressive
-		}
-		// Defensive players retreat - predict backward
-		else if (flPlaystyle < -0.3f)
-		{
-			flDirectionBias += 0.25f * flPlaystyle;  // Up to -0.25 for very defensive
-		}
-		
-		// =====================================================================
-		// CORNER PEEKERS - They'll retreat after peeking
-		// =====================================================================
-		if (pBehavior->m_Strafe.m_flCornerPeekRate > 0.3f)
-		{
-			// Check if they recently approached (peeking) - predict retreat
-			if (pBehavior->m_Positioning.m_vRecentPositions.size() > 5)
-			{
-				const auto pLocal = H::Entities->GetLocal();
-				if (pLocal)
-				{
-					Vec3 vLocalPos = pLocal->m_vecOrigin();
-					Vec3 vCurPos = tStorage.m_MoveData.m_vecAbsOrigin;
-					Vec3 vOldPos = pBehavior->m_Positioning.m_vRecentPositions[4];
-					
-					float flDistNow = (vCurPos - vLocalPos).Length2D();
-					float flDistOld = (vOldPos - vLocalPos).Length2D();
-					
-					// They approached recently - predict retreat
-					if (flDistNow < flDistOld - 30.0f)
-					{
-						flDirectionBias -= 0.4f * pBehavior->m_Strafe.m_flCornerPeekRate;  // Strong retreat after peek
-					}
-				}
-			}
-		}
-		
-		// =====================================================================
-		// STRAFE PATTERN RELIABILITY
-		// High strafe intensity = trust the strafe pattern more
-		// Low strafe intensity = they move predictably
-		// =====================================================================
-		if (pBehavior->m_Strafe.m_flStrafeIntensity > 8.0f)
-		{
-			flStrafeMultiplier = 1.0f + (pBehavior->m_Strafe.m_flStrafeIntensity - 8.0f) * 0.02f;
-			flStrafeMultiplier = std::min(flStrafeMultiplier, 1.3f);
-		}
-		else if (pBehavior->m_Strafe.m_flStrafeIntensity < 2.0f)
-		{
-			flStrafeMultiplier = 0.7f;  // They barely strafe, predict straight movement
-		}
-		
-		// Bunny hoppers in air = trust strafe pattern more
-		if (!tStorage.m_bDirectMove && pBehavior->m_Strafe.m_flBunnyHopRate > 0.3f)
-		{
-			flStrafeMultiplier *= 1.0f + (0.2f * pBehavior->m_Strafe.m_flBunnyHopRate);
-		}
-		
-		// =====================================================================
-		// CLASS-SPECIFIC ADJUSTMENTS
-		// =====================================================================
+		// Class-specific adjustments
 		switch (pBehavior->m_nPlayerClass)
 		{
-		case TF_CLASS_SCOUT:
-			// Scouts strafe a lot, trust the pattern
-			flStrafeMultiplier *= 1.1f;
-			break;
 		case TF_CLASS_HEAVY:
-			// Revved heavies barely move
 			if (bRecentlyAttacking)
-			{
-				flStrafeMultiplier = 0.2f;
-				flDirectionBias = 0.0f;  // They're stationary
-			}
+				flStrafeMultiplier = 0.25f;
 			break;
 		case TF_CLASS_SNIPER:
-			// Scoped snipers don't move
 			if (tStorage.m_bCachedAiming)
-			{
-				flStrafeMultiplier = 0.1f;
-				flDirectionBias = 0.0f;
-			}
+				flStrafeMultiplier = 0.15f;
+			break;
+		case TF_CLASS_SCOUT:
+			flStrafeMultiplier *= 1.1f;
 			break;
 		}
 		
-		// Clamp values - allow stronger biases now
-		flDirectionBias = std::clamp(flDirectionBias, -0.7f, 0.7f);
-		flStrafeMultiplier = std::clamp(flStrafeMultiplier, 0.1f, 1.5f);
+		flStrafeMultiplier = std::clamp(flStrafeMultiplier, 0.15f, 1.3f);
 	}
 	
 	// =========================================================================
 	// APPLY MOVEMENT PREDICTION
 	// =========================================================================
 	
-	// Apply counter-strafe spam prediction (A-D spam)
+	// Apply counter-strafe spam prediction (A-D spam) - simulate actual L-R-L pattern
 	if (tStorage.m_bCounterStrafeSpam && tStorage.m_bDirectMove)
 	{
-		tStorage.m_MoveData.m_flForwardMove *= 0.3f;
-		tStorage.m_MoveData.m_flSideMove *= 0.3f;
+		// Simulate the counter-strafe pattern tick by tick
+		// Each tick, check if it's time to switch direction
+		
+		tStorage.m_flCSTimeInCurrentDir += TICK_INTERVAL;
+		
+		// Check if it's time to switch direction
+		if (tStorage.m_flCSTimeInCurrentDir >= tStorage.m_flCSTimeToSwitch)
+		{
+			// Switch direction
+			tStorage.m_nCSCurrentDir = -tStorage.m_nCSCurrentDir;
+			tStorage.m_flCSTimeInCurrentDir = 0.0f;
+			
+			// Update timing for next switch based on new direction
+			PlayerBehavior* pBehavior = tStorage.m_pCachedBehavior;
+			if (pBehavior)
+			{
+				if (tStorage.m_nCSCurrentDir == -1)  // Now going left, will switch to right
+					tStorage.m_flCSTimeToSwitch = pBehavior->m_Strafe.m_flAvgTimeLeftToRight;
+				else  // Now going right, will switch to left
+					tStorage.m_flCSTimeToSwitch = pBehavior->m_Strafe.m_flAvgTimeRightToLeft;
+				
+				tStorage.m_flCSTimeToSwitch = std::clamp(tStorage.m_flCSTimeToSwitch, 0.08f, 0.35f);
+			}
+		}
+		
+		// Apply strafe movement in current direction
+		// Use the base yaw and strafe perpendicular to it
+		tStorage.m_MoveData.m_vecViewAngles.y = tStorage.m_flCSStartYaw;
+		tStorage.m_MoveData.m_flForwardMove = 0.0f;  // No forward movement during A-D spam
+		tStorage.m_MoveData.m_flSideMove = tStorage.m_MoveData.m_flMaxSpeed * static_cast<float>(tStorage.m_nCSCurrentDir);
 	}
 	else if (tStorage.m_flAverageYaw)
 	{
-		float flMult = flStrafeMultiplier;  // Use behavior-adjusted multiplier
+		// =====================================================================
+		// CIRCLE STRAFE PREDICTION
+		// Base: Use average yaw (Amalgam approach - reliable)
+		// Enhancement: If quadrant mode enabled, use per-quadrant yaw rate
+		// =====================================================================
+		
+		float flYawToApply = tStorage.m_flAverageYaw;
+		
+		// If quadrant mode is enabled, use the learned per-quadrant yaw rate
+		if (tStorage.m_bCircleStrafeMode)
+		{
+			// Track time in quadrant
+			tStorage.m_flTimeInQuadrant += TICK_INTERVAL;
+			
+			// Check if it's time to move to next quadrant
+			const float flTimeForThisQuadrant = tStorage.m_flQuadrantTiming[tStorage.m_nCurrentQuadrant];
+			if (tStorage.m_flTimeInQuadrant >= flTimeForThisQuadrant)
+			{
+				// Move to next quadrant
+				const int nOldQuadrant = tStorage.m_nCurrentQuadrant;
+				if (tStorage.m_nCircleStrafeDir > 0)
+					tStorage.m_nCurrentQuadrant = (tStorage.m_nCurrentQuadrant + 1) % 4;  // Clockwise
+				else
+					tStorage.m_nCurrentQuadrant = (tStorage.m_nCurrentQuadrant + 3) % 4;  // Counter-clockwise
+				
+				tStorage.m_flTimeInQuadrant = 0.0f;
+				
+				// Update yaw rate for new quadrant
+				tStorage.m_flYawPerTick = tStorage.m_flQuadrantYawRate[tStorage.m_nCurrentQuadrant];
+				
+				// Sanity check - if learned rate is way off, fall back to average
+				if (fabsf(tStorage.m_flYawPerTick) < 0.5f || fabsf(tStorage.m_flYawPerTick) > 15.0f)
+					tStorage.m_flYawPerTick = tStorage.m_flAverageYaw;
+			}
+			
+			// Use the per-quadrant yaw rate instead of average
+			// But blend it with average to avoid sudden jumps (70% quadrant, 30% average)
+			flYawToApply = tStorage.m_flYawPerTick * 0.7f + tStorage.m_flAverageYaw * 0.3f;
+		}
+		
+		// Apply the yaw change
+		float flMult = flStrafeMultiplier;
 		if (!tStorage.m_bDirectMove && !tStorage.m_pPlayer->InCond(TF_COND_SHIELD_CHARGE))
 		{
-			flCorrection = 90.f * (tStorage.m_flAverageYaw > 0 ? 1.f : -1.f);
-			flMult *= GetFrictionScale(tStorage.m_MoveData.m_vecVelocity.Length2D(), tStorage.m_flAverageYaw,
+			flCorrection = 90.f * (flYawToApply > 0 ? 1.f : -1.f);
+			flMult *= GetFrictionScale(tStorage.m_MoveData.m_vecVelocity.Length2D(), flYawToApply,
 				tStorage.m_MoveData.m_vecVelocity.z + GetGravity() * TICK_INTERVAL);
 		}
-		tStorage.m_MoveData.m_vecViewAngles.y += tStorage.m_flAverageYaw * flMult + flCorrection;
+		tStorage.m_MoveData.m_vecViewAngles.y += flYawToApply * flMult + flCorrection;
 	}
 	else if (!tStorage.m_bDirectMove)
 	{
+		// In air with no strafe pattern - just continue current trajectory
 		tStorage.m_MoveData.m_flForwardMove = tStorage.m_MoveData.m_flSideMove = 0.f;
 	}
 	
-	// =========================================================================
-	// APPLY DIRECTION BIAS - Adjust forward/backward prediction
-	// Positive bias = predict they move toward us (add forward movement)
-	// Negative bias = predict they retreat (reduce forward movement)
-	// =========================================================================
-	if (fabsf(flDirectionBias) > 0.01f && pBehavior)
-	{
-		const auto pLocal = H::Entities->GetLocal();
-		if (pLocal && pLocal != tStorage.m_pPlayer)
-		{
-			// Get direction toward local player
-			Vec3 vToLocal = pLocal->m_vecOrigin() - tStorage.m_MoveData.m_vecAbsOrigin;
-			vToLocal.z = 0;
-			float flDist = vToLocal.Length();
-			
-			if (flDist > 50.0f)
-			{
-				vToLocal = vToLocal * (1.0f / flDist);
-				
-				// Convert to movement space
-				float flBiasForward = vToLocal.x;
-				float flBiasSide = -vToLocal.y;
-				Math::FixMovement(flBiasForward, flBiasSide, Vec3(0, 0, 0), tStorage.m_MoveData.m_vecViewAngles);
-				
-				// Apply bias (scaled by max speed for meaningful adjustment)
-				float flBiasStrength = flDirectionBias * tStorage.m_MoveData.m_flMaxSpeed;
-				tStorage.m_MoveData.m_flForwardMove += flBiasForward * flBiasStrength;
-				tStorage.m_MoveData.m_flSideMove += flBiasSide * flBiasStrength;
-			}
-		}
-	}
+	// NOTE: Direction bias removed - was causing weird arcs at end of prediction
+	// The dodge prediction in the aimbot handles this better by adjusting aim angles
+	// rather than modifying movement simulation
 
 	float flOldSpeed = tStorage.m_MoveData.m_flClientMaxSpeed;
 	bool bSwimmingTick = tStorage.m_pPlayer->m_nWaterLevel() >= 2;
@@ -1160,18 +1252,46 @@ void CMovementSimulation::RunTick(MoveStorage& tStorage, bool bPath)
 		&& !tStorage.m_MoveData.m_flForwardMove && !tStorage.m_MoveData.m_flSideMove
 		&& tStorage.m_MoveData.m_vecVelocity.Length2D() > tStorage.m_MoveData.m_flMaxSpeed * 0.015f)
 	{
-		// Just landed - set up movement in velocity direction
-		Vec3 vDirection = tStorage.m_MoveData.m_vecVelocity;
-		vDirection.z = 0;
-		vDirection.NormalizeInPlace();
-		vDirection = vDirection * 450.f;
+		// Just landed - predict they'll continue moving in their LOOK direction, not air velocity
+		// When landing, players typically hold W and move where they're looking
+		// Use eye angles to determine intended movement direction
+		Vec3 vEyeAngles = tStorage.m_pPlayer->GetEyeAngles();
+		Vec3 vForward;
+		Math::AngleVectors(vEyeAngles, &vForward, nullptr, nullptr);
 		
-		float flForwardMove = vDirection.x;
-		float flSideMove = -vDirection.y;
-		Math::FixMovement(flForwardMove, flSideMove, Vec3(0, 0, 0), tStorage.m_MoveData.m_vecViewAngles);
-		
-		tStorage.m_MoveData.m_flForwardMove = flForwardMove;
-		tStorage.m_MoveData.m_flSideMove = flSideMove;
+		// Project to 2D (ground plane)
+		vForward.z = 0;
+		if (!vForward.IsZero())
+		{
+			vForward.NormalizeInPlace();
+			vForward = vForward * 450.f;
+			
+			// Set view angles to match eye direction for proper movement
+			tStorage.m_MoveData.m_vecViewAngles = { 0.f, vEyeAngles.y, 0.f };
+			
+			// Convert to movement inputs
+			float flForwardMove = vForward.x;
+			float flSideMove = -vForward.y;
+			Math::FixMovement(flForwardMove, flSideMove, Vec3(0, 0, 0), tStorage.m_MoveData.m_vecViewAngles);
+			
+			tStorage.m_MoveData.m_flForwardMove = flForwardMove;
+			tStorage.m_MoveData.m_flSideMove = flSideMove;
+		}
+		else
+		{
+			// Fallback to velocity direction if eye angles aren't available
+			Vec3 vDirection = tStorage.m_MoveData.m_vecVelocity;
+			vDirection.z = 0;
+			vDirection.NormalizeInPlace();
+			vDirection = vDirection * 450.f;
+			
+			float flForwardMove = vDirection.x;
+			float flSideMove = -vDirection.y;
+			Math::FixMovement(flForwardMove, flSideMove, Vec3(0, 0, 0), tStorage.m_MoveData.m_vecViewAngles);
+			
+			tStorage.m_MoveData.m_flForwardMove = flForwardMove;
+			tStorage.m_MoveData.m_flSideMove = flSideMove;
+		}
 	}
 }
 
@@ -1230,7 +1350,45 @@ PlayerBehavior& CMovementSimulation::GetOrCreateBehavior(int nEntIndex)
 	return m_mPlayerBehaviors[nEntIndex];
 }
 
-// Learn counter-strafe patterns from yaw history (optimized)
+// ============================================================================
+// ON SHOT FIRED - Call when local player fires at a target
+// Updates the target's "last shot at" time for contextual counter-strafe tracking
+// ============================================================================
+void CMovementSimulation::OnShotFired(int nTargetEntIndex)
+{
+	if (nTargetEntIndex < 1 || nTargetEntIndex >= 64)
+		return;
+	
+	auto it = m_mPlayerBehaviors.find(nTargetEntIndex);
+	if (it == m_mPlayerBehaviors.end())
+		return;
+	
+	const float flCurTime = I::GlobalVars ? I::GlobalVars->curtime : 0.0f;
+	it->second.m_Strafe.m_flLastShotAtTime = flCurTime;
+	it->second.m_Combat.m_flLastShotAtTime = flCurTime;
+	
+	// Also store position when shot at for reaction tracking
+	auto pTarget = I::ClientEntityList->GetClientEntity(nTargetEntIndex);
+	if (pTarget)
+	{
+		auto pPlayer = pTarget->As<C_TFPlayer>();
+		if (pPlayer && !pPlayer->deadflag())
+			it->second.m_Combat.m_vPosWhenShotAt = pPlayer->m_vecOrigin();
+	}
+}
+
+// ============================================================================
+// COUNTER-STRAFE PATTERN DETECTION (A-D Spam)
+// 
+// Simple approach:
+//   1. Track when player changes strafe direction (yaw change sign flips)
+//   2. Detect pattern: LEFT → RIGHT → LEFT (or R→L→R) within 0.25s per change
+//   3. Count how often this player counter-strafes
+//   4. Remember this for future encounters
+//
+// The key insight: A-D spam causes the velocity YAW to oscillate back and forth
+// We just need to detect when the yaw change direction reverses quickly
+// ============================================================================
 void CMovementSimulation::LearnCounterStrafe(int nEntIndex, PlayerBehavior& behavior)
 {
 	auto it = m_mRecords.find(nEntIndex);
@@ -1238,64 +1396,698 @@ void CMovementSimulation::LearnCounterStrafe(int nEntIndex, PlayerBehavior& beha
 		return;
 	
 	const auto& vRecords = it->second;
-	const auto& rec0 = vRecords[0];
-	const auto& rec1 = vRecords[1];
+	const float flCurTime = vRecords[0].m_flSimTime;
 	
-	if (rec0.m_iMode != 0 || rec1.m_iMode != 0)  // Ground only
-		return;
-	
-	const float flSpeed0Sqr = rec0.m_vVelocity.Length2DSqr();
-	const float flSpeed1Sqr = rec1.m_vVelocity.Length2DSqr();
-	if (flSpeed0Sqr < 400.0f || flSpeed1Sqr < 400.0f)  // < 20 units/s
-		return;
-	
-	const float flYaw0 = Math::VelocityToAngles(rec0.m_vVelocity).y;
-	const float flYaw1 = Math::VelocityToAngles(rec1.m_vVelocity).y;
-	const float flYawDelta = Math::NormalizeAngle(flYaw0 - flYaw1);
-	
-	// Track strafe intensity (EMA of absolute yaw change)
-	behavior.m_Strafe.m_flStrafeIntensity = behavior.m_Strafe.m_flStrafeIntensity * 0.95f + fabsf(flYawDelta) * 0.05f;
-	
-	// Store yaw change if significant
-	if (fabsf(flYawDelta) > 2.0f)
+	// Only track ground movement (A-D spam is a ground thing)
+	if (vRecords[0].m_iMode != 0)
 	{
-		auto& vYawChanges = behavior.m_Strafe.m_vRecentYawChanges;
-		auto& vYawTimes = behavior.m_Strafe.m_vRecentYawTimes;
+		behavior.m_Strafe.m_bIsCurrentlyCounterStrafing = false;
+		behavior.m_Strafe.m_nLastStrafeSign = 0;
+		return;
+	}
+	
+	// Need some speed to detect strafing
+	const float flSpeed = vRecords[0].m_vVelocity.Length2D();
+	if (flSpeed < 40.0f)
+	{
+		behavior.m_Strafe.m_bIsCurrentlyCounterStrafing = false;
+		behavior.m_Strafe.m_nLastStrafeSign = 0;
+		return;
+	}
+	
+	// =========================================================================
+	// STEP 1: Build a list of direction changes from the records
+	// Direction = which way the velocity yaw is changing (left or right turn)
+	// =========================================================================
+	struct DirChange
+	{
+		int nDir;        // -1 = turning left, +1 = turning right
+		float flTime;    // When this sample was taken
+	};
+	
+	DirChange changes[16];
+	int nChangeCount = 0;
+	
+	const float flMaxAge = 0.6f;  // Only look at last 0.6 seconds
+	
+	for (size_t i = 0; i + 1 < vRecords.size() && i < 20; i++)
+	{
+		const auto& rec0 = vRecords[i];
+		const auto& rec1 = vRecords[i + 1];
 		
-		vYawChanges.push_front(flYawDelta);
-		vYawTimes.push_front(rec0.m_flSimTime);
+		// Skip if too old
+		if (flCurTime - rec0.m_flSimTime > flMaxAge)
+			break;
 		
-		if (vYawChanges.size() > 30)
+		// Skip non-ground samples
+		if (rec0.m_iMode != 0 || rec1.m_iMode != 0)
+			continue;
+		
+		// Skip if either velocity is too slow
+		if (rec0.m_vVelocity.Length2D() < 30.0f || rec1.m_vVelocity.Length2D() < 30.0f)
+			continue;
+		
+		// Calculate yaw change between these two samples
+		const float flYaw0 = Math::VelocityToAngles(rec0.m_vVelocity).y;
+		const float flYaw1 = Math::VelocityToAngles(rec1.m_vVelocity).y;
+		const float flYawDelta = Math::NormalizeAngle(flYaw0 - flYaw1);
+		
+		// Need significant yaw change to count as a direction
+		// (ignore tiny changes from network jitter)
+		if (fabsf(flYawDelta) < 1.5f)
+			continue;
+		
+		// Determine direction: positive yaw delta = turning right, negative = turning left
+		const int nDir = (flYawDelta > 0) ? 1 : -1;
+		
+		if (nChangeCount < 16)
 		{
-			vYawChanges.pop_back();
-			vYawTimes.pop_back();
+			changes[nChangeCount].nDir = nDir;
+			changes[nChangeCount].flTime = rec0.m_flSimTime;
+			nChangeCount++;
+		}
+	}
+	
+	// =========================================================================
+	// TRACK CURRENT DIRECTION AND WHEN IT CHANGED
+	// This is used by ShouldPredictCounterStrafe to know if they just changed
+	// =========================================================================
+	if (nChangeCount > 0)
+	{
+		const int nCurrentDir = changes[0].nDir;
+		
+		// Did direction change from last time?
+		if (behavior.m_Strafe.m_nLastStrafeSign != 0 && 
+		    behavior.m_Strafe.m_nLastStrafeSign != nCurrentDir)
+		{
+			// Direction just changed! Record when
+			behavior.m_Strafe.m_flLastDirectionChangeTime = flCurTime;
 		}
 		
-		// Analyze for counter-strafe pattern (only if we have enough data)
-		if (vYawChanges.size() >= 4)
+		behavior.m_Strafe.m_nLastStrafeSign = nCurrentDir;
+	}
+	
+	// =========================================================================
+	// STEP 2: Look for the counter-strafe pattern in the direction changes
+	// Pattern: DIR_A → DIR_B → DIR_A where DIR_A != DIR_B
+	// Each transition must happen within 0.25 seconds
+	// =========================================================================
+	bool bCounterStrafeDetected = false;
+	int nPatternCount = 0;  // How many L-R-L or R-L-R patterns found
+	
+	const float flMaxTransitionTime = 0.25f;  // Max time between direction changes
+	
+	for (int i = 0; i + 2 < nChangeCount; i++)
+	{
+		const int d0 = changes[i].nDir;
+		const int d1 = changes[i + 1].nDir;
+		const int d2 = changes[i + 2].nDir;
+		
+		// Check for reversal pattern: d0 != d1 && d1 != d2 && d0 == d2
+		// This means: LEFT-RIGHT-LEFT or RIGHT-LEFT-RIGHT
+		if (d0 != d1 && d1 != d2 && d0 == d2)
 		{
-			int nSignChanges = 0;
-			int nLastSign = 0;
+			// Check timing - each transition should be within max time
+			const float flTime01 = changes[i].flTime - changes[i + 1].flTime;
+			const float flTime12 = changes[i + 1].flTime - changes[i + 2].flTime;
 			
-			for (size_t i = 0; i < vYawChanges.size(); i++)
+			if (flTime01 > 0.02f && flTime01 < flMaxTransitionTime &&
+			    flTime12 > 0.02f && flTime12 < flMaxTransitionTime)
 			{
-				const int nSign = (vYawChanges[i] > 0.0f) ? 1 : -1;
-				if (nLastSign != 0 && nSign != nLastSign)
-					nSignChanges++;
-				nLastSign = nSign;
-			}
-			
-			if (nSignChanges >= 2)
-				behavior.m_Strafe.m_nCounterStrafeSamples++;
-			
-			if (behavior.m_nSampleCount > 0)
-			{
-				const float flNewRate = static_cast<float>(behavior.m_Strafe.m_nCounterStrafeSamples) / 
-				                        static_cast<float>(behavior.m_nSampleCount);
-				behavior.m_Strafe.m_flCounterStrafeRate = behavior.m_Strafe.m_flCounterStrafeRate * 0.95f + flNewRate * 0.05f;
+				bCounterStrafeDetected = true;
+				nPatternCount++;
+				
+				// Track timing for this direction change
+				behavior.m_Strafe.m_flAvgReversalTime = 
+					behavior.m_Strafe.m_flAvgReversalTime * 0.8f + ((flTime01 + flTime12) * 0.5f) * 0.2f;
+				
+				// Track directional timing (left→right vs right→left)
+				if (d0 == -1)  // Started left, went right, back to left
+				{
+					behavior.m_Strafe.m_flAvgTimeLeftToRight = 
+						behavior.m_Strafe.m_flAvgTimeLeftToRight * 0.8f + flTime01 * 0.2f;
+					behavior.m_Strafe.m_flAvgTimeRightToLeft = 
+						behavior.m_Strafe.m_flAvgTimeRightToLeft * 0.8f + flTime12 * 0.2f;
+					behavior.m_Strafe.m_nLeftToRightSamples++;
+					behavior.m_Strafe.m_nRightToLeftSamples++;
+				}
+				else  // Started right, went left, back to right
+				{
+					behavior.m_Strafe.m_flAvgTimeRightToLeft = 
+						behavior.m_Strafe.m_flAvgTimeRightToLeft * 0.8f + flTime01 * 0.2f;
+					behavior.m_Strafe.m_flAvgTimeLeftToRight = 
+						behavior.m_Strafe.m_flAvgTimeLeftToRight * 0.8f + flTime12 * 0.2f;
+					behavior.m_Strafe.m_nRightToLeftSamples++;
+					behavior.m_Strafe.m_nLeftToRightSamples++;
+				}
+				
+				// Skip ahead to avoid double-counting overlapping patterns
+				i += 2;
 			}
 		}
 	}
+	
+	// =========================================================================
+	// STEP 3: Update counter-strafe state and statistics
+	// =========================================================================
+	if (bCounterStrafeDetected)
+	{
+		// Mark as currently counter-strafing
+		if (!behavior.m_Strafe.m_bIsCurrentlyCounterStrafing)
+		{
+			behavior.m_Strafe.m_flCSStartTime = flCurTime;
+			behavior.m_Strafe.m_bCSContextRecorded = false;
+		}
+		
+		behavior.m_Strafe.m_bIsCurrentlyCounterStrafing = true;
+		behavior.m_Strafe.m_nConsecutiveReversals = nPatternCount;
+		behavior.m_Strafe.m_nCurrentReversalStreak = nPatternCount;
+		
+		// Increment detection count (this is what we remember for future)
+		behavior.m_Strafe.m_nCounterStrafeDetections++;
+	}
+	else
+	{
+		// Not counter-strafing right now
+		if (behavior.m_Strafe.m_bIsCurrentlyCounterStrafing)
+		{
+			// Was counter-strafing, now stopped - count as a "normal strafe" sample
+			behavior.m_Strafe.m_nNormalStrafeDetections++;
+		}
+		
+		behavior.m_Strafe.m_bIsCurrentlyCounterStrafing = false;
+		behavior.m_Strafe.m_nConsecutiveReversals = 0;
+	}
+	
+	// =========================================================================
+	// STEP 4: Update the overall counter-strafe rate for this player
+	// This is what we use to predict future behavior
+	// =========================================================================
+	const int nTotalSamples = behavior.m_Strafe.m_nCounterStrafeDetections + behavior.m_Strafe.m_nNormalStrafeDetections;
+	if (nTotalSamples > 5)
+	{
+		const float flNewRate = static_cast<float>(behavior.m_Strafe.m_nCounterStrafeDetections) / 
+		                        static_cast<float>(nTotalSamples);
+		// Smooth update (EMA)
+		behavior.m_Strafe.m_flCounterStrafeRate = behavior.m_Strafe.m_flCounterStrafeRate * 0.85f + flNewRate * 0.15f;
+	}
+	
+	// =========================================================================
+	// Also track strafe intensity (for circle strafe detection - separate system)
+	// =========================================================================
+	if (vRecords.size() >= 2)
+	{
+		const float flYaw0 = Math::VelocityToAngles(vRecords[0].m_vVelocity).y;
+		const float flYaw1 = Math::VelocityToAngles(vRecords[1].m_vVelocity).y;
+		const float flYawDelta = Math::NormalizeAngle(flYaw0 - flYaw1);
+		behavior.m_Strafe.m_flStrafeIntensity = behavior.m_Strafe.m_flStrafeIntensity * 0.95f + fabsf(flYawDelta) * 0.05f;
+		
+		// Store yaw changes for circle strafe detection
+		if (fabsf(flYawDelta) > 2.0f)
+		{
+			auto& vYawChanges = behavior.m_Strafe.m_vRecentYawChanges;
+			auto& vYawTimes = behavior.m_Strafe.m_vRecentYawTimes;
+			
+			vYawChanges.push_front(flYawDelta);
+			vYawTimes.push_front(flCurTime);
+			
+			if (vYawChanges.size() > 30)
+			{
+				vYawChanges.pop_back();
+				vYawTimes.pop_back();
+			}
+		}
+		
+		// =====================================================================
+		// CIRCLE STRAFE LEARNING - Track timing per quadrant
+		// Quadrant 0=Forward, 1=Right, 2=Back, 3=Left (relative to their movement)
+		// =====================================================================
+		
+		// Determine current quadrant from velocity direction
+		// Use the yaw angle to determine which quadrant they're in
+		const float flYaw = Math::NormalizeAngle(flYaw0);
+		int nQuadrant = 0;
+		
+		// Convert yaw to quadrant (0-3)
+		// -45 to 45 = Forward (0)
+		// 45 to 135 = Left (3) - yaw increases counter-clockwise
+		// 135 to -135 = Back (2)
+		// -135 to -45 = Right (1)
+		if (flYaw >= -45.0f && flYaw < 45.0f)
+			nQuadrant = 0;  // Forward
+		else if (flYaw >= 45.0f && flYaw < 135.0f)
+			nQuadrant = 3;  // Left
+		else if (flYaw >= -135.0f && flYaw < -45.0f)
+			nQuadrant = 1;  // Right
+		else
+			nQuadrant = 2;  // Back
+		
+		// Check if quadrant changed
+		if (behavior.m_Strafe.m_nLastQuadrant != -1 && 
+		    behavior.m_Strafe.m_nLastQuadrant != nQuadrant)
+		{
+			// Quadrant changed! Record how long they spent in the previous quadrant
+			const float flTimeInLastQuadrant = flCurTime - behavior.m_Strafe.m_flLastQuadrantChangeTime;
+			
+			// Only record if timing is reasonable (0.05s to 0.5s)
+			if (flTimeInLastQuadrant > 0.05f && flTimeInLastQuadrant < 0.5f)
+			{
+				const int nLastQ = behavior.m_Strafe.m_nLastQuadrant;
+				
+				// Update EMA for this quadrant's timing
+				// Use higher weight for more samples (stabilizes over time)
+				const float flWeight = behavior.m_Strafe.m_nQuadrantSamples[nLastQ] > 10 ? 0.1f : 0.2f;
+				behavior.m_Strafe.m_flQuadrantTime[nLastQ] = 
+					behavior.m_Strafe.m_flQuadrantTime[nLastQ] * (1.0f - flWeight) + 
+					flTimeInLastQuadrant * flWeight;
+				
+				behavior.m_Strafe.m_nQuadrantSamples[nLastQ]++;
+			}
+			
+			behavior.m_Strafe.m_flLastQuadrantChangeTime = flCurTime;
+			
+			// Determine circle strafe direction
+			// Clockwise: 0→1→2→3→0 (Forward→Right→Back→Left→Forward)
+			// Counter-clockwise: 0→3→2→1→0
+			const int nExpectedCW = (behavior.m_Strafe.m_nLastQuadrant + 1) % 4;
+			const int nExpectedCCW = (behavior.m_Strafe.m_nLastQuadrant + 3) % 4;
+			
+			if (nQuadrant == nExpectedCW)
+				behavior.m_Strafe.m_nCircleStrafeDirection = 1;  // Clockwise
+			else if (nQuadrant == nExpectedCCW)
+				behavior.m_Strafe.m_nCircleStrafeDirection = -1; // Counter-clockwise
+		}
+		
+		behavior.m_Strafe.m_nLastQuadrant = nQuadrant;
+		
+		// Track if they're circle strafing (consistent yaw changes in same direction)
+		if (behavior.m_Strafe.m_vRecentYawChanges.size() >= 5)
+		{
+			int nPositive = 0, nNegative = 0;
+			for (size_t i = 0; i < 5; i++)
+			{
+				if (behavior.m_Strafe.m_vRecentYawChanges[i] > 1.0f)
+					nPositive++;
+				else if (behavior.m_Strafe.m_vRecentYawChanges[i] < -1.0f)
+					nNegative++;
+			}
+			
+			// Circle strafing = consistent direction (4+ out of 5 same sign)
+			behavior.m_Strafe.m_bIsCircleStrafing = (nPositive >= 4 || nNegative >= 4);
+			
+			if (behavior.m_Strafe.m_bIsCircleStrafing)
+			{
+				behavior.m_Strafe.m_nCircleStrafeDirection = (nPositive > nNegative) ? 1 : -1;
+				behavior.m_Strafe.m_nCircleStrafeSamples++;
+				
+				// Track average yaw per tick
+				float flAvgYaw = 0.0f;
+				for (size_t i = 0; i < 5; i++)
+					flAvgYaw += behavior.m_Strafe.m_vRecentYawChanges[i];
+				flAvgYaw /= 5.0f;
+				
+				behavior.m_Strafe.m_flCircleStrafeYawPerTick = 
+					behavior.m_Strafe.m_flCircleStrafeYawPerTick * 0.9f + flAvgYaw * 0.1f;
+			}
+		}
+	}
+}
+
+// ============================================================================
+// CONTEXTUAL COUNTER-STRAFE LEARNING
+// Tracks WHEN and WHY players counter-strafe:
+// - When shot at (reactive)
+// - When they see an enemy (proactive)
+// - When teammate is fighting nearby (awareness)
+// - When low health (panic)
+// - When being healed (confident)
+// - At different ranges (close/mid/long)
+// - Per class (Heavy doesn't bother, Scout always does)
+// ============================================================================
+void CMovementSimulation::LearnCounterStrafeContext(C_TFPlayer* pPlayer, PlayerBehavior& behavior)
+{
+	if (!pPlayer)
+		return;
+	
+	const float flCurTime = I::GlobalVars ? I::GlobalVars->curtime : 0.0f;
+	auto& ctx = behavior.m_Strafe.m_Context;
+	
+	// Get player state
+	const float flHealth = static_cast<float>(pPlayer->m_iHealth());
+	const float flMaxHealth = static_cast<float>(pPlayer->GetMaxHealth());
+	const float flHealthPct = flMaxHealth > 0 ? flHealth / flMaxHealth : 1.0f;
+	const bool bLowHealth = flHealthPct < 0.35f;
+	// Check if being healed: has healers or is overhealed
+	const bool bBeingHealed = pPlayer->m_nNumHealers() > 0 || 
+	                          pPlayer->InCond(TF_COND_HEALTH_OVERHEALED);
+	const int nClass = pPlayer->m_iClass();
+	
+	// Find closest enemy and distance
+	float flClosestEnemyDist = 99999.0f;
+	C_TFPlayer* pClosestEnemy = nullptr;
+	const int nTeam = pPlayer->m_iTeamNum();
+	
+	for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PLAYERS_ENEMIES))
+	{
+		auto pEnemy = pEntity->As<C_TFPlayer>();
+		if (!pEnemy || pEnemy->deadflag() || pEnemy->m_iTeamNum() == nTeam)
+			continue;
+		
+		const float flDist = (pEnemy->m_vecOrigin() - pPlayer->m_vecOrigin()).Length();
+		if (flDist < flClosestEnemyDist)
+		{
+			flClosestEnemyDist = flDist;
+			pClosestEnemy = pEnemy;
+		}
+	}
+	
+	// Check if teammate is fighting nearby (shooting or being shot at)
+	bool bTeammateEngaged = false;
+	for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PLAYERS_TEAMMATES))
+	{
+		auto pTeammate = pEntity->As<C_TFPlayer>();
+		if (!pTeammate || pTeammate == pPlayer || pTeammate->deadflag())
+			continue;
+		
+		const float flTeamDist = (pTeammate->m_vecOrigin() - pPlayer->m_vecOrigin()).Length();
+		if (flTeamDist < 600.0f)  // Within 600 units
+		{
+			// Check if teammate is attacking (has weapon out and shooting)
+			auto hWeapon = pTeammate->m_hActiveWeapon();
+			if (hWeapon)
+			{
+				auto pWeaponEnt = I::ClientEntityList->GetClientEntityFromHandle(hWeapon);
+				if (pWeaponEnt)
+				{
+					auto pWeapon = pWeaponEnt->As<C_TFWeaponBase>();
+					if (pWeapon && flCurTime - pWeapon->m_flLastFireTime() < 1.0f)
+					{
+						bTeammateEngaged = true;
+						behavior.m_Strafe.m_flLastTeammateEngagedTime = flCurTime;
+						break;
+					}
+				}
+			}
+		}
+	}
+	
+	// Check if they can see an enemy (simple FOV check)
+	bool bCanSeeEnemy = false;
+	if (pClosestEnemy && flClosestEnemyDist < 2000.0f)
+	{
+		Vec3 vToEnemy = pClosestEnemy->m_vecOrigin() - pPlayer->m_vecOrigin();
+		vToEnemy.NormalizeInPlace();
+		
+		Vec3 vForward;
+		Math::AngleVectors(pPlayer->GetEyeAngles(), &vForward);
+		
+		const float flDot = vForward.Dot(vToEnemy);
+		if (flDot > 0.5f)  // Within ~60 degree FOV
+		{
+			bCanSeeEnemy = true;
+			behavior.m_Strafe.m_flLastSawEnemyTime = flCurTime;
+		}
+	}
+	
+	// =========================================================================
+	// RECORD CONTEXT WHEN COUNTER-STRAFE STARTS
+	// =========================================================================
+	if (behavior.m_Strafe.m_bIsCurrentlyCounterStrafing && !behavior.m_Strafe.m_bCSContextRecorded)
+	{
+		behavior.m_Strafe.m_bCSContextRecorded = true;
+		
+		const float flTimeSinceCSStart = flCurTime - behavior.m_Strafe.m_flCSStartTime;
+		const float flTimeSinceShotAt = flCurTime - behavior.m_Strafe.m_flLastShotAtTime;
+		const float flTimeSinceSawEnemy = flCurTime - behavior.m_Strafe.m_flLastSawEnemyTime;
+		const float flTimeSinceTeammate = flCurTime - behavior.m_Strafe.m_flLastTeammateEngagedTime;
+		
+		// Determine the trigger (what caused them to start counter-strafing)
+		// Priority: shot at > saw enemy > teammate engaged > low health > being healed > unprovoked
+		bool bFoundTrigger = false;
+		
+		// Shot at recently (within 0.5s before CS started)
+		if (flTimeSinceShotAt < 0.5f && flTimeSinceShotAt < flTimeSinceCSStart + 0.5f)
+		{
+			ctx.m_nWhenShotAt++;
+			bFoundTrigger = true;
+		}
+		// Saw enemy recently (within 0.3s before CS started)
+		else if (flTimeSinceSawEnemy < 0.3f && flTimeSinceSawEnemy < flTimeSinceCSStart + 0.3f)
+		{
+			ctx.m_nWhenSawEnemy++;
+			bFoundTrigger = true;
+		}
+		// Teammate engaged nearby (within 1s before CS started)
+		else if (flTimeSinceTeammate < 1.0f && flTimeSinceTeammate < flTimeSinceCSStart + 1.0f)
+		{
+			ctx.m_nWhenTeammateEngaged++;
+			bFoundTrigger = true;
+		}
+		// Low health
+		else if (bLowHealth)
+		{
+			ctx.m_nWhenLowHealth++;
+			bFoundTrigger = true;
+		}
+		// Being healed (confident play)
+		else if (bBeingHealed)
+		{
+			ctx.m_nWhenBeingHealed++;
+			bFoundTrigger = true;
+		}
+		
+		// No obvious trigger - habitual counter-strafer
+		if (!bFoundTrigger)
+		{
+			ctx.m_nWhenUnprovoked++;
+		}
+		
+		// Track health when counter-strafing
+		ctx.m_flAvgHealthWhenCS = ctx.m_flAvgHealthWhenCS * 0.9f + flHealthPct * 100.0f * 0.1f;
+		ctx.m_nHealthSamples++;
+		
+		// Track distance when counter-strafing
+		if (pClosestEnemy)
+		{
+			ctx.m_flAvgDistanceWhenCS = ctx.m_flAvgDistanceWhenCS * 0.9f + flClosestEnemyDist * 0.1f;
+			ctx.m_nDistanceSamples++;
+			
+			// Range-based tracking
+			if (flClosestEnemyDist < 400.0f)
+				ctx.m_nCSAtCloseRange++;
+			else if (flClosestEnemyDist < 800.0f)
+				ctx.m_nCSAtMidRange++;
+			else
+				ctx.m_nCSAtLongRange++;
+		}
+		
+		// Track class-specific counter-strafe rate
+		if (nClass >= 0 && nClass < 10)
+		{
+			ctx.m_flClassCSRate[nClass] = ctx.m_flClassCSRate[nClass] * 0.9f + 1.0f * 0.1f;
+			ctx.m_nClassCSSamples[nClass]++;
+		}
+	}
+	
+	// =========================================================================
+	// UPDATE CONTEXT SAMPLE COUNTS (for rate calculation)
+	// Only update when NOT counter-strafing to track "opportunities"
+	// =========================================================================
+	if (!behavior.m_Strafe.m_bIsCurrentlyCounterStrafing)
+	{
+		const float flTimeSinceShotAt = flCurTime - behavior.m_Strafe.m_flLastShotAtTime;
+		const float flTimeSinceSawEnemy = flCurTime - behavior.m_Strafe.m_flLastSawEnemyTime;
+		const float flTimeSinceTeammate = flCurTime - behavior.m_Strafe.m_flLastTeammateEngagedTime;
+		
+		// Track opportunities where they COULD have counter-strafed but didn't
+		// (throttled to avoid over-counting)
+		static float s_flLastContextUpdate = 0.0f;
+		if (flCurTime - s_flLastContextUpdate > 0.5f)
+		{
+			s_flLastContextUpdate = flCurTime;
+			
+			if (flTimeSinceShotAt < 1.0f)
+				ctx.m_nShotAtSamples++;
+			if (flTimeSinceSawEnemy < 1.0f)
+				ctx.m_nSawEnemySamples++;
+			if (flTimeSinceTeammate < 1.0f)
+				ctx.m_nTeammateEngagedSamples++;
+			if (bLowHealth)
+				ctx.m_nLowHealthSamples++;
+			if (bBeingHealed)
+				ctx.m_nBeingHealedSamples++;
+			
+			// Range-based samples
+			if (pClosestEnemy)
+			{
+				if (flClosestEnemyDist < 400.0f)
+					ctx.m_nCloseRangeSamples++;
+				else if (flClosestEnemyDist < 800.0f)
+					ctx.m_nMidRangeSamples++;
+				else
+					ctx.m_nLongRangeSamples++;
+			}
+			
+			// Class samples (when NOT counter-strafing)
+			if (nClass >= 0 && nClass < 10)
+			{
+				ctx.m_flClassCSRate[nClass] = ctx.m_flClassCSRate[nClass] * 0.95f;  // Decay toward 0
+			}
+		}
+	}
+}
+
+// ============================================================================
+// SHOULD PREDICT COUNTER-STRAFE
+// Returns true if we should predict this player will counter-strafe
+// 
+// Logic:
+// 1. If they're CURRENTLY doing L-R-L pattern right now → predict it
+// 2. If they have a HISTORY of counter-strafing AND just changed direction
+//    → guess they're about to reverse again
+//
+// This prevents false positives when player is just moving left or right
+// ============================================================================
+bool CMovementSimulation::ShouldPredictCounterStrafe(int nEntIndex)
+{
+	if (nEntIndex < 0 || nEntIndex >= 64)
+		return false;
+	
+	auto it = m_mPlayerBehaviors.find(nEntIndex);
+	if (it == m_mPlayerBehaviors.end())
+		return false;
+	
+	auto& behavior = it->second;
+	
+	// CASE 1: Currently counter-strafing right now (L-R-L pattern detected)
+	if (behavior.m_Strafe.m_bIsCurrentlyCounterStrafing)
+		return true;
+	
+	// CASE 2: Has history of counter-strafing AND just changed direction
+	// This is the predictive case - we GUESS they're about to reverse
+	const int nTotalSamples = behavior.m_Strafe.m_nCounterStrafeDetections + behavior.m_Strafe.m_nNormalStrafeDetections;
+	
+	// Need enough history to make a prediction
+	if (nTotalSamples < 10)
+		return false;
+	
+	// Need high counter-strafe rate (they do it often)
+	if (behavior.m_Strafe.m_flCounterStrafeRate < 0.40f)
+		return false;
+	
+	// Check if they JUST changed direction (within their typical reversal time)
+	// If they changed direction recently, predict they'll reverse again
+	const float flCurTime = I::GlobalVars ? I::GlobalVars->curtime : 0.0f;
+	const float flTimeSinceChange = flCurTime - behavior.m_Strafe.m_flLastDirectionChangeTime;
+	
+	// Use their learned reversal time, or default to 0.2s
+	const float flExpectedReversalTime = behavior.m_Strafe.m_flAvgReversalTime > 0.05f 
+		? behavior.m_Strafe.m_flAvgReversalTime 
+		: 0.15f;
+	
+	// If they changed direction within the last (reversal time + small buffer)
+	// then predict they're about to reverse again
+	if (flTimeSinceChange > 0.0f && flTimeSinceChange < flExpectedReversalTime + 0.1f)
+		return true;
+	
+	return false;
+}
+
+// ============================================================================
+// CONTEXTUAL COUNTER-STRAFE PREDICTION
+// Enhanced prediction that considers the current situation
+// Returns a likelihood (0-1) that they will counter-strafe given current context
+// ============================================================================
+float CMovementSimulation::GetCounterStrafeLikelihood(int nEntIndex, C_TFPlayer* pTarget)
+{
+	if (nEntIndex < 0 || nEntIndex >= 64 || !pTarget)
+		return 0.5f;  // Default 50% if no data
+	
+	auto it = m_mPlayerBehaviors.find(nEntIndex);
+	if (it == m_mPlayerBehaviors.end())
+		return 0.5f;
+	
+	auto& behavior = it->second;
+	auto& ctx = behavior.m_Strafe.m_Context;
+	
+	// If currently counter-strafing, very high likelihood to continue
+	if (behavior.m_Strafe.m_bIsCurrentlyCounterStrafing)
+		return 0.9f;
+	
+	// Not enough data yet
+	const int nTotalSamples = ctx.m_nShotAtSamples + ctx.m_nSawEnemySamples + ctx.m_nLowHealthSamples;
+	if (nTotalSamples < 10)
+		return behavior.m_Strafe.m_flCounterStrafeRate;  // Fall back to overall rate
+	
+	// Get current context
+	const float flCurTime = I::GlobalVars ? I::GlobalVars->curtime : 0.0f;
+	const float flHealth = static_cast<float>(pTarget->m_iHealth());
+	const float flMaxHealth = static_cast<float>(pTarget->GetMaxHealth());
+	const float flHealthPct = flMaxHealth > 0 ? flHealth / flMaxHealth : 1.0f;
+	const bool bLowHealth = flHealthPct < 0.35f;
+	// Check if being healed: has healers or is overhealed
+	const bool bBeingHealed = pTarget->m_nNumHealers() > 0 || 
+	                          pTarget->InCond(TF_COND_HEALTH_OVERHEALED);
+	const int nClass = pTarget->m_iClass();
+	
+	// Get distance to local player
+	float flDistance = 500.0f;
+	const auto pLocal = H::Entities->GetLocal();
+	if (pLocal)
+		flDistance = (pLocal->m_vecOrigin() - pTarget->m_vecOrigin()).Length();
+	
+	// Calculate weighted likelihood based on current context
+	float flLikelihood = 0.0f;
+	float flTotalWeight = 0.0f;
+	
+	// Check if we recently shot at them
+	const float flTimeSinceShotAt = flCurTime - behavior.m_Strafe.m_flLastShotAtTime;
+	if (flTimeSinceShotAt < 2.0f && ctx.m_nShotAtSamples > 5)
+	{
+		flLikelihood += ctx.GetCSRateWhenShotAt() * 2.0f;  // High weight - reactive CS
+		flTotalWeight += 2.0f;
+	}
+	
+	// Check if they can see us
+	const float flTimeSinceSawEnemy = flCurTime - behavior.m_Strafe.m_flLastSawEnemyTime;
+	if (flTimeSinceSawEnemy < 1.0f && ctx.m_nSawEnemySamples > 5)
+	{
+		flLikelihood += ctx.GetCSRateWhenSawEnemy() * 1.5f;
+		flTotalWeight += 1.5f;
+	}
+	
+	// Low health context
+	if (bLowHealth && ctx.m_nLowHealthSamples > 5)
+	{
+		flLikelihood += ctx.GetCSRateWhenLowHealth() * 1.2f;
+		flTotalWeight += 1.2f;
+	}
+	
+	// Being healed context
+	if (bBeingHealed && ctx.m_nBeingHealedSamples > 5)
+	{
+		flLikelihood += ctx.GetCSRateWhenHealed() * 1.0f;
+		flTotalWeight += 1.0f;
+	}
+	
+	// Distance-based likelihood
+	flLikelihood += ctx.GetCSRateAtRange(flDistance) * 1.0f;
+	flTotalWeight += 1.0f;
+	
+	// Class-based likelihood
+	if (nClass >= 0 && nClass < 10 && ctx.m_nClassCSSamples[nClass] > 5)
+	{
+		flLikelihood += ctx.GetCSRateForClass(nClass) * 0.8f;
+		flTotalWeight += 0.8f;
+	}
+	
+	// Calculate final likelihood
+	if (flTotalWeight > 0.0f)
+		flLikelihood /= flTotalWeight;
+	else
+		flLikelihood = behavior.m_Strafe.m_flCounterStrafeRate;
+	
+	return std::clamp(flLikelihood, 0.0f, 1.0f);
 }
 
 // LearnAggression removed - GetPlaystyle() now handles all aggression analysis
@@ -1408,6 +2200,7 @@ void CMovementSimulation::UpdatePlayerBehavior(C_TFPlayer* pPlayer)
 		LearnWeaponAwareness(pPlayer, behavior);
 		LearnReactionPattern(pPlayer, behavior);
 		LearnHealthBehavior(pPlayer, behavior);
+		LearnCounterStrafeContext(pPlayer, behavior);  // Contextual counter-strafe learning
 	}
 	
 	if ((nFrame & 31) == nPlayerSlot)
@@ -1427,28 +2220,6 @@ void CMovementSimulation::UpdatePlayerBehavior(C_TFPlayer* pPlayer)
 	
 	behavior.m_vLastKnownPos = pPlayer->m_vecOrigin();
 	behavior.m_flLastUpdateTime = pPlayer->m_flSimulationTime();
-}
-
-// Check if we should predict counter-strafe based on learned behavior
-// Made VERY strict to avoid false positives
-bool CMovementSimulation::ShouldPredictCounterStrafe(int nEntIndex)
-{
-	if (nEntIndex < 0 || nEntIndex >= 64)
-		return false;
-	
-	auto it = m_mPlayerBehaviors.find(nEntIndex);
-	if (it == m_mPlayerBehaviors.end())
-		return false;
-	
-	auto& behavior = it->second;
-	
-	// Only predict counter-strafe if:
-	// 1. They have a VERY high counter-strafe rate (>60%)
-	// 2. We have lots of samples (>50)
-	// 3. Their strafe intensity is high (they're actually changing direction a lot)
-	return behavior.m_Strafe.m_flCounterStrafeRate > 0.60f && 
-	       behavior.m_nSampleCount > 50 &&
-	       behavior.m_Strafe.m_flStrafeIntensity > 10.0f;
 }
 
 // Find the payload cart entity (cached to avoid expensive iteration)
@@ -2038,24 +2809,6 @@ void CMovementSimulation::LearnWeaponAwareness(C_TFPlayer* pPlayer, PlayerBehavi
 // ============================================================================
 // REACTION DETECTION - Track how players react when shot at
 // ============================================================================
-void CMovementSimulation::OnShotFired(int nTargetEntIndex)
-{
-	if (nTargetEntIndex < 1 || nTargetEntIndex >= 64)
-		return;
-	
-	auto pTarget = I::ClientEntityList->GetClientEntity(nTargetEntIndex);
-	if (!pTarget)
-		return;
-	
-	auto pPlayer = pTarget->As<C_TFPlayer>();
-	if (!pPlayer || pPlayer->deadflag())
-		return;
-	
-	auto& behavior = GetOrCreateBehavior(nTargetEntIndex);
-	behavior.m_Combat.m_flLastShotAtTime = I::GlobalVars ? I::GlobalVars->curtime : 0.0f;
-	behavior.m_Combat.m_vPosWhenShotAt = pPlayer->m_vecOrigin();
-}
-
 void CMovementSimulation::LearnReactionPattern(C_TFPlayer* pPlayer, PlayerBehavior& behavior)
 {
 	if (!pPlayer)

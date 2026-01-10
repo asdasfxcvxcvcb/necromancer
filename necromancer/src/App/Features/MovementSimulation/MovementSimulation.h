@@ -8,6 +8,71 @@
 // BEHAVIOR SUB-STRUCTURES - Organized for clarity and cache efficiency
 // ============================================================================
 
+// ============================================================================
+// CONTEXTUAL COUNTER-STRAFE TRACKING
+// Tracks WHEN and WHY players counter-strafe - different triggers cause different behavior
+// ============================================================================
+struct CounterStrafeContext
+{
+	// When do they counter-strafe? (counts)
+	int m_nWhenShotAt = 0;           // Started counter-strafing after being shot
+	int m_nWhenSawEnemy = 0;         // Started when enemy came into view
+	int m_nWhenTeammateEngaged = 0;  // Started when teammate started fighting nearby
+	int m_nWhenLowHealth = 0;        // Started when health dropped below threshold
+	int m_nWhenBeingHealed = 0;      // Started while being healed (confident play)
+	int m_nWhenUnprovoked = 0;       // Started with no obvious trigger (habitual)
+	
+	// Total samples for each context (to calculate rates)
+	int m_nShotAtSamples = 0;        // Times they were shot at
+	int m_nSawEnemySamples = 0;      // Times they saw an enemy
+	int m_nTeammateEngagedSamples = 0; // Times teammate engaged nearby
+	int m_nLowHealthSamples = 0;     // Times they were low health
+	int m_nBeingHealedSamples = 0;   // Times they were being healed
+	
+	// Health thresholds when they counter-strafe
+	float m_flAvgHealthWhenCS = 100.0f;  // Average health % when they start counter-strafing
+	int m_nHealthSamples = 0;
+	
+	// Class-specific counter-strafe rates (some classes don't bother)
+	// Index by TF_CLASS_* enum (0-9)
+	float m_flClassCSRate[10] = {0.0f};  // Counter-strafe rate per class
+	int m_nClassCSSamples[10] = {0};     // Samples per class
+	
+	// Distance-based counter-strafe (do they only CS at certain ranges?)
+	float m_flAvgDistanceWhenCS = 500.0f;  // Average distance to enemy when they CS
+	int m_nDistanceSamples = 0;
+	int m_nCSAtCloseRange = 0;    // <400 units
+	int m_nCSAtMidRange = 0;      // 400-800 units
+	int m_nCSAtLongRange = 0;     // >800 units
+	int m_nCloseRangeSamples = 0;
+	int m_nMidRangeSamples = 0;
+	int m_nLongRangeSamples = 0;
+	
+	// Get counter-strafe likelihood for a specific context (0-1)
+	float GetCSRateWhenShotAt() const { return m_nShotAtSamples > 5 ? static_cast<float>(m_nWhenShotAt) / m_nShotAtSamples : 0.5f; }
+	float GetCSRateWhenSawEnemy() const { return m_nSawEnemySamples > 5 ? static_cast<float>(m_nWhenSawEnemy) / m_nSawEnemySamples : 0.5f; }
+	float GetCSRateWhenLowHealth() const { return m_nLowHealthSamples > 5 ? static_cast<float>(m_nWhenLowHealth) / m_nLowHealthSamples : 0.5f; }
+	float GetCSRateWhenHealed() const { return m_nBeingHealedSamples > 5 ? static_cast<float>(m_nWhenBeingHealed) / m_nBeingHealedSamples : 0.5f; }
+	
+	// Get counter-strafe rate for a specific class
+	float GetCSRateForClass(int nClass) const 
+	{ 
+		if (nClass < 0 || nClass >= 10) return 0.5f;
+		return m_nClassCSSamples[nClass] > 5 ? m_flClassCSRate[nClass] : 0.5f; 
+	}
+	
+	// Get counter-strafe rate for a distance range
+	float GetCSRateAtRange(float flDistance) const
+	{
+		if (flDistance < 400.0f)
+			return m_nCloseRangeSamples > 5 ? static_cast<float>(m_nCSAtCloseRange) / m_nCloseRangeSamples : 0.5f;
+		else if (flDistance < 800.0f)
+			return m_nMidRangeSamples > 5 ? static_cast<float>(m_nCSAtMidRange) / m_nMidRangeSamples : 0.5f;
+		else
+			return m_nLongRangeSamples > 5 ? static_cast<float>(m_nCSAtLongRange) / m_nLongRangeSamples : 0.5f;
+	}
+};
+
 // Strafe and movement pattern data
 struct StrafeBehavior
 {
@@ -25,6 +90,66 @@ struct StrafeBehavior
 	int m_nConsecutiveAirTicks = 0;
 	std::deque<float> m_vRecentYawChanges;
 	std::deque<float> m_vRecentYawTimes;
+	
+	// =========================================================================
+	// CIRCLE STRAFE TIMING - Track how long they spend in each quadrant
+	// Quadrants: 0=Forward, 1=Right, 2=Back, 3=Left (clockwise from forward)
+	// Each player has different timing for each direction
+	// =========================================================================
+	float m_flQuadrantTime[4] = {0.12f, 0.12f, 0.12f, 0.12f};  // Time spent in each quadrant (EMA)
+	float m_flQuadrantYawRate[4] = {3.0f, 3.0f, 3.0f, 3.0f};   // Yaw rate per quadrant (EMA)
+	int m_nQuadrantSamples[4] = {0, 0, 0, 0};                   // Sample count per quadrant
+	int m_nLastQuadrant = -1;                                   // Last quadrant they were in
+	float m_flLastQuadrantChangeTime = 0.0f;                    // When they entered current quadrant
+	float m_flCircleStrafeYawPerTick = 0.0f;                    // Average yaw change per tick (EMA)
+	float m_flYawRateVariance = 0.0f;                           // Variance in yaw rate (for consistency check)
+	std::deque<float> m_vRecentYawRates;                        // Recent yaw rates for variance calc
+	int m_nCircleStrafeSamples = 0;                             // Total circle strafe samples
+	bool m_bIsCircleStrafing = false;                           // Currently circle strafing?
+	int m_nCircleStrafeDirection = 0;                           // 1=clockwise, -1=counter-clockwise
+	
+	// Counter-strafe pattern detection (A-D spam)
+	// Tracks: direction → opposite direction → original direction within time window
+	int m_nLastStrafeSign = 0;               // -1 = left, 0 = none, 1 = right
+	float m_flLastStrafeTime = 0.0f;         // When last significant strafe started
+	float m_flLastDirectionChangeTime = 0.0f; // When direction last changed
+	int m_nConsecutiveReversals = 0;         // How many times they've reversed in a row
+	int m_nCounterStrafeDetections = 0;      // Total counter-strafe patterns detected
+	int m_nNormalStrafeDetections = 0;       // Total normal strafe patterns (no reversal)
+	float m_flAvgReversalTime = 0.15f;       // Average time between reversals (EMA)
+	
+	// Per-session counter-strafe likelihood
+	bool m_bIsCurrentlyCounterStrafing = false; // Currently in a counter-strafe pattern
+	int m_nCurrentReversalStreak = 0;        // Current streak of reversals
+	
+	// Directional strafe timing - people have different speeds for each direction
+	// Some players are faster going left→right than right→left (finger dexterity)
+	float m_flAvgTimeLeftToRight = 0.15f;    // Average time to switch from left to right (EMA)
+	float m_flAvgTimeRightToLeft = 0.15f;    // Average time to switch from right to left (EMA)
+	int m_nLeftToRightSamples = 0;           // How many left→right transitions we've seen
+	int m_nRightToLeftSamples = 0;           // How many right→left transitions we've seen
+	float m_flLastLeftStartTime = 0.0f;      // When they started strafing left
+	float m_flLastRightStartTime = 0.0f;     // When they started strafing right
+	
+	// CONTEXTUAL counter-strafe tracking - WHEN and WHY they counter-strafe
+	CounterStrafeContext m_Context;
+	
+	// State tracking for context detection
+	float m_flLastShotAtTime = 0.0f;         // When they were last shot at
+	float m_flLastSawEnemyTime = 0.0f;       // When they last saw an enemy
+	float m_flLastTeammateEngagedTime = 0.0f; // When teammate last engaged nearby
+	float m_flCSStartTime = 0.0f;            // When current counter-strafe started
+	bool m_bCSContextRecorded = false;       // Have we recorded context for current CS?
+	
+	// Helper to get predicted time until next direction change
+	float GetPredictedTimeToReversal(int nCurrentDirection) const
+	{
+		if (nCurrentDirection == -1)  // Currently going left, will switch to right
+			return m_nLeftToRightSamples > 3 ? m_flAvgTimeLeftToRight : m_flAvgReversalTime;
+		else if (nCurrentDirection == 1)  // Currently going right, will switch to left
+			return m_nRightToLeftSamples > 3 ? m_flAvgTimeRightToLeft : m_flAvgReversalTime;
+		return m_flAvgReversalTime;
+	}
 };
 
 // Combat and reaction data
@@ -161,6 +286,14 @@ struct PlayerBehavior
 		if (m_nSampleCount < 30)
 			return 0.1f;  // ~1.5 sec minimum
 		
+		// SPECIAL CASE: Low strafe intensity = VERY predictable (straight line movement)
+		// This is actually the MOST predictable case - bots walking in straight lines
+		if (m_Strafe.m_flStrafeIntensity < 2.0f && m_nSampleCount > 40)
+		{
+			// They barely change direction - this is highly predictable!
+			return 0.9f;
+		}
+		
 		// Base confidence from pattern consistency (how often our predictions match reality)
 		float flConsistencyConf = m_Confidence.m_flBehaviorConsistency;
 		
@@ -177,6 +310,9 @@ struct PlayerBehavior
 		if (m_Confidence.m_nConsistencyChecks < 5)
 		{
 			float flQuality = GetDataQuality();
+			// For low strafe intensity, give higher base confidence
+			if (m_Strafe.m_flStrafeIntensity < 3.0f)
+				return std::min(0.5f + flQuality * 0.3f, 0.75f);
 			return std::min(0.3f + flQuality * 0.3f, 0.5f);  // Cap at 50% until we verify patterns
 		}
 		
@@ -340,6 +476,23 @@ struct MoveStorage
 	// Counter-strafe spam detection (A-D spam)
 	bool m_bCounterStrafeSpam = false;
 	
+	// Counter-strafe simulation state
+	// When counter-strafing, we simulate the actual L-R-L pattern
+	int m_nCSCurrentDir = 0;              // Current strafe direction: -1=left, +1=right
+	float m_flCSTimeInCurrentDir = 0.0f;  // How long they've been going this direction
+	float m_flCSTimeToSwitch = 0.15f;     // When to switch direction (learned timing)
+	float m_flCSStartYaw = 0.0f;          // Yaw when counter-strafe started
+	
+	// Circle strafe simulation state
+	// When circle strafing, we simulate movement through quadrants with learned timing
+	bool m_bCircleStrafeMode = false;     // Using circle strafe simulation?
+	int m_nCircleStrafeDir = 1;           // 1=clockwise, -1=counter-clockwise
+	int m_nCurrentQuadrant = 0;           // Current quadrant: 0=fwd, 1=right, 2=back, 3=left
+	float m_flTimeInQuadrant = 0.0f;      // Time spent in current quadrant
+	float m_flQuadrantTiming[4] = {0.12f, 0.12f, 0.12f, 0.12f};  // Learned timing per quadrant
+	float m_flQuadrantYawRate[4] = {3.0f, 3.0f, 3.0f, 3.0f};     // Learned yaw rate per quadrant
+	float m_flYawPerTick = 0.0f;          // Learned yaw change per tick
+	
 	// Cached values for RunTick performance (set in Initialize)
 	PlayerBehavior* m_pCachedBehavior = nullptr;
 	bool m_bCachedLowHealth = false;
@@ -382,6 +535,7 @@ private:
 	// Behavior learning
 	void UpdatePlayerBehavior(C_TFPlayer* pPlayer);
 	void LearnCounterStrafe(int nEntIndex, PlayerBehavior& behavior);
+	void LearnCounterStrafeContext(C_TFPlayer* pPlayer, PlayerBehavior& behavior);
 	void LearnHealthBehavior(C_TFPlayer* pPlayer, PlayerBehavior& behavior);
 	void LearnTeamBehavior(C_TFPlayer* pPlayer, PlayerBehavior& behavior);
 	void LearnObjectiveBehavior(C_TFPlayer* pPlayer, PlayerBehavior& behavior);
@@ -410,6 +564,10 @@ public:
 	// Call when local player fires a projectile at a target
 	void OnShotFired(int nTargetEntIndex);
 	
+	// Get counter-strafe likelihood for a target (0-1) based on current context
+	// Takes into account: when shot at, when saw enemy, health, class, distance, etc.
+	float GetCounterStrafeLikelihood(int nEntIndex, C_TFPlayer* pTarget);
+	
 	// Get predicted dodge direction: -1=left, 0=none, 1=right, 2=jump, 3=back
 	int GetPredictedDodge(int nEntIndex)
 	{
@@ -426,6 +584,27 @@ public:
 		if (pBehavior->m_Combat.m_nDodgeBackCount > nMax) { nMax = pBehavior->m_Combat.m_nDodgeBackCount; nDir = 3; }
 		
 		return nDir;
+	}
+	
+	// Get predicted time until next strafe direction change
+	// nCurrentDirection: -1=left, 1=right (from current velocity)
+	// Returns time in seconds until they'll likely reverse
+	float GetPredictedStrafeTime(int nEntIndex, int nCurrentDirection)
+	{
+		auto* pBehavior = GetPlayerBehavior(nEntIndex);
+		if (!pBehavior)
+			return 0.15f;  // Default 150ms
+		
+		return pBehavior->m_Strafe.GetPredictedTimeToReversal(nCurrentDirection);
+	}
+	
+	// Get contextual counter-strafe info for display/debugging
+	const CounterStrafeContext* GetCounterStrafeContext(int nEntIndex)
+	{
+		auto* pBehavior = GetPlayerBehavior(nEntIndex);
+		if (!pBehavior)
+			return nullptr;
+		return &pBehavior->m_Strafe.m_Context;
 	}
 
 	// Full API with MoveStorage

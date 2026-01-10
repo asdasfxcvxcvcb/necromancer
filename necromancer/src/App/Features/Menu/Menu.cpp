@@ -2590,6 +2590,7 @@ void CMenu::MainWindow()
 				
 				CheckBox("Ground Strafe Prediction", CFG::Aimbot_Projectile_Ground_Strafe_Prediction);
 				CheckBox("Air Strafe Prediction", CFG::Aimbot_Projectile_Air_Strafe_Prediction);
+				CheckBox("Dodge Prediction", CFG::Aimbot_Projectile_Use_Dodge_Prediction);
 				CheckBox("Prioritize Feet", CFG::Aimbot_Amalgam_Projectile_Hitbox_PrioritizeFeet);
 				CheckBox("Neckbreaker", CFG::Aimbot_Projectile_Neckbreaker);
 				if (CFG::Aimbot_Projectile_Neckbreaker)
