@@ -33,8 +33,10 @@ MAKE_HOOK(CTFPlayer_FireBullet, Signatures::CTFPlayer_FireBullet.Get(), void, __
 			}
 
 			// Enable tracer for crit shots if crit tracer effect is set
+			// Also strip DMG_CRITICAL so the game doesn't try to append "_crit" to our custom tracer name
 			if (CFG::Visuals_Crit_Tracer_Type > 0 && bIsCrit)
 			{
+				nDamageType &= ~DMG_CRITICAL;
 				info.m_iTracerFreq = 1;
 			}
 
