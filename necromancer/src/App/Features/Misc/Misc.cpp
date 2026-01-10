@@ -1320,11 +1320,6 @@ void CMisc::AutoUber(CUserCmd* cmd)
             if (flCurrentDist < flSplashRadius)
             {
                 flTotalLethalDamage += flDamage;
-                
-                const char* projType = bIsRocket ? "ROCKET" : (bIsSticky ? "STICKY" : "PIPE");
-                I::CVar->ConsoleColorPrintf({ 255, 100, 100, 255 }, 
-                    "[AutoUber] LETHAL THREAT: %s dist=%.0f time=%.2fs dmg=%.0f crit=%d\n", 
-                    projType, flCurrentDist, flTimeToImpact, flDamage, isCrit ? 1 : 0);
             }
         }
 
@@ -1378,13 +1373,6 @@ void CMisc::AutoUber(CUserCmd* cmd)
 
             flTotalDamage += flDamage;
             nNearbyStickies++;
-        }
-
-        // Only consider it a trap if there are multiple stickies
-        if (nNearbyStickies >= 2 && flTotalDamage > 0.0f)
-        {
-            I::CVar->ConsoleColorPrintf({ 255, 165, 0, 255 }, 
-                "[AutoUber] STICKY TRAP: %d stickies, total dmg=%.0f\n", nNearbyStickies, flTotalDamage);
         }
 
         return (nNearbyStickies >= 2) ? flTotalDamage : 0.0f;
@@ -1463,9 +1451,6 @@ void CMisc::AutoUber(CUserCmd* cmd)
                 flDamage = flBaseDamage * TF_DAMAGE_MINICRIT_MULTIPLIER;
 
             flTotalDamage += flDamage;
-
-            I::CVar->ConsoleColorPrintf({ 255, 200, 100, 255 }, 
-                "[AutoUber] HITSCAN THREAT: dist=%.0f dmg=%.0f weaponID=%d\n", flDist, flDamage, weaponID);
         }
 
         return flTotalDamage;
@@ -1533,8 +1518,6 @@ void CMisc::AutoUber(CUserCmd* cmd)
             // Only pop if it would actually kill us
             if (static_cast<float>(who->m_iHealth()) <= flHsDmg)
             {
-                I::CVar->ConsoleColorPrintf({ 255, 0, 0, 255 }, 
-                    "[AutoUber] SNIPER THREAT: charge=%.0f dmg=%.0f hp=%d\n", flCharge, flHsDmg, who->m_iHealth());
                 return true;
             }
         }
@@ -1580,17 +1563,8 @@ void CMisc::AutoUber(CUserCmd* cmd)
             bShouldPop = true;
     }
 
-    // DEBUG: Print when we decide to pop
-    if (bShouldPop)
-    {
-        bool bCanPopNow = canPop();
-        I::CVar->ConsoleColorPrintf({ 255, 0, 255, 255 }, "[AutoUber] SHOULD POP! canPop=%d charge=%.2f releasing=%d canAttack2=%d\n", 
-            bCanPopNow ? 1 : 0, medigun->m_flChargeLevel(), medigun->m_bChargeRelease() ? 1 : 0, G::bCanSecondaryAttack ? 1 : 0);
-    }
-
     if (bShouldPop && canPop())
     {
-        I::CVar->ConsoleColorPrintf({ 0, 255, 0, 255 }, "[AutoUber] POPPING UBER!\n");
         cmd->buttons |= IN_ATTACK2;
     }
 }
