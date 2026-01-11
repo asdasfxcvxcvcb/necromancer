@@ -1726,6 +1726,14 @@ void CMenu::MainWindow()
 	enum class EMainTabs { AIM, VISUALS, EXPLOITS, MISC, PLAYERS, CONFIGS, PLAYER_DETAILS };
 	static EMainTabs MainTab = EMainTabs::AIM;
 	static int nSelectedPlayerIndex = -1; // For player details view
+	static bool bPlayerSearchFocused = false; // Search bar focus state for player list
+	
+	// Reset search focus when not on PLAYERS tab
+	if (MainTab != EMainTabs::PLAYERS)
+	{
+		bPlayerSearchFocused = false;
+		m_bWantTextInput = false;
+	}
 	
 	// Enhanced tab box with detailed pixel art icons
 	auto DrawTabBox = [&](const char* label, int type, bool active) -> bool {
@@ -3468,6 +3476,12 @@ void CMenu::MainWindow()
 			}
 			GroupBoxEnd();
 
+			GroupBoxStart("Aspect Ratio", 150);
+			{
+				SliderFloat("Ratio", CFG::Visuals_Freecam_AspectRatio, 0.0f, 5.0f, 0.05f, "%.2f");
+			}
+			GroupBoxEnd();
+
 			m_nCursorX += m_nLastGroupBoxW + (CFG::Menu_Spacing_X * 2);
 			m_nCursorY = anchor_y;
 
@@ -4307,9 +4321,141 @@ void CMenu::MainWindow()
 			const int nRowHeight = nAvatarSize + CFG::Menu_Spacing_Y;
 			const int nPlayersPerPage = 20;
 
+			// Search filter (static to persist across frames)
+			static char szSearchFilter[64] = "";
+			static float flBackspaceHoldTime = 0.0f;
+			static float flLastBackspaceRepeat = 0.0f;
+			
+			// Draw search bar
+			{
+				auto bx = m_nCursorX;
+				auto by = m_nCursorY;
+				
+				H::Draw->String(H::Fonts->Get(EFonts::Menu), m_nCursorX, m_nCursorY, CFG::Menu_Text_Active, POS_DEFAULT, "Search:");
+				m_nCursorX += 50;
+				
+				// Simple text input box
+				const int nInputWidth = 150;
+				const int nInputHeight = H::Fonts->Get(EFonts::Menu).m_nTall + 4;
+				
+				// Check if clicked on search box to focus
+				bool bHovered = IsHoveredSimple(m_nCursorX, m_nCursorY - 2, nInputWidth, nInputHeight);
+				if (bHovered && H::Input->IsPressed(VK_LBUTTON))
+				{
+					bPlayerSearchFocused = true;
+				}
+				// Click outside to unfocus
+				else if (H::Input->IsPressed(VK_LBUTTON) && !bHovered)
+				{
+					bPlayerSearchFocused = false;
+				}
+				// Escape to unfocus
+				if (H::Input->IsPressed(VK_ESCAPE))
+				{
+					bPlayerSearchFocused = false;
+				}
+				
+				// Block game input when focused
+				m_bWantTextInput = bPlayerSearchFocused;
+				
+				H::Draw->Rect(m_nCursorX, m_nCursorY - 2, nInputWidth, nInputHeight, CFG::Menu_Background);
+				H::Draw->OutlinedRect(m_nCursorX, m_nCursorY - 2, nInputWidth, nInputHeight, bPlayerSearchFocused ? CFG::Menu_Accent_Primary : CFG::Menu_Text_Inactive);
+				
+				// Draw current search text with clipping
+				H::Draw->StartClipping(m_nCursorX + 2, m_nCursorY - 2, nInputWidth - 4, nInputHeight);
+				H::Draw->String(H::Fonts->Get(EFonts::Menu), m_nCursorX + 4, m_nCursorY, CFG::Menu_Text_Active, POS_DEFAULT, szSearchFilter);
+				H::Draw->EndClipping();
+				
+				// Draw blinking cursor when focused
+				if (bPlayerSearchFocused)
+				{
+					int nTextWidth = 0, nTextHeight = 0;
+					I::MatSystemSurface->GetTextSize(H::Fonts->Get(EFonts::Menu).m_dwFont, Utils::ConvertUtf8ToWide(szSearchFilter).c_str(), nTextWidth, nTextHeight);
+					
+					// Clamp cursor position to input box
+					int nCursorDrawX = m_nCursorX + 4 + nTextWidth;
+					if (nCursorDrawX > m_nCursorX + nInputWidth - 4)
+						nCursorDrawX = m_nCursorX + nInputWidth - 4;
+					
+					// Blink every 0.5 seconds
+					if (fmod(I::GlobalVars->realtime, 1.0f) < 0.5f)
+					{
+						H::Draw->Line(nCursorDrawX, m_nCursorY, nCursorDrawX, m_nCursorY + H::Fonts->Get(EFonts::Menu).m_nTall - 2, CFG::Menu_Text_Active);
+					}
+				}
+				
+				// Handle keyboard input only when focused
+				if (bPlayerSearchFocused)
+				{
+					for (int key = 'A'; key <= 'Z'; key++)
+					{
+						if (H::Input->IsPressed(key))
+						{
+							size_t len = strlen(szSearchFilter);
+							if (len < sizeof(szSearchFilter) - 1)
+							{
+								bool bShift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+								szSearchFilter[len] = bShift ? static_cast<char>(key) : static_cast<char>(key + 32);
+								szSearchFilter[len + 1] = '\0';
+							}
+						}
+					}
+					for (int key = '0'; key <= '9'; key++)
+					{
+						if (H::Input->IsPressed(key))
+						{
+							size_t len = strlen(szSearchFilter);
+							if (len < sizeof(szSearchFilter) - 1)
+							{
+								szSearchFilter[len] = static_cast<char>(key);
+								szSearchFilter[len + 1] = '\0';
+							}
+						}
+					}
+					if (H::Input->IsPressed(VK_SPACE))
+					{
+						size_t len = strlen(szSearchFilter);
+						if (len < sizeof(szSearchFilter) - 1)
+						{
+							szSearchFilter[len] = ' ';
+							szSearchFilter[len + 1] = '\0';
+						}
+					}
+					
+					// Backspace with hold-to-repeat
+					bool bBackspaceDown = (GetAsyncKeyState(VK_BACK) & 0x8000) != 0;
+					if (bBackspaceDown && strlen(szSearchFilter) > 0)
+					{
+						if (H::Input->IsPressed(VK_BACK))
+						{
+							// First press - delete one char and start hold timer
+							szSearchFilter[strlen(szSearchFilter) - 1] = '\0';
+							flBackspaceHoldTime = I::GlobalVars->realtime;
+							flLastBackspaceRepeat = I::GlobalVars->realtime;
+						}
+						else if (I::GlobalVars->realtime - flBackspaceHoldTime > 0.4f)
+						{
+							// Held for 0.4s - start repeating fast
+							if (I::GlobalVars->realtime - flLastBackspaceRepeat > 0.05f)
+							{
+								szSearchFilter[strlen(szSearchFilter) - 1] = '\0';
+								flLastBackspaceRepeat = I::GlobalVars->realtime;
+							}
+						}
+					}
+				}
+				
+				m_nCursorX = bx;
+				m_nCursorY = by + nInputHeight + CFG::Menu_Spacing_Y;
+			}
+
 			// Collect all valid players first
 			static std::vector<int> vecPlayerIndices;
 			vecPlayerIndices.clear();
+
+			// Convert search filter to lowercase for case-insensitive matching
+			std::string strSearchLower = szSearchFilter;
+			std::transform(strSearchLower.begin(), strSearchLower.end(), strSearchLower.begin(), ::tolower);
 
 			for (auto n{ 1 }; n < I::EngineClient->GetMaxClients() + 1; n++)
 			{
@@ -4319,6 +4465,15 @@ void CMenu::MainWindow()
 				player_info_t player_info{};
 				if (!I::EngineClient->GetPlayerInfo(n, &player_info) || player_info.fakeplayer)
 					continue;
+
+				// Filter by search if search is active
+				if (strlen(szSearchFilter) > 0)
+				{
+					std::string strName = player_info.name;
+					std::transform(strName.begin(), strName.end(), strName.begin(), ::tolower);
+					if (strName.find(strSearchLower) == std::string::npos)
+						continue;
+				}
 
 				vecPlayerIndices.push_back(n);
 			}

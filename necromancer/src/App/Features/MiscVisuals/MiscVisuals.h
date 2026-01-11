@@ -36,6 +36,8 @@ public:
 	void CustomFOV(CViewSetup* pSetup);
 	void Thirdperson(CViewSetup* pSetup);
 	void Freecam(CViewSetup* pSetup);
+	void AspectRatio();
+	void ReapplyAspectRatio(); // Call on level init to reapply aspect ratio
 	
 	bool IsFreecamActive() const { return m_bFreecamActive; }
 	

@@ -16,4 +16,5 @@ MAKE_HOOK(ClientModeShared_OverrideView, Memory::GetVFunc(I::ClientModeShared, 1
 	F::MiscVisuals->CustomFOV(pSetup);
 	F::MiscVisuals->Thirdperson(pSetup);
 	F::MiscVisuals->Freecam(pSetup);
+	F::MiscVisuals->AspectRatio();
 }

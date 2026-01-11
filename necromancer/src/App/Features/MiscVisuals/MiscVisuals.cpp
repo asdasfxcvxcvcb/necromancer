@@ -693,6 +693,29 @@ void CMiscVisuals::CritIndicator()
 	F::CritHack->Draw();
 }
 
+void CMiscVisuals::AspectRatio()
+{
+	static auto r_aspectratio = I::CVar->FindVar("r_aspectratio");
+	if (!r_aspectratio)
+		return;
+
+	static float flStaticRatio = -1.f; // Start at -1 to force initial apply
+	float flOldRatio = flStaticRatio;
+	float flNewRatio = flStaticRatio = CFG::Visuals_Freecam_AspectRatio;
+	
+	// Only update when value changes (0 = no change/disabled)
+	if (flNewRatio != flOldRatio)
+		r_aspectratio->SetValue(flNewRatio);
+}
+
+void CMiscVisuals::ReapplyAspectRatio()
+{
+	// Force reapply aspect ratio on level change by resetting the static cache
+	static auto r_aspectratio = I::CVar->FindVar("r_aspectratio");
+	if (r_aspectratio && CFG::Visuals_Freecam_AspectRatio > 0.0f)
+		r_aspectratio->SetValue(CFG::Visuals_Freecam_AspectRatio);
+}
+
 void CMiscVisuals::Freecam(CViewSetup* pSetup)
 {
 	// Toggle freecam with key

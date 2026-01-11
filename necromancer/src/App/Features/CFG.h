@@ -567,6 +567,7 @@ namespace CFG
 	// Freecam
 	CFGVAR(Visuals_Freecam_Key, 0);
 	CFGVAR(Visuals_Freecam_Speed, 500.0f);
+	CFGVAR(Visuals_Freecam_AspectRatio, 0.0f); // 0 = disabled (no change), otherwise custom aspect ratio
 
 #pragma endregion
 

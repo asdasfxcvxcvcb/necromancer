@@ -3,6 +3,7 @@
 #include "../Features/Players/Players.h"
 #include "../Features/CFG.h"
 #include "../Features/NetworkFix/NetworkFix.h"
+#include "../Features/MiscVisuals/MiscVisuals.h"
 
 MAKE_HOOK(IBaseClientDLL_LevelInitPostEntity, Memory::GetVFunc(I::BaseClientDLL, 6), void, __fastcall,
 	void* ecx)
@@ -17,6 +18,9 @@ MAKE_HOOK(IBaseClientDLL_LevelInitPostEntity, Memory::GetVFunc(I::BaseClientDLL,
 	
 	// Reset ping reducer rates on map change
 	F::NetworkFix->ResetRates();
+	
+	// Reapply aspect ratio on level change
+	F::MiscVisuals->ReapplyAspectRatio();
 
 	if (CFG::Visuals_Chat_Player_List_Info)
 	{

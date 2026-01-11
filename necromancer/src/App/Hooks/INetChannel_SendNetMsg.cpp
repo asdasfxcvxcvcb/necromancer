@@ -182,6 +182,16 @@ MAKE_HOOK(INetChannel_SendNetMsg, Signatures::INetChannel_SendNetMsg.Get(), bool
 						strcpy_s(szSpoofValue, "1");
 						bSpoofed = true;
 						break;
+						
+					case FNV1A::Hash32Const("r_aspectratio"):
+						// Always spoof aspect ratio to default (0) to avoid server bans
+						// This runs automatically when aspect ratio is modified
+						if (CFG::Visuals_Freecam_AspectRatio > 0.0f)
+						{
+							strcpy_s(szSpoofValue, "0");
+							bSpoofed = true;
+						}
+						break;
 					}
 					
 					if (bSpoofed)
