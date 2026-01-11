@@ -15,6 +15,7 @@ namespace CFG
 	CFGVAR(Aimbot_Ignore_Invisible, false);
 	CFGVAR(Aimbot_Ignore_Invulnerable, true);
 	CFGVAR(Aimbot_Ignore_Taunting, false);
+	CFGVAR(Aimbot_Ignore_Stickies, false);
 
 	CFGVAR(Aimbot_Hitscan_Active, false);
 	CFGVAR(Aimbot_Hitscan_Target_LagRecords, true);
@@ -441,6 +442,7 @@ namespace CFG
 	CFGVAR(Visuals_Crit_Indicator_Debug, false);
 	CFGVAR(Visuals_Draw_Movement_Path_Style, 1); //0 Off 1 Line 2 Separators 3 Spaced 4 Arrows 5 Boxes (Amalgam-style)
 	CFGVAR(Visuals_Draw_Predicted_Path_Style, 1); //0 Off 1 Line 2 Separators 3 Spaced 4 Arrows 5 Boxes (Amalgam-style)
+	CFGVAR(Visuals_Projectile_Trail, 0); //0 Default 1 None 2 Rocket 3 Critical 4 Energy 5 Charged 6 Ray 7 Fireball 8 Teleport 9 Fire 10 Flame 11 Sparks 12 Flare 13 Trail 14 Health 15 Smoke 16 Bubbles 17 Halloween 18 Monoculus 19 Sparkles 20 Rainbow
 	
 	// Amalgam Simulation Visuals
 	CFGVAR(Visuals_Simulation_Movement_Style, 1); // 0=Off, 1=Line, 2=Dashed, 3=Arrows

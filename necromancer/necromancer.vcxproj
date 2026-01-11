@@ -438,6 +438,7 @@
     <ClCompile Include="src\App\Hooks\CMaterial_Uncache.cpp" />
     <ClCompile Include="src\App\Hooks\CMultiPlayerAnimState_ResetGestureSlot.cpp" />
     <ClCompile Include="src\App\Hooks\COPRenderSprites_RenderSpriteCard.cpp" />
+    <ClCompile Include="src\App\Hooks\CParticleProperty_Create.cpp" />
     <ClCompile Include="src\App\Hooks\CParticleSystemMgr_DrawRenderCache.cpp" />
     <ClCompile Include="src\App\Hooks\CPrediction_RunCommand.cpp" />
     <ClCompile Include="src\App\Hooks\CRendering3dView_EnableWorldFog.cpp" />

@@ -2464,7 +2464,8 @@ void CMenu::MainWindow()
 					{ "Friends", CFG::Aimbot_Ignore_Friends },
 					{ "Invisible", CFG::Aimbot_Ignore_Invisible },
 					{ "Invulnerable", CFG::Aimbot_Ignore_Invulnerable },
-					{ "Taunting", CFG::Aimbot_Ignore_Taunting }
+					{ "Taunting", CFG::Aimbot_Ignore_Taunting },
+					{ "Stickies", CFG::Aimbot_Ignore_Stickies }
 					});
 			}
 			GroupBoxEnd();
@@ -3366,6 +3367,31 @@ void CMenu::MainWindow()
 						{ "Line", 1 },
 						{ "Dashed Line", 2 },
 						{ "Alt Line", 3 }
+					});
+
+				SelectSingle("Projectile Trail", CFG::Visuals_Projectile_Trail,
+					{
+						{ "Default", 0 },
+						{ "None", 1 },
+						{ "Rocket", 2 },
+						{ "Critical", 3 },
+						{ "Energy", 4 },
+						{ "Charged", 5 },
+						{ "Ray", 6 },
+						{ "Fireball", 7 },
+						{ "Teleport", 8 },
+						{ "Fire", 9 },
+						{ "Flame", 10 },
+						{ "Sparks", 11 },
+						{ "Flare", 12 },
+						{ "Trail", 13 },
+						{ "Health", 14 },
+						{ "Smoke", 15 },
+						{ "Bubbles", 16 },
+						{ "Halloween", 17 },
+						{ "Monoculus", 18 },
+						{ "Sparkles", 19 },
+						{ "Rainbow", 20 }
 					});
 			}
 			GroupBoxEnd();

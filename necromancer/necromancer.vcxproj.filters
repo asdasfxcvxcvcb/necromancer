@@ -157,6 +157,7 @@
     <ClCompile Include="src\App\Features\amalgam_port\Ticks\Ticks.cpp" />
     <ClCompile Include="src\App\Features\amalgam_port\AimbotProjectile\AimbotProjectileAmalgam.cpp" />
     <ClCompile Include="src\App\Features\Aimbot\AimbotWrangler\AimbotWrangler.cpp" />
+    <ClCompile Include="src\App\Hooks\CParticleProperty_Create.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\nlohmann\json_fwd.hpp" />

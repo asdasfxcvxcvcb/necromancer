@@ -444,7 +444,7 @@ bool CAimbotHitscan::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, cons
 	}
 
 	// Find stickybomb targets
-	if (CFG::Aimbot_Hitscan_Target_Stickies)
+	if (CFG::Aimbot_Hitscan_Target_Stickies && !CFG::Aimbot_Ignore_Stickies)
 	{
 		for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PROJECTILES_ENEMIES))
 		{

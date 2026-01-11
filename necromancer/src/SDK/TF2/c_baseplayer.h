@@ -119,4 +119,8 @@ public:
 		static int nOffset = NetVars::GetNetVar("CBasePlayer", "m_hConstraintEntity") - 24;
 		return *reinterpret_cast<int *>(reinterpret_cast<std::uintptr_t>(this) + nOffset);
 	}
+
+	C_BaseAnimating* GetRenderedWeaponModel() {
+		return reinterpret_cast<C_BaseAnimating*(__fastcall*)(void*)>(Memory::GetVFunc(this, 252))(this);
+	}
 };

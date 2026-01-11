@@ -61,6 +61,11 @@ public:
 	NETVAR(m_CollisionGroup, int, "CBaseEntity", "m_CollisionGroup");
 	NETVAR(m_flElasticity, float, "CBaseEntity", "m_flElasticity");
 	NETVAR(m_flShadowCastDistance, float, "CBaseEntity", "m_flShadowCastDistance");
+
+	void* m_Particles() {
+		static int nOffset = NetVars::GetNetVar("CBaseEntity", "m_flElasticity") - 56;
+		return *reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(this) + nOffset);
+	}
 	NETVAR(m_hOwnerEntity, EHANDLE, "CBaseEntity", "m_hOwnerEntity");
 	NETVAR(m_hEffectEntity, EHANDLE, "CBaseEntity", "m_hEffectEntity");
 	NETVAR(moveparent, int, "CBaseEntity", "moveparent");
