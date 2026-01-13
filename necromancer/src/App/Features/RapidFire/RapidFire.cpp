@@ -150,48 +150,9 @@ void CRapidFire::Run(CUserCmd* pCmd, bool* pSendPacket)
 	if (!pWeapon)
 		return;
 
-	// If DT key is held but we can't start DT yet, block normal firing
-	// This prevents wasting a normal shot when you want to DT
-	const bool bDTKeyHeld = H::Input->IsDown(CFG::Exploits_RapidFire_Key);
-	const bool bHasEnoughTicks = Shifting::nAvailableTicks >= CFG::Exploits_RapidFire_Ticks;
-	const bool bWeaponSupported = IsWeaponSupported(pWeapon);
-	
-	if (bDTKeyHeld && bHasEnoughTicks && bWeaponSupported && !Shifting::bShifting && !Shifting::bRecharging)
-	{
-		// DT key held and we have ticks - check if we should block normal fire
-		// Skip this check for minigun when fully revved (it can DT immediately)
-		bool bShouldBlockFire = false;
-		
-		if (!IsProjectileWeapon(pWeapon))
-		{
-			if (pWeapon->GetWeaponID() == TF_WEAPON_MINIGUN)
-			{
-				// Minigun: only block if not fully revved
-				const int nState = pWeapon->As<C_TFMinigun>()->m_iWeaponState();
-				if (nState != AC_STATE_FIRING && nState != AC_STATE_SPINNING)
-				{
-					bShouldBlockFire = true; // Not revved, block fire
-				}
-				// When fully revved, don't block - let DT happen immediately
-			}
-			else
-			{
-				// Other hitscan: block if target same ticks not met
-				if (G::nTicksTargetSame < CFG::Exploits_RapidFire_Min_Ticks_Target_Same)
-				{
-					bShouldBlockFire = true;
-				}
-			}
-		}
-		
-		if (bShouldBlockFire)
-		{
-			// Delay not met - block firing completely, wait for DT
-			pCmd->buttons &= ~IN_ATTACK;
-			G::bFiring = false;
-			return;
-		}
-	}
+	// Only interfere with firing if we're about to start a DT shift
+	// Don't block normal firing just because DT key is held - let aimbot work normally
+	// RapidFire should only take over when ShouldStart returns true
 
 	if (ShouldStart(pLocal, pWeapon))
 	{
@@ -230,6 +191,7 @@ bool CRapidFire::ShouldExitCreateMove(CUserCmd* pCmd)
 	if (!pLocal)
 		return false;
 
+	// Only handle RapidFire shifts, not Warp
 	if (Shifting::bShifting && !Shifting::bShiftingWarp)
 	{
 		m_ShiftCmd.command_number = pCmd->command_number;
