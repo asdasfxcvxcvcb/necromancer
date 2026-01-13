@@ -435,7 +435,6 @@ void CFakeAngle::MinWalk(CUserCmd* pCmd, C_TFPlayer* pLocal)
 void CFakeAngle::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, bool bSendPacket, const Vec3& vOriginalAngles)
 {
 	// Set global anti-aim flag (like Amalgam's G::AntiAim)
-	// ShouldRun checks G::Attacking == 1, which is now updated AFTER aimbot runs
 	bool bAntiAimActive = AntiAimOn() && ShouldRun(pLocal, pWeapon, pCmd);
 	
 	// FakeShotAngles runs regardless of anti-aim state
@@ -443,59 +442,50 @@ void CFakeAngle::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon
 	
 	if (!bAntiAimActive)
 	{
-		// Store current angles (clamped for visual purposes)
-		m_vRealAngles = { std::clamp(pCmd->viewangles.x, -89.0f, 89.0f), pCmd->viewangles.y };
-		m_vFakeAngles = { std::clamp(pCmd->viewangles.x, -89.0f, 89.0f), pCmd->viewangles.y };
+		// No anti-aim, no threat - just store current angles to BOTH
+		// This ensures fake model doesn't show when not needed
+		float flPitch = std::clamp(pCmd->viewangles.x, -89.0f, 89.0f);
+		m_vRealAngles = { flPitch, pCmd->viewangles.y };
+		m_vFakeAngles = { flPitch, pCmd->viewangles.y };
 		return;
 	}
 	
-	// Amalgam approach:
-	// bSendPacket = true  -> This is the FAKE tick (sent to server, what enemies see)
-	// bSendPacket = false -> This is the REAL tick (choked, your actual hitbox)
+	// ============================================
+	// AMALGAM ANTI-AIM APPROACH
+	// Store to the appropriate angle variable based on bSendPacket
+	// ============================================
 	
-	// Get the appropriate angles for this tick
+	// Calculate pitch (same for both real and fake)
+	float flPitch = GetPitch(vOriginalAngles.x);
+	
+	// Get reference to the appropriate angle to apply (like Amalgam)
 	Vec2& vAngles = bSendPacket ? m_vFakeAngles : m_vRealAngles;
 	
-	// Pitch: Amalgam uses a single GetPitch that combines real+fake into exploit pitch
-	// The pitch is the SAME for both ticks - the exploit is in the value itself
-	vAngles.x = GetPitch(vOriginalAngles.x);
-	
-	// Yaw: Different for real vs fake
-	// bSendPacket = true means fake yaw (what enemies see)
-	// bSendPacket = false means real yaw (your actual hitbox direction)
+	// Calculate yaw based on which angle we're storing
+	// bSendPacket = true means we're calculating FAKE angles (what enemies see)
+	// bSendPacket = false means we're calculating REAL angles (your hitbox)
+	vAngles.x = flPitch;
 	vAngles.y = GetYaw(pLocal, pCmd, bSendPacket);
 	
-	// Store both angles for visualization (fake model needs fake angles)
-	// We need to calculate the OTHER set of angles too for the fake model
+	// On send tick, also calculate and store the real angles for comparison
+	// This is needed for SetupFakeModel to properly compare real vs fake
 	if (bSendPacket)
 	{
-		// This is the fake tick, also calculate real angles for storage
-		m_vRealAngles.x = GetPitch(vOriginalAngles.x);
-		m_vRealAngles.y = GetYaw(pLocal, pCmd, false); // false = real yaw
-	}
-	else
-	{
-		// This is the real tick, also calculate fake angles for storage
-		m_vFakeAngles.x = GetPitch(vOriginalAngles.x);
-		m_vFakeAngles.y = GetYaw(pLocal, pCmd, true); // true = fake yaw
+		float flRealYaw = GetYaw(pLocal, pCmd, false);  // false = real angles
+		m_vRealAngles = { flPitch, flRealYaw };
 	}
 	
-	// Apply angles to cmd
-	Vec3 vCmdAngles = { vAngles.x, vAngles.y, 0.0f };
-	
-	// Only clamp cmd angles when anti-cheat compatibility is enabled (like Amalgam)
+	// Clamp if anti-cheat compatibility is enabled
 	if (CFG::Misc_AntiCheat_Enabled)
-		Math::ClampAngles(vCmdAngles);
+	{
+		vAngles.x = std::clamp(vAngles.x, -89.0f, 89.0f);
+		vAngles.y = Math::NormalizeAngle(vAngles.y);
+	}
 	
-	// Fix movement from ORIGINAL view angles to the new anti-aim angles
-	// This is critical - we need to convert movement from where the player is looking
-	// to where the anti-aim angles are pointing
-	Vec3 vClampedForMovement = { std::clamp(vAngles.x, -89.0f, 89.0f), vAngles.y, 0.0f };
-	H::AimUtils->FixMovement(pCmd, vOriginalAngles, vClampedForMovement);
-	
-	// Apply angles
-	pCmd->viewangles.x = vCmdAngles.x;
-	pCmd->viewangles.y = vCmdAngles.y;
+	// Fix movement and apply angles
+	H::AimUtils->FixMovement(pCmd, vOriginalAngles, Vec3{ vAngles.x, vAngles.y, 0.0f });
+	pCmd->viewangles.x = vAngles.x;
+	pCmd->viewangles.y = vAngles.y;
 	
 	G::bSilentAngles = true;
 	
@@ -557,7 +547,7 @@ void CFakeAngle::SetupFakeModel(C_TFPlayer* pLocal)
 		return;
 	}
 	
-	// Anti-aim mode: setup bones based on fake angles
+	// Anti-aim/Anti-backstab mode: setup bones based on fake angles
 	auto pAnimState = pLocal->GetAnimState();
 	if (!pAnimState)
 	{

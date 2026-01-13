@@ -3839,6 +3839,7 @@ void CMenu::MainWindow()
 			// Keys
 			InputKey("Recharge Key", CFG::Exploits_Shifting_Recharge_Key);
 			InputKey("Doubletap Key", CFG::Exploits_RapidFire_Key);
+			InputKey("Fast Sticky Key", CFG::Exploits_FastSticky_Key);
 			InputKey("Warp Key", CFG::Exploits_Warp_Key);
 			
 			// Tick limits

@@ -126,6 +126,39 @@ MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 		return;
 	}
 
+	// Sticky DT shifting - uses calculated ticks (21 if available, otherwise what we have)
+	if (Shifting::bStickyDTWantShift)
+	{
+		Shifting::bStickyDTWantShift = false;
+		Shifting::bShifting = true;
+		Shifting::bShiftingRapidFire = true;
+
+		// Use the ticks calculated by RapidFire (21 if available, otherwise what we have)
+		const int nTicks = std::min(Shifting::nStickyDTTicksToUse, Shifting::nAvailableTicks);
+		Shifting::nStickyDTTicksToUse = 0; // Reset for next use
+		
+		// Set shift tracking for prediction fix
+		Shifting::nTotalShiftTicks = nTicks;
+		Shifting::nCurrentShiftTick = 0;
+
+		for (int n = 0; n < nTicks && Shifting::nAvailableTicks > 0; n++)
+		{
+			Shifting::nCurrentShiftTick = n;
+			callOriginal(n == nTicks - 1);
+			Shifting::nAvailableTicks--;
+		}
+
+		Shifting::bShifting = false;
+		Shifting::bShiftingRapidFire = false;
+		Shifting::nCurrentShiftTick = 0;
+		Shifting::nTotalShiftTicks = 0;
+		
+		// Clear deficit after successful shift
+		Shifting::nDeficit = 0;
+		
+		return;
+	}
+
 	const auto pLocal = H::Entities->GetLocal();
 	if (pLocal && !pLocal->deadflag() && !Shifting::bRecharging && !Shifting::bShifting && !Shifting::bShiftingWarp)
 	{

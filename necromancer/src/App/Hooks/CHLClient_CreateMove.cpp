@@ -29,27 +29,16 @@ MAKE_HOOK(ValidateUserCmd, Signatures::ValidateUserCmd_.Get(), void, __fastcall,
 }
 
 // Local animations - Amalgam style
-// This updates the local player's animation state based on the REAL angles (not fake)
+// This updates the local player's animation state based on the cmd angles
 // The fake model uses separate bones set up in SetupFakeModel
 static inline void LocalAnimations(C_TFPlayer* pLocal, CUserCmd* pCmd, bool bSendPacket)
 {
 	static std::vector<Vec3> vAngles = {};
-
-	// Use the REAL angles from FakeAngle, not the cmd angles (which may be fake on send tick)
-	// This ensures your actual model shows the real pitch, not the fake pitch
-	Vec3 vRealAngles;
-	if (F::FakeAngle->AntiAimOn())
-	{
-		Vec2 vReal = F::FakeAngle->GetRealAngles();
-		vRealAngles = { vReal.x, vReal.y, 0.0f };
-	}
-	else
-	{
-		vRealAngles = pCmd->viewangles;
-		vRealAngles.x = std::clamp(vRealAngles.x, -89.0f, 89.0f);
-	}
-
-	vAngles.push_back(vRealAngles);
+	
+	// Push the current cmd angles (after anti-aim modified them)
+	// On choked ticks: these are REAL angles
+	// On send tick: these are FAKE angles
+	vAngles.push_back(pCmd->viewangles);
 
 	auto pAnimState = pLocal->GetAnimState();
 	if (bSendPacket && pAnimState)
@@ -81,10 +70,13 @@ static inline void LocalAnimations(C_TFPlayer* pLocal, CUserCmd* pCmd, bool bSen
 // Only choke for anti-aim if we're not attacking
 static inline bool AntiAimCheck(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd)
 {
-	return F::FakeAngle->YawOn()
+	// Regular anti-aim check
+	bool bAntiAim = F::FakeAngle->YawOn()
 		&& F::FakeAngle->ShouldRun(pLocal, pWeapon, pCmd)
 		&& !Shifting::bRecharging
 		&& I::ClientState->chokedcommands < F::FakeAngle->AntiAimTicks();
+	
+	return bAntiAim;
 }
 
 MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool, __fastcall,
@@ -522,6 +514,7 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 	// ============================================
 	// RapidFire/Ticks management - AFTER pSilent handling (like reference)
 	// ============================================
+	F::RapidFire->RunFastSticky(pCmd, pSendPacket);  // Fast sticky shooting key (runs first)
 	F::RapidFire->Run(pCmd, pSendPacket);
 
 	// ============================================

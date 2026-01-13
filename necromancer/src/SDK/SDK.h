@@ -460,6 +460,8 @@ namespace Shifting
 	inline bool bRecharging = false;
 	inline bool bShifting = false;
 	inline bool bRapidFireWantShift = false;
+	inline bool bStickyDTWantShift = false;   // Sticky DT wants to shift (uses all available ticks)
+	inline int nStickyDTTicksToUse = 0;       // How many ticks to use for sticky DT (set by RapidFire)
 	inline bool bShiftingWarp = false;
 	inline bool bShiftingRapidFire = false;  // True when shifting for rapid fire (not warp)
 	inline int nCurrentShiftTick = 0;        // Current tick index during rapid fire shift (0-indexed)

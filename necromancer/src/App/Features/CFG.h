@@ -646,6 +646,7 @@ namespace CFG
 	CFGVAR(Exploits_Shifting_Recharge_Limit, 24); // 2-24, max ticks to recharge (accounts for fakeangle 2 ticks, anticheat)
 
 	CFGVAR(Exploits_RapidFire_Key, 0);
+	CFGVAR(Exploits_FastSticky_Key, 0);  // Fast sticky shooting - auto recharges and fires stickies rapidly
 	CFGVAR(Exploits_RapidFire_Ticks, 21);
 	CFGVAR(Exploits_RapidFire_Min_Ticks_Target_Same, 3);
 	CFGVAR(Exploits_RapidFire_Antiwarp, true);
@@ -653,6 +654,7 @@ namespace CFG
 	CFGVAR(Exploits_RapidFire_DT_Commands, 23);   // Max commands per packet during DOUBLETAP (higher = faster DT)
 	CFGVAR(Exploits_RapidFire_Tick_Tracking, 0);  // 0=Disabled, 1=Linear
 	CFGVAR(Exploits_RapidFire_Deficit_Tracking, true);  // Auto-recover when server rejects commands
+	
 	CFGVAR(Exploits_Warp_Key, 0);
 	CFGVAR(Exploits_Warp_Mode, 1); //0 Slow 1 Full
 	CFGVAR(Exploits_Warp_Exploit, 0); //0 None 1 Fake Peek 2 0 Velocity

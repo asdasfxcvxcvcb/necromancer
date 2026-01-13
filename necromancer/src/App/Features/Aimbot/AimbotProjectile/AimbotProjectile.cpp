@@ -1527,14 +1527,12 @@ void CAimbotProjectile::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* 
 	if (GetTarget(pLocal, pWeapon, pCmd, target) && target.Entity)
 	{
 		G::nTargetIndexEarly = target.Entity->entindex();
-
 		G::nTargetIndex = target.Entity->entindex();
 
 		if (ShouldFire(pCmd, pLocal, pWeapon))
 			HandleFire(pCmd, pWeapon, pLocal, target);
 
 		const bool bIsFiring = IsFiring(pCmd, pLocal, pWeapon);
-
 		G::bFiring = bIsFiring;
 
 		if (ShouldAim(pCmd, pLocal, pWeapon) || bIsFiring)
@@ -1545,43 +1543,25 @@ void CAimbotProjectile::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* 
 			{
 				const int nTargetIdx = target.Entity->entindex();
 				auto* pBehavior = F::MovementSimulation->GetPlayerBehavior(nTargetIdx);
-				
+
 				if (pBehavior && pBehavior->GetConfidence() > 0.5f && pBehavior->m_Combat.m_nReactionSamples >= 5)
 				{
 					const int nDodgeDir = F::MovementSimulation->GetPredictedDodge(nTargetIdx);
-					
-					// Only apply if they have a clear dodge preference (not "no reaction")
+
 					if (nDodgeDir != 0)
 					{
-						// Scale offset by:
-						// - Confidence (0.5-1.0): how sure we are about their dodge pattern
-						// - Time to target: longer flight = more time to dodge = bigger offset
-						// - Reaction rate: how often they actually dodge vs stand still
 						const float flConfidence = pBehavior->GetConfidence();
 						const float flReactionRate = pBehavior->m_Combat.m_flReactionToThreat;
-						
-						// Time scaling: 0.3s = minimal offset, 1.0s+ = full offset
-						// Projectiles arriving in <0.3s give almost no time to react
 						const float flTimeScale = Math::RemapValClamped(target.TimeToTarget, 0.3f, 1.0f, 0.1f, 1.0f);
-						
-						// Base offset in degrees, scaled by all factors
 						const float flBaseOffset = 2.0f;
 						const float flOffset = flBaseOffset * flConfidence * flTimeScale * flReactionRate;
-						
+
 						switch (nDodgeDir)
 						{
-						case -1: // Dodge left - aim slightly right
-							vFinalAngles.y -= flOffset;
-							break;
-						case 1:  // Dodge right - aim slightly left
-							vFinalAngles.y += flOffset;
-							break;
-						case 2:  // Dodge jump - aim slightly higher
-							vFinalAngles.x -= flOffset * 0.7f;
-							break;
-						case 3:  // Dodge back - aim slightly forward (lead more)
-							// Already handled by movement prediction
-							break;
+						case -1: vFinalAngles.y -= flOffset; break;
+						case 1:  vFinalAngles.y += flOffset; break;
+						case 2:  vFinalAngles.x -= flOffset * 0.7f; break;
+						case 3:  break;
 						}
 					}
 				}
@@ -1598,7 +1578,6 @@ void CAimbotProjectile::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* 
 			if (bIsFiring && m_TargetPath.size() > 1)
 			{
 				I::DebugOverlay->ClearAllOverlays();
-
 				DrawProjPath(pCmd, target.TimeToTarget);
 				DrawMovePath(m_TargetPath);
 				m_TargetPath.clear();
