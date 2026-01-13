@@ -581,16 +581,27 @@ void CMaterials::Run()
 		if (pMaterial)
 			I::ModelRender->ForcedMaterialOverride(pMaterial);
 
-		if (CFG::Materials_Players_Alpha < 1.0f)
-			I::RenderView->SetBlend(CFG::Materials_Players_Alpha);
+		const float flPlayersAlpha = CFG::Materials_Players_Alpha;
+		if (flPlayersAlpha < 1.0f)
+			I::RenderView->SetBlend(flPlayersAlpha);
 
-		if (CFG::Materials_Players_No_Depth)
+		const bool bNoDepth = CFG::Materials_Players_No_Depth;
+		if (bNoDepth)
 			pRenderContext->DepthRange(0.0f, 0.2f);
 
-		// Cache local team for faster comparisons
+		// Cache local team and config values for faster comparisons
 		const int nLocalTeam = pLocal->m_iTeamNum();
+		const bool bIgnoreLocal = CFG::Materials_Players_Ignore_Local;
+		const bool bIgnoreFriends = CFG::Materials_Players_Ignore_Friends;
+		const bool bIgnoreTeammates = CFG::Materials_Players_Ignore_Teammates;
+		const bool bIgnoreEnemies = CFG::Materials_Players_Ignore_Enemies;
+		const bool bIgnoreTagged = CFG::Materials_Players_Ignore_Tagged;
+		const bool bShowTeammateMedics = CFG::Materials_Players_Show_Teammate_Medics;
 		
-		for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PLAYERS_ALL))
+		// Get entity group once
+		const auto& vPlayers = H::Entities->GetGroup(EEntGroup::PLAYERS_ALL);
+		
+		for (const auto pEntity : vPlayers)
 		{
 			if (!pEntity)
 				continue;
@@ -602,7 +613,7 @@ void CMaterials::Run()
 
 			const bool bIsLocal = pPlayer == pLocal;
 			
-			if (CFG::Materials_Players_Ignore_Local && bIsLocal)
+			if (bIgnoreLocal && bIsLocal)
 				continue;
 			
 			// Early screen check before expensive friend check
@@ -611,12 +622,12 @@ void CMaterials::Run()
 
 			const bool bIsFriend = pPlayer->IsPlayerOnSteamFriendsList();
 
-			if (CFG::Materials_Players_Ignore_Friends && bIsFriend)
+			if (bIgnoreFriends && bIsFriend)
 				continue;
 
 			// Check if player is tagged (Cheater/RetardLegit/Ignored)
 			bool bIsTagged = false;
-			if (!CFG::Materials_Players_Ignore_Tagged)
+			if (!bIgnoreTagged)
 			{
 				PlayerPriority playerPriority = {};
 				if (F::Players->GetInfo(pPlayer->entindex(), playerPriority))
@@ -630,13 +641,13 @@ void CMaterials::Run()
 			{
 				const int nPlayerTeam = pPlayer->m_iTeamNum();
 				
-				if (CFG::Materials_Players_Ignore_Teammates && nPlayerTeam == nLocalTeam)
+				if (bIgnoreTeammates && nPlayerTeam == nLocalTeam)
 				{
-					if (!CFG::Materials_Players_Show_Teammate_Medics || pPlayer->m_iClass() != TF_CLASS_MEDIC)
+					if (!bShowTeammateMedics || pPlayer->m_iClass() != TF_CLASS_MEDIC)
 						continue;
 				}
 
-				if (CFG::Materials_Players_Ignore_Enemies && nPlayerTeam != nLocalTeam)
+				if (bIgnoreEnemies && nPlayerTeam != nLocalTeam)
 					continue;
 			}
 
@@ -667,10 +678,10 @@ void CMaterials::Run()
 		if (pMaterial)
 			I::ModelRender->ForcedMaterialOverride(nullptr);
 
-		if (CFG::Materials_Players_Alpha < 1.0f)
+		if (flPlayersAlpha < 1.0f)
 			I::RenderView->SetBlend(1.0f);
 
-		if (CFG::Materials_Players_No_Depth)
+		if (bNoDepth)
 			pRenderContext->DepthRange(0.0f, 1.0f);
 	}
 
@@ -683,11 +694,20 @@ void CMaterials::Run()
 		if (pMaterial)
 			I::ModelRender->ForcedMaterialOverride(pMaterial);
 
-		if (CFG::Materials_Buildings_Alpha < 1.0f)
-			I::RenderView->SetBlend(CFG::Materials_Buildings_Alpha);
+		const float flBuildingsAlpha = CFG::Materials_Buildings_Alpha;
+		if (flBuildingsAlpha < 1.0f)
+			I::RenderView->SetBlend(flBuildingsAlpha);
 
-		if (CFG::Materials_Buildings_No_Depth)
+		const bool bNoDepth = CFG::Materials_Buildings_No_Depth;
+		if (bNoDepth)
 			pRenderContext->DepthRange(0.0f, 0.2f);
+
+		// Cache config values
+		const bool bIgnoreLocal = CFG::Materials_Buildings_Ignore_Local;
+		const bool bIgnoreTeammates = CFG::Materials_Buildings_Ignore_Teammates;
+		const bool bIgnoreEnemies = CFG::Materials_Buildings_Ignore_Enemies;
+		const bool bShowTeammateDispensers = CFG::Materials_Buildings_Show_Teammate_Dispensers;
+		const int nLocalTeam = pLocal->m_iTeamNum();
 
 		for (const auto pEntity : H::Entities->GetGroup(EEntGroup::BUILDINGS_ALL))
 		{
@@ -701,26 +721,20 @@ void CMaterials::Run()
 
 			const bool bIsLocal = F::VisualUtils->IsEntityOwnedBy(pBuilding, pLocal);
 
-			if (CFG::Materials_Buildings_Ignore_Local && bIsLocal)
+			if (bIgnoreLocal && bIsLocal)
 				continue;
 
 			if (!bIsLocal)
 			{
-				if (CFG::Materials_Buildings_Ignore_Teammates && pBuilding->m_iTeamNum() == pLocal->m_iTeamNum())
+				const int nBuildingTeam = pBuilding->m_iTeamNum();
+				
+				if (bIgnoreTeammates && nBuildingTeam == nLocalTeam)
 				{
-					if (CFG::Materials_Buildings_Show_Teammate_Dispensers)
-					{
-						if (pBuilding->GetClassId() != ETFClassIds::CObjectDispenser)
-							continue;
-					}
-
-					else
-					{
+					if (!bShowTeammateDispensers || pBuilding->GetClassId() != ETFClassIds::CObjectDispenser)
 						continue;
-					}
 				}
 
-				if (CFG::Materials_Buildings_Ignore_Enemies && pBuilding->m_iTeamNum() != pLocal->m_iTeamNum())
+				if (bIgnoreEnemies && nBuildingTeam != nLocalTeam)
 					continue;
 			}
 
@@ -741,10 +755,10 @@ void CMaterials::Run()
 		if (pMaterial)
 			I::ModelRender->ForcedMaterialOverride(nullptr);
 
-		if (CFG::Materials_Buildings_Alpha < 1.0f)
+		if (flBuildingsAlpha < 1.0f)
 			I::RenderView->SetBlend(1.0f);
 
-		if (CFG::Materials_Buildings_No_Depth)
+		if (bNoDepth)
 			pRenderContext->DepthRange(0.0f, 1.0f);
 	}
 

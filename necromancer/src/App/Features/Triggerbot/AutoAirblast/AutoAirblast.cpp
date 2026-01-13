@@ -6,6 +6,8 @@
 #include "../../amalgam_port/ProjectileSimulation/ProjectileSimulation.h"
 #include "../../amalgam_port/Ticks/Ticks.h"
 
+#include <unordered_map>
+
 // ============================================================================
 // CONSTANTS - Projectile speeds and properties from Source SDK
 // ============================================================================
@@ -149,10 +151,22 @@ float CAutoAirblast::GetReflectedSplashRadius(C_BaseProjectile* pProjectile)
 
 // ============================================================================
 // SPLASH POINT GENERATION (Fibonacci sphere like AimbotWrangler)
+// Cache the sphere points since they're always the same for a given radius
 // ============================================================================
 
-static std::vector<std::pair<Vec3, int>> GenerateSplashSphere(float flRadius, int nSamples)
+static const std::vector<std::pair<Vec3, int>>& GetCachedSplashSphere(float flRadius, int nSamples)
 {
+	// Cache for common radius values to avoid regeneration
+	static std::unordered_map<int, std::vector<std::pair<Vec3, int>>> s_mapCache;
+	
+	// Use integer key (radius * 10) to handle floating point comparison
+	const int nKey = static_cast<int>(flRadius * 10.0f);
+	
+	auto it = s_mapCache.find(nKey);
+	if (it != s_mapCache.end())
+		return it->second;
+	
+	// Generate new sphere points
 	std::vector<std::pair<Vec3, int>> vPoints;
 	vPoints.reserve(nSamples * 2 + 50);
 
@@ -161,11 +175,11 @@ static std::vector<std::pair<Vec3, int>> GenerateSplashSphere(float flRadius, in
 	// Standard sphere points
 	for (int i = 0; i < nSamples; i++)
 	{
-		float t = fPhi * i;
-		float y = 1.0f - (i / float(nSamples - 1)) * 2.0f;
-		float r = sqrtf(1.0f - y * y);
-		float x = cosf(t) * r;
-		float z = sinf(t) * r;
+		const float t = fPhi * i;
+		const float y = 1.0f - (i / float(nSamples - 1)) * 2.0f;
+		const float r = sqrtf(1.0f - y * y);
+		const float x = cosf(t) * r;
+		const float z = sinf(t) * r;
 
 		Vec3 vPoint = Vec3(x, y, z) * flRadius;
 		vPoints.emplace_back(vPoint, 1);
@@ -174,10 +188,10 @@ static std::vector<std::pair<Vec3, int>> GenerateSplashSphere(float flRadius, in
 	// Add extra floor points spread outward
 	for (float flMult = 0.5f; flMult <= 1.5f; flMult += 0.25f)
 	{
-		float flDist = flRadius * flMult;
+		const float flDist = flRadius * flMult;
 		for (int i = 0; i < 8; i++)
 		{
-			float flAngle = (i / 8.0f) * 2.0f * 3.14159265f;
+			const float flAngle = (i / 8.0f) * 2.0f * 3.14159265f;
 			Vec3 vPoint = Vec3(cosf(flAngle) * flDist, sinf(flAngle) * flDist, -flRadius);
 			vPoints.emplace_back(vPoint, 1);
 		}
@@ -191,13 +205,20 @@ static std::vector<std::pair<Vec3, int>> GenerateSplashSphere(float flRadius, in
 	{
 		for (int i = 0; i < 8; i++)
 		{
-			float flAngle = (i / 8.0f) * 2.0f * 3.14159265f;
+			const float flAngle = (i / 8.0f) * 2.0f * 3.14159265f;
 			Vec3 vPoint = Vec3(cosf(flAngle) * flRadius * 1.2f, sinf(flAngle) * flRadius * 1.2f, flHeight * flRadius);
 			vPoints.emplace_back(vPoint, 1);
 		}
 	}
 
-	return vPoints;
+	s_mapCache[nKey] = std::move(vPoints);
+	return s_mapCache[nKey];
+}
+
+// Legacy wrapper for compatibility
+static std::vector<std::pair<Vec3, int>> GenerateSplashSphere(float flRadius, int nSamples)
+{
+	return GetCachedSplashSphere(flRadius, nSamples);
 }
 
 // ============================================================================

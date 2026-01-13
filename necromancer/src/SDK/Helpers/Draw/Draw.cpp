@@ -187,16 +187,30 @@ void CDraw::OutlinedCircle(int x, int y, int radius, int segments, Color_t clr)
 
 void CDraw::FilledCircle(int x, int y, int radius, int segments, Color_t clr)
 {
-	static std::vector<Vertex_t> vertices = {};
-
+	// Pre-calculate step and use local array for small segment counts
 	const float step = static_cast<float>(PI) * 2.0f / segments;
-
-	for (float a = 0; a < PI * 2.0f; a += step)
-		vertices.emplace_back(Vertex_t{ { radius * cosf(a) + x, radius * sinf(a) + y } });
-
-	Polygon(segments, vertices.data(), clr);
 	
-	vertices.clear();
+	// Use stack allocation for typical segment counts (avoid heap allocation)
+	if (segments <= 100)
+	{
+		Vertex_t vertices[100];
+		float a = 0.0f;
+		for (int i = 0; i < segments; i++, a += step)
+			vertices[i] = Vertex_t{ { radius * cosf(a) + x, radius * sinf(a) + y } };
+		Polygon(segments, vertices, clr);
+	}
+	else
+	{
+		// Fallback for large segment counts
+		thread_local std::vector<Vertex_t> vertices;
+		vertices.clear();
+		vertices.reserve(segments);
+
+		for (float a = 0; a < PI * 2.0f; a += step)
+			vertices.emplace_back(Vertex_t{ { radius * cosf(a) + x, radius * sinf(a) + y } });
+
+		Polygon(segments, vertices.data(), clr);
+	}
 }
 
 void CDraw::Texture(int x, int y, int w, int h, int id, short pos)

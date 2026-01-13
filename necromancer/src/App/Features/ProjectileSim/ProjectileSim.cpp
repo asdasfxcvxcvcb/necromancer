@@ -135,26 +135,30 @@ bool CProjectileSim::Init(const ProjSimInfo& info, bool no_vec_up)
 		return false;
 	}
 
-	// Destroy existing object to ensure clean state each init
-	if (obj)
+	// Only destroy and recreate object if necessary
+	// Reuse existing object when possible for better performance
+	static CPhysCollide* s_pLastCollide = nullptr;
+	auto col = I::PhysicsCollision->BBoxToCollide({ -2.0f, -2.0f, -2.0f }, { 2.0f, 2.0f, 2.0f });
+	
+	if (!obj || s_pLastCollide != col)
 	{
-		env->DestroyObject(obj);
-		obj = nullptr;
+		if (obj)
+		{
+			env->DestroyObject(obj);
+			obj = nullptr;
+		}
+
+		auto params{ g_PhysDefaultObjectParams };
+
+		params.damping = 0.0f;
+		params.rotdamping = 0.0f;
+		params.inertia = 0.0f;
+		params.rotInertiaLimit = 0.0f;
+		params.enableCollisions = false;
+
+		obj = env->CreatePolyObject(col, 0, info.m_pos, info.m_ang, &params);
+		s_pLastCollide = col;
 	}
-
-	//it doesn't matter what the size is for non drag affected projectiles
-	//pipes use the size below so it works out just fine
-	auto col{ I::PhysicsCollision->BBoxToCollide({ -2.0f, -2.0f, -2.0f }, { 2.0f, 2.0f, 2.0f }) };
-
-	auto params{ g_PhysDefaultObjectParams };
-
-	params.damping = 0.0f;
-	params.rotdamping = 0.0f;
-	params.inertia = 0.0f;
-	params.rotInertiaLimit = 0.0f;
-	params.enableCollisions = false;
-
-	obj = env->CreatePolyObject(col, 0, info.m_pos, info.m_ang, &params);
 
 	if (!obj)
 	{

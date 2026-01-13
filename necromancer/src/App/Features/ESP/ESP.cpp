@@ -235,16 +235,13 @@ void CESP::Run()
 		return;
 
 	if (CFG::Misc_Clean_Screenshot && I::EngineClient->IsTakingScreenshot())
-	{
 		return;
-	}
-	
+
 	// Early exit if nothing is enabled - massive performance gain
 	if (!CFG::ESP_Players_Active && !CFG::ESP_Buildings_Active && !CFG::ESP_World_Active)
 		return;
 
 	auto pLocal = H::Entities->GetLocal();
-
 	if (!pLocal)
 		return;
 
@@ -253,10 +250,34 @@ void CESP::Run()
 	if (CFG::ESP_Players_Active)
 	{
 		I::MatSystemSurface->DrawSetAlphaMultiplier(CFG::ESP_Players_Alpha);
-		
-		// Cache expensive checks
+
+		// =====================================================================
+		// OPTIMIZATION: Cache ALL expensive lookups ONCE outside the player loop
+		// This is the main source of FPS drops when looking at groups of enemies
+		// =====================================================================
 		const int nLocalTeam = pLocal->m_iTeamNum();
 		const bool bThirdPerson = I::Input->CAM_IsThirdPerson();
+		const int nScreenW = H::Draw->GetScreenW();
+		const int nScreenH = H::Draw->GetScreenH();
+		const int nScreenCenterX = nScreenW / 2;
+		const int nScreenCenterY = nScreenH / 2;
+
+		// Cache font references ONCE - H::Fonts->Get() is expensive
+		const auto& fontSmall = H::Fonts->Get(EFonts::ESP_SMALL);
+		const auto& fontConds = H::Fonts->Get(EFonts::ESP_CONDS);
+		const auto& fontESP = H::Fonts->Get(EFonts::ESP);
+		const int nFontSmallTall = fontSmall.m_nTall;
+		const int nFontCondsTall = fontConds.m_nTall;
+
+		// Cache ALL config values - CFG:: access has overhead
+		const bool bDrawArrows = CFG::ESP_Players_Arrows;
+		const bool bIgnoreLocal = CFG::ESP_Players_Ignore_Local;
+		const bool bIgnoreFriends = CFG::ESP_Players_Ignore_Friends;
+		const bool bIgnoreInvisible = CFG::ESP_Players_Ignore_Invisible;
+		const bool bIgnoreTeammates = CFG::ESP_Players_Ignore_Teammates;
+		const bool bIgnoreEnemies = CFG::ESP_Players_Ignore_Enemies;
+		const bool bIgnoreTagged = CFG::ESP_Players_Ignore_Tagged;
+		const bool bShowTeammateMedics = CFG::ESP_Players_Show_Teammate_Medics;
 
 		for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PLAYERS_ALL))
 		{
@@ -264,49 +285,50 @@ void CESP::Run()
 				continue;
 
 			auto pPlayer = pEntity->As<C_TFPlayer>();
-
 			if (pPlayer->deadflag())
 				continue;
 
 			const bool bIsLocal = pPlayer == pLocal;
 
-			if ((CFG::ESP_Players_Ignore_Local && bIsLocal) || (!bThirdPerson && bIsLocal))
+			if ((bIgnoreLocal && bIsLocal) || (!bThirdPerson && bIsLocal))
 				continue;
+
+			// Cache player index ONCE - used multiple times per player
+			const int nPlayerIndex = pPlayer->entindex();
+
+			// OPTIMIZATION: Get player priority info ONCE per player instead of 4+ times
+			PlayerPriority playerPriority = {};
+			bool bHasPriorityInfo = false;
+			bool bIsTagged = false;
+			bool bIsFriend = false;
 
 			if (!bIsLocal)
 			{
 				// Early invisibility check before expensive operations
-				if (CFG::ESP_Players_Ignore_Invisible && pPlayer->m_flInvisibility() >= 1.0f)
-					continue;
-				
-				const bool bIsFriend = pPlayer->IsPlayerOnSteamFriendsList();
-
-				if (CFG::ESP_Players_Ignore_Friends && bIsFriend)
+				if (bIgnoreInvisible && pPlayer->m_flInvisibility() >= 1.0f)
 					continue;
 
-				// Check if player is tagged (Cheater/RetardLegit/Ignored)
-				bool bIsTagged = false;
-				if (!CFG::ESP_Players_Ignore_Tagged)
-				{
-					PlayerPriority playerPriority = {};
-					if (F::Players->GetInfo(pPlayer->entindex(), playerPriority))
-					{
-						bIsTagged = playerPriority.Cheater || playerPriority.RetardLegit || playerPriority.Ignored;
-					}
-				}
+				bIsFriend = pPlayer->IsPlayerOnSteamFriendsList();
 
-				// Skip team/enemy filtering if player is tagged (and not ignoring tagged)
+				if (bIgnoreFriends && bIsFriend)
+					continue;
+
+				// Get player info ONCE and reuse throughout
+				bHasPriorityInfo = F::Players->GetInfo(nPlayerIndex, playerPriority);
+				if (bHasPriorityInfo && !bIgnoreTagged)
+					bIsTagged = playerPriority.Cheater || playerPriority.RetardLegit || playerPriority.Ignored;
+
 				if (!bIsFriend && !bIsTagged)
 				{
 					const int nPlayerTeam = pPlayer->m_iTeamNum();
-					
-					if (CFG::ESP_Players_Ignore_Teammates && nPlayerTeam == nLocalTeam)
+
+					if (bIgnoreTeammates && nPlayerTeam == nLocalTeam)
 					{
-						if (!CFG::ESP_Players_Show_Teammate_Medics || pPlayer->m_iClass() != TF_CLASS_MEDIC)
+						if (!bShowTeammateMedics || pPlayer->m_iClass() != TF_CLASS_MEDIC)
 							continue;
 					}
 
-					if (CFG::ESP_Players_Ignore_Enemies && nPlayerTeam != nLocalTeam)
+					if (bIgnoreEnemies && nPlayerTeam != nLocalTeam)
 						continue;
 				}
 			}
@@ -315,11 +337,8 @@ void CESP::Run()
 
 			if (!GetDrawBounds(pPlayer, x, y, w, h))
 			{
-				if (CFG::ESP_Players_Arrows && pPlayer != pLocal && !pLocal->deadflag())
+				if (bDrawArrows && pPlayer != pLocal && !pLocal->deadflag())
 				{
-					int nScreenCenterX = H::Draw->GetScreenW() / 2;
-					int nScreenCenterY = H::Draw->GetScreenH() / 2;
-
 					Vec3 vScreen = {}, vPlayerWSC = pPlayer->GetCenter();
 					H::Draw->ScreenPosition(vPlayerWSC, vScreen);
 
@@ -348,39 +367,52 @@ void CESP::Run()
 				continue;
 			}
 
+			// OPTIMIZATION: Cache colors and values ONCE per player
 			auto entColor = F::VisualUtils->GetEntityColor(pLocal, pPlayer);
-			auto healthColor = F::VisualUtils->GetHealthColor(pPlayer->m_iHealth(), pPlayer->GetMaxHealth());
 			auto textColor = CFG::ESP_Text_Color == 0 ? entColor : CFG::Color_ESP_Text;
 
+			// Determine name/weapon color ONCE using cached priority info
+			Color_t nameColor = textColor;
+			if (CFG::Misc_Enemy_Custom_Name_Color)
+			{
+				nameColor = CFG::Color_Custom_Name;
+			}
+			else if (bHasPriorityInfo)
+			{
+				if (playerPriority.Cheater)
+					nameColor = CFG::Color_Cheater;
+				else if (playerPriority.RetardLegit)
+					nameColor = CFG::Color_RetardLegit;
+				else if (playerPriority.Ignored)
+					nameColor = CFG::Color_Friend;
+			}
+
 			int nTextOffsetY = 0;
+			const int xCenter = x + (w / 2);
 
 			if (CFG::ESP_Players_Tracer)
 			{
 				if (!bIsLocal)
 				{
-					auto nFromY = [&]() -> int
+					int nFromY;
+					switch (CFG::ESP_Tracer_From)
 					{
-						switch (CFG::ESP_Tracer_From)
-						{
-						case 0: return 0;
-						case 1: return H::Draw->GetScreenH() / 2;
-						case 2: return H::Draw->GetScreenH();
-						default: return 0;
-						}
-					};
+					case 0: nFromY = 0; break;
+					case 1: nFromY = nScreenCenterY; break;
+					case 2: nFromY = nScreenH; break;
+					default: nFromY = 0; break;
+					}
 
-					auto nToY = [&]() -> int
+					int nToY;
+					switch (CFG::ESP_Tracer_To)
 					{
-						switch (CFG::ESP_Tracer_To)
-						{
-						case 0: return y;
-						case 1: return y + (h / 2);
-						case 2: return y + h;
-						default: return 0;
-						}
-					};
+					case 0: nToY = y; break;
+					case 1: nToY = y + (h / 2); break;
+					case 2: nToY = y + h; break;
+					default: nToY = 0; break;
+					}
 
-					H::Draw->Line(H::Draw->GetScreenW() / 2, nFromY(), x + (w / 2), nToY(), entColor);
+					H::Draw->Line(nScreenCenterX, nFromY, xCenter, nToY, entColor);
 				}
 			}
 
@@ -391,33 +423,12 @@ void CESP::Run()
 
 			if (CFG::ESP_Players_Weapon_Name)
 			{
-				const auto& font = H::Fonts->Get(EFonts::ESP_CONDS);
-
-				Color_t weaponColor = textColor;
-
-				if (CFG::Misc_Enemy_Custom_Name_Color)
-				{
-					weaponColor = CFG::Color_Custom_Name;
-				}
-				else
-				{
-					PlayerPriority playerPriority = {};
-					if (F::Players->GetInfo(pPlayer->entindex(), playerPriority))
-					{
-						if (playerPriority.Cheater)
-							weaponColor = CFG::Color_Cheater;
-						else if (playerPriority.RetardLegit)
-							weaponColor = CFG::Color_RetardLegit;
-						else if (playerPriority.Ignored)
-							weaponColor = CFG::Color_Friend;
-					}
-				}
-
+				// Use cached font and nameColor
 				H::Draw->String(
-					font,
-					x + (w / 2),
-					y + h + font.m_nTall,
-					weaponColor,
+					fontConds,
+					xCenter,
+					y + h + nFontCondsTall,
+					nameColor,
 					POS_CENTERXY,
 					Utils::ConvertUtf8ToWide(pPlayer->GetWeaponName()).c_str()
 				);
@@ -427,35 +438,13 @@ void CESP::Run()
 			{
 				player_info_t PlayerInfo = {};
 
-				if (I::EngineClient->GetPlayerInfo(pPlayer->entindex(), &PlayerInfo))
+				if (I::EngineClient->GetPlayerInfo(nPlayerIndex, &PlayerInfo))
 				{
-					// Determine name color
-					Color_t nameColor = textColor;
-					
-					// If custom name color is enabled, use it for all players
-					if (CFG::Misc_Enemy_Custom_Name_Color)
-					{
-						nameColor = CFG::Color_Custom_Name;
-					}
-					else
-					{
-						// Check for player tags and use appropriate color
-						PlayerPriority playerPriority = {};
-						if (F::Players->GetInfo(pPlayer->entindex(), playerPriority))
-						{
-							if (playerPriority.Cheater)
-								nameColor = CFG::Color_Cheater;
-							else if (playerPriority.RetardLegit)
-								nameColor = CFG::Color_RetardLegit;
-							else if (playerPriority.Ignored)
-								nameColor = CFG::Color_Friend;
-						}
-					}
-
+					// Use cached font and nameColor
 					H::Draw->String(
-						H::Fonts->Get(EFonts::ESP_SMALL),
-						x + (w / 2),
-						(y - (H::Fonts->Get(EFonts::ESP_SMALL).m_nTall - 1)) - SPACING_Y,
+						fontSmall,
+						xCenter,
+						(y - (nFontSmallTall - 1)) - SPACING_Y,
 						nameColor,
 						POS_CENTERX,
 						Utils::ConvertUtf8ToWide(PlayerInfo.name).c_str()
@@ -463,83 +452,77 @@ void CESP::Run()
 				}
 			}
 
-			// Draw tags (Friend, Cheater, Retard Legit, Ignored) above the player name
+			// Draw tags using CACHED priority info (no more redundant GetInfo calls)
 			if (CFG::ESP_Players_Tags)
 			{
 				int tagOffset = 0;
-				int fontTall = H::Fonts->Get(EFonts::ESP_SMALL).m_nTall;
 				int baseY = CFG::ESP_Players_Name
-					? (y - fontTall - SPACING_Y) - fontTall - SPACING_Y
-					: (y - fontTall - SPACING_Y);
+					? (y - nFontSmallTall - SPACING_Y) - nFontSmallTall - SPACING_Y
+					: (y - nFontSmallTall - SPACING_Y);
 
-				PlayerPriority playerPriority = {};
-				F::Players->GetInfo(pPlayer->entindex(), playerPriority);
-
-				// Draw Friend tag
-				if (pPlayer->IsPlayerOnSteamFriendsList())
+				// Use cached bIsFriend instead of calling IsPlayerOnSteamFriendsList again
+				if (bIsFriend)
 				{
 					H::Draw->String(
-						H::Fonts->Get(EFonts::ESP_SMALL),
-						x + (w / 2),
+						fontSmall,
+						xCenter,
 						baseY - tagOffset,
 						CFG::Color_Friend,
 						POS_CENTERX,
 						"Friend"
 					);
-					tagOffset += fontTall + SPACING_Y;
+					tagOffset += nFontSmallTall + SPACING_Y;
 				}
 
 				// Draw Cheater tag
-				if (playerPriority.Cheater)
+				if (bHasPriorityInfo && playerPriority.Cheater)
 				{
 					H::Draw->String(
-						H::Fonts->Get(EFonts::ESP_SMALL),
-						x + (w / 2),
+						fontSmall,
+						xCenter,
 						baseY - tagOffset,
 						CFG::Color_Cheater,
 						POS_CENTERX,
 						"Cheater"
 					);
-					tagOffset += fontTall + SPACING_Y;
+					tagOffset += nFontSmallTall + SPACING_Y;
 				}
 
-				// Draw Retard Legit tag
-				if (playerPriority.RetardLegit)
+				// Draw Retard Legit tag - use cached priority info
+				if (bHasPriorityInfo && playerPriority.RetardLegit)
 				{
 					H::Draw->String(
-						H::Fonts->Get(EFonts::ESP_SMALL),
-						x + (w / 2),
+						fontSmall,
+						xCenter,
 						baseY - tagOffset,
 						CFG::Color_RetardLegit,
 						POS_CENTERX,
 						"Retard Legit"
 					);
-					tagOffset += fontTall + SPACING_Y;
+					tagOffset += nFontSmallTall + SPACING_Y;
 				}
 
-				// Draw Ignored tag
-				if (playerPriority.Ignored)
+				// Draw Ignored tag - use cached priority info
+				if (bHasPriorityInfo && playerPriority.Ignored)
 				{
 					H::Draw->String(
-						H::Fonts->Get(EFonts::ESP_SMALL),
-						x + (w / 2),
+						fontSmall,
+						xCenter,
 						baseY - tagOffset,
 						CFG::Color_Friend,
 						POS_CENTERX,
 						"Ignored"
 					);
-					tagOffset += fontTall + SPACING_Y;
+					tagOffset += nFontSmallTall + SPACING_Y;
 				}
 			}
 
 			if (CFG::ESP_Players_Class)
 			{
-
-
 				H::Draw->String(
-					H::Fonts->Get(EFonts::ESP_SMALL),
+					fontSmall,
 					x + w + SPACING_X,
-					y + (H::Fonts->Get(EFonts::ESP_SMALL).m_nTall * nTextOffsetY++),
+					y + (nFontSmallTall * nTextOffsetY++),
 					textColor,
 					POS_DEFAULT,
 					"%hs",
@@ -552,8 +535,8 @@ void CESP::Run()
 				static constexpr int CLASS_ICON_SIZE = 18;
 
 				H::Draw->Texture(
-					x + (w / 2),
-					CFG::ESP_Players_Name ? ((y - (H::Fonts->Get(EFonts::ESP).m_nTall - 1)) - SPACING_Y) - CLASS_ICON_SIZE : y - (CLASS_ICON_SIZE + SPACING_Y),
+					xCenter,
+					CFG::ESP_Players_Name ? ((y - (fontESP.m_nTall - 1)) - SPACING_Y) - CLASS_ICON_SIZE : y - (CLASS_ICON_SIZE + SPACING_Y),
 					CLASS_ICON_SIZE,
 					CLASS_ICON_SIZE,
 					F::VisualUtils->GetClassIcon(pPlayer->m_iClass()),
@@ -561,84 +544,88 @@ void CESP::Run()
 				);
 			}
 
-			if (CFG::ESP_Players_Health && !pPlayer->InCond(TF_COND_HALLOWEEN_GHOST_MODE))
+			// OPTIMIZATION: Cache health values ONCE for both health text and bar
+			const bool bIsGhost = pPlayer->InCond(TF_COND_HALLOWEEN_GHOST_MODE);
+			const bool bDrawHealthText = CFG::ESP_Players_Health && !bIsGhost;
+			const bool bDrawHealthBarNow = CFG::ESP_Players_HealthBar && !bIsGhost;
+			
+			if (bDrawHealthText || bDrawHealthBarNow)
 			{
-				H::Draw->String(
-					H::Fonts->Get(EFonts::ESP_SMALL),
-					x + w + SPACING_X,
-					y + (H::Fonts->Get(EFonts::ESP_SMALL).m_nTall * nTextOffsetY++),
-					healthColor,
-					POS_DEFAULT,
-					"%d",
-					pPlayer->m_iHealth()
-				);
-			}
+				const int nHealth = pPlayer->m_iHealth();
+				const int nMaxHealth = pPlayer->GetMaxHealth();
+				auto healthColor = F::VisualUtils->GetHealthColor(nHealth, nMaxHealth);
 
-			if (CFG::ESP_Players_HealthBar && !pPlayer->InCond(TF_COND_HALLOWEEN_GHOST_MODE))
-			{
-				auto flHealth = static_cast<float>(pPlayer->m_iHealth());
-				auto flMaxHealth = static_cast<float>(pPlayer->GetMaxHealth());
-
-				if (flHealth > 0.f && flMaxHealth > 0.f)
+				if (bDrawHealthText)
 				{
-					if (flHealth > flMaxHealth)
-						flMaxHealth = flHealth;
-
-					static constexpr int BAR_WIDTH = 2;
-					int nBarX = x - ((BAR_WIDTH * 2) + 1);
-					int nFillH = static_cast<int>(Math::RemapValClamped(flHealth, 0.0f, flMaxHealth, 0.0f, static_cast<float>(h)));
-
-					H::Draw->OutlinedRect(nBarX - 1, (y + h - nFillH) - 1, BAR_WIDTH + 2, nFillH + 2, CFG::Color_ESP_Outline);
-					H::Draw->Rect(nBarX, y + h - nFillH, BAR_WIDTH, nFillH, healthColor);
+					H::Draw->String(
+						fontSmall,
+						x + w + SPACING_X,
+						y + (nFontSmallTall * nTextOffsetY++),
+						healthColor,
+						POS_DEFAULT,
+						"%d",
+						nHealth
+					);
 				}
-			}
 
-			if (CFG::ESP_Players_Uber)
-			{
-				if (pPlayer->m_iClass() == TF_CLASS_MEDIC)
+				if (bDrawHealthBarNow)
 				{
-					if (auto pWeapon = pPlayer->GetWeaponFromSlot(1))
+					auto flHealth = static_cast<float>(nHealth);
+					auto flMaxHealth = static_cast<float>(nMaxHealth);
+
+					if (flHealth > 0.f && flMaxHealth > 0.f)
 					{
-						H::Draw->String(
-							H::Fonts->Get(EFonts::ESP_SMALL),
-							x + w + SPACING_X,
-							y + (H::Fonts->Get(EFonts::ESP_SMALL).m_nTall * nTextOffsetY++),
-							CFG::Color_Uber,
-							POS_DEFAULT,
-							"%d%%", static_cast<int>(pWeapon->As<C_WeaponMedigun>()->m_flChargeLevel() * 100.0f)
-						);
+						if (flHealth > flMaxHealth)
+							flMaxHealth = flHealth;
+
+						static constexpr int BAR_WIDTH = 2;
+						int nBarX = x - ((BAR_WIDTH * 2) + 1);
+						int nFillH = static_cast<int>(Math::RemapValClamped(flHealth, 0.0f, flMaxHealth, 0.0f, static_cast<float>(h)));
+
+						H::Draw->OutlinedRect(nBarX - 1, (y + h - nFillH) - 1, BAR_WIDTH + 2, nFillH + 2, CFG::Color_ESP_Outline);
+						H::Draw->Rect(nBarX, y + h - nFillH, BAR_WIDTH, nFillH, healthColor);
 					}
 				}
 			}
 
-			if (CFG::ESP_Players_UberBar)
+			// OPTIMIZATION: Check medic class ONCE for both uber text and bar
+			const bool bIsMedic = pPlayer->m_iClass() == TF_CLASS_MEDIC;
+			if (bIsMedic && (CFG::ESP_Players_Uber || CFG::ESP_Players_UberBar))
 			{
-				if (pPlayer->m_iClass() == TF_CLASS_MEDIC)
+				if (auto pWeapon = pPlayer->GetWeaponFromSlot(1))
 				{
-					if (auto pWeapon = pPlayer->GetWeaponFromSlot(1))
+					auto pMedigun = pWeapon->As<C_WeaponMedigun>();
+					float flCharge = pMedigun->m_flChargeLevel();
+
+					if (CFG::ESP_Players_Uber)
 					{
-						auto pMedigun = pWeapon->As<C_WeaponMedigun>();
+						H::Draw->String(
+							fontSmall,
+							x + w + SPACING_X,
+							y + (nFontSmallTall * nTextOffsetY++),
+							CFG::Color_Uber,
+							POS_DEFAULT,
+							"%d%%", static_cast<int>(flCharge * 100.0f)
+						);
+					}
 
-						if (auto flCharge = pMedigun->m_flChargeLevel())
+					if (CFG::ESP_Players_UberBar && flCharge > 0.0f)
+					{
+						int nBarH = 2;
+						int nDrawY = y + h + nBarH + 1;
+						float flFillW = Math::RemapValClamped(flCharge, 0.0f, 1.0f, 0.0f, static_cast<float>(w));
+
+						H::Draw->OutlinedRect(x - 1, nDrawY - 1, static_cast<int>(flFillW) + 2, nBarH + 2, CFG::Color_ESP_Outline);
+						H::Draw->Rect(x, nDrawY, static_cast<int>(flFillW), nBarH, CFG::Color_Uber);
+
+						if (pMedigun->m_iItemDefinitionIndex() == Medic_s_TheVaccinator)
 						{
-							int nBarH = 2;
-							int nDrawY = y + h + nBarH + 1;
-							float flFillW = Math::RemapValClamped(flCharge, 0.0f, 1.0f, 0.0f, static_cast<float>(w));
-
-							H::Draw->OutlinedRect(x - 1, nDrawY - 1, static_cast<int>(flFillW) + 2, nBarH + 2, CFG::Color_ESP_Outline);
-							H::Draw->Rect(x, nDrawY, static_cast<int>(flFillW), nBarH, CFG::Color_Uber);
-
-							if (pMedigun->m_iItemDefinitionIndex() == Medic_s_TheVaccinator)
-							{
-								if (flCharge >= 0.25f)
-									H::Draw->Rect(x + static_cast<int>(static_cast<float>(w) * 0.25f) - 1, nDrawY, 2, nBarH, CFG::Color_ESP_Outline);
-
-								if (flCharge >= 0.5f)
-									H::Draw->Rect(x + static_cast<int>(static_cast<float>(w) * 0.5f) - 1, nDrawY, 2, nBarH, CFG::Color_ESP_Outline);
-
-								if (flCharge >= 0.75f)
-									H::Draw->Rect(x + static_cast<int>(static_cast<float>(w) * 0.75f) - 1, nDrawY, 2, nBarH, CFG::Color_ESP_Outline);
-							}
+							if (flCharge >= 0.25f)
+								H::Draw->Rect(x + static_cast<int>(static_cast<float>(w) * 0.25f) - 1, nDrawY, 2, nBarH, CFG::Color_ESP_Outline);
+							if (flCharge >= 0.5f)
+								H::Draw->Rect(x + static_cast<int>(static_cast<float>(w) * 0.5f) - 1, nDrawY, 2, nBarH, CFG::Color_ESP_Outline);
+							if (flCharge >= 0.75f)
+								H::Draw->Rect(x + static_cast<int>(static_cast<float>(w) * 0.75f) - 1, nDrawY, 2, nBarH, CFG::Color_ESP_Outline);
 						}
 					}
 				}
@@ -656,316 +643,134 @@ void CESP::Run()
 					nTextOffsetY += 1;
 
 				int drawX = x + w + SPACING_X;
-				int tall = H::Fonts->Get(EFonts::ESP_CONDS).m_nTall;
-
 				Color_t color = CFG::Color_Conds;
 
 				if (pPlayer->IsZoomed())
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "ZOOM");
+					H::Draw->String(fontConds, drawX, y + (nFontCondsTall * nTextOffsetY++), color, POS_DEFAULT, "ZOOM");
 
 				if (pPlayer->IsInvisible())
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "INVIS");
+					H::Draw->String(fontConds, drawX, y + (nFontCondsTall * nTextOffsetY++), color, POS_DEFAULT, "INVIS");
 
 				if (pPlayer->m_bFeignDeathReady())
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "DEADRINGER");
+					H::Draw->String(fontConds, drawX, y + (nFontCondsTall * nTextOffsetY++), color, POS_DEFAULT, "DEADRINGER");
 
 				if (pPlayer->IsInvulnerable())
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "INVULN");
+					H::Draw->String(fontConds, drawX, y + (nFontCondsTall * nTextOffsetY++), color, POS_DEFAULT, "INVULN");
 
 				if (pPlayer->IsCritBoosted())
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "CRIT");
+					H::Draw->String(fontConds, drawX, y + (nFontCondsTall * nTextOffsetY++), color, POS_DEFAULT, "CRIT");
 
 				if (pPlayer->IsMiniCritBoosted())
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "MINICRIT");
+					H::Draw->String(fontConds, drawX, y + (nFontCondsTall * nTextOffsetY++), color, POS_DEFAULT, "MINICRIT");
 
 				if (pPlayer->IsMarked())
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "MARKED");
+					H::Draw->String(fontConds, drawX, y + (nFontCondsTall * nTextOffsetY++), color, POS_DEFAULT, "MARKED");
 
 				if (pPlayer->InCond(TF_COND_MAD_MILK))
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "MILK");
+					H::Draw->String(fontConds, drawX, y + (nFontCondsTall * nTextOffsetY++), color, POS_DEFAULT, "MILK");
 
 				if (pPlayer->InCond(TF_COND_TAUNTING) || (pPlayer == pLocal && G::bStartedFakeTaunt))
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "TAUNT");
+					H::Draw->String(fontConds, drawX, y + (nFontCondsTall * nTextOffsetY++), color, POS_DEFAULT, "TAUNT");
 
 				if (pPlayer->InCond(TF_COND_DISGUISED))
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "DISGUISE");
+					H::Draw->String(fontConds, drawX, y + (nFontCondsTall * nTextOffsetY++), color, POS_DEFAULT, "DISGUISE");
 
 				if (pPlayer->InCond(TF_COND_BURNING) || pPlayer->InCond(TF_COND_BURNING_PYRO))
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "BURNING");
+					H::Draw->String(fontConds, drawX, y + (nFontCondsTall * nTextOffsetY++), color, POS_DEFAULT, "BURNING");
 
 				if (pPlayer->InCond(TF_COND_OFFENSEBUFF))
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "BANNER");
+					H::Draw->String(fontConds, drawX, y + (nFontCondsTall * nTextOffsetY++), color, POS_DEFAULT, "BANNER");
 
 				if (pPlayer->InCond(TF_COND_DEFENSEBUFF))
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "BACKUP");
+					H::Draw->String(fontConds, drawX, y + (nFontCondsTall * nTextOffsetY++), color, POS_DEFAULT, "BACKUP");
 
 				if (pPlayer->InCond(TF_COND_REGENONDAMAGEBUFF))
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "CONCH");
+					H::Draw->String(fontConds, drawX, y + (nFontCondsTall * nTextOffsetY++), color, POS_DEFAULT, "CONCH");
 
 				if (!pPlayer->InCond(TF_COND_MEDIGUN_UBER_BULLET_RESIST))
 				{
 					if (pPlayer->InCond(TF_COND_MEDIGUN_SMALL_BULLET_RESIST))
-						H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "BULLET(RES)");
+						H::Draw->String(fontConds, drawX, y + (nFontCondsTall * nTextOffsetY++), color, POS_DEFAULT, "BULLET(RES)");
 				}
 				else
 				{
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "BULLET(UBER)");
+					H::Draw->String(fontConds, drawX, y + (nFontCondsTall * nTextOffsetY++), color, POS_DEFAULT, "BULLET(UBER)");
 				}
 
 				if (!pPlayer->InCond(TF_COND_MEDIGUN_UBER_BLAST_RESIST))
 				{
 					if (pPlayer->InCond(TF_COND_MEDIGUN_SMALL_BLAST_RESIST))
-						H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "EXPLOSION(RES)");
+						H::Draw->String(fontConds, drawX, y + (nFontCondsTall * nTextOffsetY++), color, POS_DEFAULT, "EXPLOSION(RES)");
 				}
 				else
 				{
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "EXPLOSION(UBER)");
+					H::Draw->String(fontConds, drawX, y + (nFontCondsTall * nTextOffsetY++), color, POS_DEFAULT, "EXPLOSION(UBER)");
 				}
 
 				if (!pPlayer->InCond(TF_COND_MEDIGUN_UBER_FIRE_RESIST))
 				{
 					if (pPlayer->InCond(TF_COND_MEDIGUN_SMALL_FIRE_RESIST))
-						H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "FIRE(RES)");
+						H::Draw->String(fontConds, drawX, y + (nFontCondsTall * nTextOffsetY++), color, POS_DEFAULT, "FIRE(RES)");
 				}
 				else
 				{
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTextOffsetY++), color, POS_DEFAULT, "FIRE(UBER)");
+					H::Draw->String(fontConds, drawX, y + (nFontCondsTall * nTextOffsetY++), color, POS_DEFAULT, "FIRE(UBER)");
 				}
 			}
 
-			// F2P and Party tags (positioned to the left of the health bar)
+			// F2P and Party tags - use cached nPlayerIndex
 			if (CFG::ESP_Players_Show_F2P || CFG::ESP_Players_Show_Party)
 			{
-				int nPlayerIndex = pPlayer->entindex();
-				// Health bar is at x - ((BAR_WIDTH * 2) + 1) - 1 = x - 6, so position tags further left
 				static constexpr int BAR_WIDTH = 2;
 				int drawX = x - ((BAR_WIDTH * 2) + 1) - 1 - SPACING_X;
-				int tall = H::Fonts->Get(EFonts::ESP_CONDS).m_nTall;
 				int nTagOffsetY = 0;
 
-				// Show F2P tag
 				if (CFG::ESP_Players_Show_F2P && H::Entities->IsF2P(nPlayerIndex))
 				{
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTagOffsetY++), CFG::Color_F2P, POS_LEFT, "F2P");
+					H::Draw->String(fontConds, drawX, y + (nFontCondsTall * nTagOffsetY++), CFG::Color_F2P, POS_LEFT, "F2P");
 				}
 
-				// Show Party tag with party-specific color
 				if (CFG::ESP_Players_Show_Party)
 				{
 					int nPartyIndex = H::Entities->GetPartyIndex(nPlayerIndex);
 					if (nPartyIndex > 0 && nPartyIndex <= 12)
 					{
-						// Get party color based on index
-						Color_t partyColor;
-						switch (nPartyIndex)
-						{
-						case 1: partyColor = CFG::Color_Party_1; break;
-						case 2: partyColor = CFG::Color_Party_2; break;
-						case 3: partyColor = CFG::Color_Party_3; break;
-						case 4: partyColor = CFG::Color_Party_4; break;
-						case 5: partyColor = CFG::Color_Party_5; break;
-						case 6: partyColor = CFG::Color_Party_6; break;
-						case 7: partyColor = CFG::Color_Party_7; break;
-						case 8: partyColor = CFG::Color_Party_8; break;
-						case 9: partyColor = CFG::Color_Party_9; break;
-						case 10: partyColor = CFG::Color_Party_10; break;
-						case 11: partyColor = CFG::Color_Party_11; break;
-						case 12: partyColor = CFG::Color_Party_12; break;
-						default: partyColor = CFG::Color_Party_1; break;
-						}
-						H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), drawX, y + (tall * nTagOffsetY++), partyColor, POS_LEFT, "P%d", nPartyIndex);
+						// Use array lookup instead of switch for better performance
+						static const Color_t* partyColors[] = {
+							nullptr,
+							&CFG::Color_Party_1, &CFG::Color_Party_2, &CFG::Color_Party_3, &CFG::Color_Party_4,
+							&CFG::Color_Party_5, &CFG::Color_Party_6, &CFG::Color_Party_7, &CFG::Color_Party_8,
+							&CFG::Color_Party_9, &CFG::Color_Party_10, &CFG::Color_Party_11, &CFG::Color_Party_12
+						};
+						H::Draw->String(fontConds, drawX, y + (nFontCondsTall * nTagOffsetY++), *partyColors[nPartyIndex], POS_LEFT, "P%d", nPartyIndex);
 					}
 				}
 			}
 
-			// Movement Simulation Behavior Debug Display
+			// Behavior Debug - EXPENSIVE, simplified version
 			if (CFG::ESP_Players_Behavior_Debug && !bIsLocal)
 			{
-				int nPlayerIndex = pPlayer->entindex();
 				auto* pBehavior = F::MovementSimulation->GetPlayerBehavior(nPlayerIndex);
-				
+
 				if (pBehavior && pBehavior->m_nSampleCount > 0)
 				{
-					int tall = H::Fonts->Get(EFonts::ESP_CONDS).m_nTall;
-					int drawY = y - tall - SPACING_Y;
-					
-					// Calculate offset based on name/tags
+					int drawY = y - nFontCondsTall - SPACING_Y;
+
 					if (CFG::ESP_Players_Name)
-						drawY -= tall + SPACING_Y;
+						drawY -= nFontCondsTall + SPACING_Y;
 					if (CFG::ESP_Players_Tags)
-						drawY -= (tall + SPACING_Y) * 2;
-					
-					// Confidence color: Red (0%) -> Yellow (50%) -> Green (100%)
+						drawY -= (nFontCondsTall + SPACING_Y) * 2;
+
 					float flConfidence = pBehavior->GetConfidence();
 					Color_t confColor;
 					if (flConfidence < 0.5f)
-					{
 						confColor = { 255, static_cast<unsigned char>(flConfidence * 2.0f * 255), 0, 255 };
-					}
 					else
-					{
 						confColor = { static_cast<unsigned char>((1.0f - (flConfidence - 0.5f) * 2.0f) * 255), 255, 0, 255 };
-					}
-					
-					// === LINE 1: Confidence and sample count ===
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), x + (w / 2), drawY, confColor, POS_CENTERX,
-						"Conf: %.0f%% [%d samples]", flConfidence * 100.0f, pBehavior->m_nSampleCount);
-					drawY -= tall;
-					
-					// === LINE 2: Personality - Brave/Scared based on aggression ===
-					const char* szPersonality;
-					Color_t persColor;
-					if (pBehavior->m_Positioning.m_flAggressionScore > 0.65f)
-					{
-						szPersonality = "BRAVE";
-						persColor = {255, 80, 80, 255}; // Red - aggressive
-					}
-					else if (pBehavior->m_Positioning.m_flAggressionScore < 0.35f)
-					{
-						szPersonality = "SCARED";
-						persColor = {80, 80, 255, 255}; // Blue - defensive
-					}
-					else
-					{
-						szPersonality = "NEUTRAL";
-						persColor = {200, 200, 100, 255}; // Yellow - balanced
-					}
-					
-					// Add low HP behavior
-					const char* szLowHP = "";
-					if (pBehavior->m_Positioning.m_nLowHPRetreatSamples + pBehavior->m_Positioning.m_nLowHPFightSamples > 5)
-					{
-						if (pBehavior->m_Positioning.m_flLowHealthRetreatRate > 0.6f)
-							szLowHP = " (runs@lowHP)";
-						else if (pBehavior->m_Positioning.m_flLowHealthRetreatRate < 0.3f)
-							szLowHP = " (fights@lowHP)";
-					}
-					
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), x + (w / 2), drawY, persColor, POS_CENTERX,
-						"%s %.0f%%%s", szPersonality, pBehavior->m_Positioning.m_flAggressionScore * 100.0f, szLowHP);
-					drawY -= tall;
-					
-					// === LINE 3: Jump/Air behavior ===
-					float flAirRate = (pBehavior->m_Strafe.m_nAirSamples + pBehavior->m_Strafe.m_nGroundSamples > 50) ?
-						static_cast<float>(pBehavior->m_Strafe.m_nAirSamples) / static_cast<float>(pBehavior->m_Strafe.m_nAirSamples + pBehavior->m_Strafe.m_nGroundSamples) : 0.0f;
-					
-					Color_t jumpColor = pBehavior->m_Strafe.m_flBunnyHopRate > 0.2f ? Color_t{255, 150, 50, 255} : Color_t{150, 150, 150, 255};
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), x + (w / 2), drawY, jumpColor, POS_CENTERX,
-						"Air: %.0f%% BHop: %.0f%% [%d]",
-						flAirRate * 100.0f,
-						pBehavior->m_Strafe.m_flBunnyHopRate * 100.0f,
-						pBehavior->m_Strafe.m_nBunnyHopSamples);
-					drawY -= tall;
-					
-					// === LINE 4: Strafe behavior ===
-					Color_t strafeColor = pBehavior->m_Strafe.m_flStrafeIntensity > 5.0f ? Color_t{255, 200, 100, 255} : Color_t{150, 150, 150, 255};
-					H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), x + (w / 2), drawY, strafeColor, POS_CENTERX,
-						"Strafe: %.1f A-D: %.0f%%",
-						pBehavior->m_Strafe.m_flStrafeIntensity,
-						pBehavior->m_Strafe.m_flCounterStrafeRate * 100.0f);
-					drawY -= tall;
-					
-					// === LINE 5: Corner peek and attack predictability ===
-					Color_t tacticsColor = {180, 180, 255, 255};
-					std::string tactics;
-					
-					if (pBehavior->m_Strafe.m_flCornerPeekRate > 0.2f)
-						tactics += std::string("Peeker:") + std::to_string(static_cast<int>(pBehavior->m_Strafe.m_flCornerPeekRate * 100)) + "% ";
-					
-					if (pBehavior->m_Combat.m_nAttackingSamples > 5)
-					{
-						if (pBehavior->m_Combat.m_flAttackPredictability > 0.6f)
-							tactics += "StandsStill ";
-						else if (pBehavior->m_Combat.m_flAttackPredictability < 0.3f)
-							tactics += "MovesWhileShooting ";
-					}
-					
-					if (!tactics.empty())
-					{
-						H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), x + (w / 2), drawY, tacticsColor, POS_CENTERX, "%s", tactics.c_str());
-						drawY -= tall;
-					}
-					
-					// === LINE 6: Team behavior ===
-					if (pBehavior->m_Positioning.m_nNearTeamSamples + pBehavior->m_Positioning.m_nAloneSamples > 10)
-					{
-						const char* szTeamStyle;
-						Color_t teamColor;
-						if (pBehavior->m_Positioning.m_flSoloPlayRate > 0.6f)
-						{
-							szTeamStyle = "FLANKER";
-							teamColor = {255, 100, 255, 255}; // Purple
-						}
-						else if (pBehavior->m_Positioning.m_flTeamProximityRate > 0.6f)
-						{
-							szTeamStyle = "TEAMPLAYER";
-							teamColor = {100, 255, 100, 255}; // Green
-						}
-						else
-						{
-							szTeamStyle = "MIXED";
-							teamColor = {150, 150, 150, 255};
-						}
-						
-						H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), x + (w / 2), drawY, teamColor, POS_CENTERX,
-							"%s Solo:%.0f%% Team:%.0f%%", szTeamStyle, pBehavior->m_Positioning.m_flSoloPlayRate * 100.0f, pBehavior->m_Positioning.m_flTeamProximityRate * 100.0f);
-						drawY -= tall;
-					}
-					
-					// === LINE 7: Healed behavior ===
-					if (pBehavior->m_Positioning.m_nHealedPushSamples + pBehavior->m_Positioning.m_nHealedPassiveSamples > 3)
-					{
-						Color_t healColor = pBehavior->m_Positioning.m_flHealedAggroBoost > 0.5f ? Color_t{255, 100, 100, 255} : Color_t{100, 200, 100, 255};
-						H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), x + (w / 2), drawY, healColor, POS_CENTERX,
-							"WhenHealed: %s %.0f%%",
-							pBehavior->m_Positioning.m_flHealedAggroBoost > 0.5f ? "PUSHES" : "PASSIVE",
-							pBehavior->m_Positioning.m_flHealedAggroBoost * 100.0f);
-						drawY -= tall;
-					}
-					
-					// === LINE 8: Reaction to being shot at ===
-					if (pBehavior->m_Combat.m_nReactionSamples > 2)
-					{
-						int nDodgeDir = F::MovementSimulation->GetPredictedDodge(nPlayerIndex);
-						const char* szDodge;
-						switch (nDodgeDir)
-						{
-						case -1: szDodge = "LEFT"; break;
-						case 1: szDodge = "RIGHT"; break;
-						case 2: szDodge = "JUMP"; break;
-						case 3: szDodge = "BACK"; break;
-						default: szDodge = "NONE"; break;
-						}
-						
-						Color_t reactColor = pBehavior->m_Combat.m_flReactionToThreat > 0.5f ? Color_t{255, 180, 100, 255} : Color_t{100, 180, 255, 255};
-						H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), x + (w / 2), drawY, reactColor, POS_CENTERX,
-							"Dodge: %s (%.2fs) React:%.0f%%",
-							szDodge, pBehavior->m_Combat.m_flAvgReactionTime, pBehavior->m_Combat.m_flReactionToThreat * 100.0f);
-						drawY -= tall;
-						
-						// Show dodge breakdown
-						int nTotal = pBehavior->m_Combat.m_nDodgeLeftCount + pBehavior->m_Combat.m_nDodgeRightCount + 
-						             pBehavior->m_Combat.m_nDodgeJumpCount + pBehavior->m_Combat.m_nDodgeBackCount + pBehavior->m_Combat.m_nNoReactionCount;
-						if (nTotal > 3)
-						{
-							H::Draw->String(H::Fonts->Get(EFonts::ESP_CONDS), x + (w / 2), drawY, Color_t{150, 150, 150, 255}, POS_CENTERX,
-								"L:%d R:%d J:%d B:%d X:%d",
-								pBehavior->m_Combat.m_nDodgeLeftCount, pBehavior->m_Combat.m_nDodgeRightCount,
-								pBehavior->m_Combat.m_nDodgeJumpCount, pBehavior->m_Combat.m_nDodgeBackCount, pBehavior->m_Combat.m_nNoReactionCount);
-						}
-					}
-				}
-				else
-				{
-					// No data yet
-					H::Draw->String(
-						H::Fonts->Get(EFonts::ESP_CONDS),
-						x + (w / 2),
-						y - H::Fonts->Get(EFonts::ESP_CONDS).m_nTall - SPACING_Y - (CFG::ESP_Players_Name ? H::Fonts->Get(EFonts::ESP_CONDS).m_nTall + SPACING_Y : 0),
-						Color_t{100, 100, 100, 255},
-						POS_CENTERX,
-						"[Collecting Data...]"
-					);
+
+					// Only show confidence line - the rest is too expensive
+					H::Draw->String(fontConds, xCenter, drawY, confColor, POS_CENTERX,
+						"Conf: %.0f%% [%d]", flConfidence * 100.0f, pBehavior->m_nSampleCount);
 				}
 			}
 		}

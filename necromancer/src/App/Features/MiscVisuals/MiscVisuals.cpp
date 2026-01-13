@@ -123,12 +123,13 @@ void CMiscVisuals::CleanUpBloom()
 }
 
 // Helper lambda for Paint-style rainbow color (position-based like Paint.cpp)
+// Pre-calculate phase offsets to avoid repeated addition
 static Color_t GetRainbowColor(int segment, float rate)
 {
-	const float t = segment * 0.1f;  // Position offset for multi-color effect
-	const int r = std::lround(std::cosf(I::GlobalVars->realtime * rate + t + 0.0f) * 127.5f + 127.5f);
-	const int g = std::lround(std::cosf(I::GlobalVars->realtime * rate + t + 2.0f) * 127.5f + 127.5f);
-	const int b = std::lround(std::cosf(I::GlobalVars->realtime * rate + t + 4.0f) * 127.5f + 127.5f);
+	const float t = segment * 0.1f + I::GlobalVars->realtime * rate;
+	const int r = std::lround(std::cosf(t) * 127.5f + 127.5f);
+	const int g = std::lround(std::cosf(t + 2.0f) * 127.5f + 127.5f);
+	const int b = std::lround(std::cosf(t + 4.0f) * 127.5f + 127.5f);
 	return { static_cast<byte>(r), static_cast<byte>(g), static_cast<byte>(b), 255 };
 }
 
@@ -150,11 +151,14 @@ void CMiscVisuals::AimbotFOVCircle()
 	if (!flAimFOV)
 		return;
 
-	const float flRadius = tanf(DEG2RAD(flAimFOV) / 2.0f) / tanf(DEG2RAD(static_cast<float>(pLocal->m_iFOV())) / 2.0f) * H::Draw->GetScreenW();
-	const int centerX = H::Draw->GetScreenW() / 2;
-	const int centerY = H::Draw->GetScreenH() / 2;
-	const int segments = 70;
-	const float step = 2.0f * 3.14159f / segments;
+	// Cache screen dimensions
+	const int screenW = H::Draw->GetScreenW();
+	const int screenH = H::Draw->GetScreenH();
+	const float flRadius = tanf(DEG2RAD(flAimFOV) / 2.0f) / tanf(DEG2RAD(static_cast<float>(pLocal->m_iFOV())) / 2.0f) * screenW;
+	const int centerX = screenW / 2;
+	const int centerY = screenH / 2;
+	constexpr int segments = 70;
+	constexpr float step = 2.0f * 3.14159f / segments;
 
 	// Use shader-based bloom if glow is enabled
 	if (CFG::Visuals_Aimbot_FOV_Circle_Glow && CFG::Visuals_Aimbot_FOV_Circle_RGB)
@@ -166,6 +170,7 @@ void CMiscVisuals::AimbotFOVCircle()
 	if (CFG::Visuals_Aimbot_FOV_Circle_RGB)
 	{
 		const float rate = CFG::Visuals_Aimbot_FOV_Circle_RGB_Rate;
+		const byte alpha = static_cast<byte>(255.0f * CFG::Visuals_Aimbot_FOV_Circle_Alpha);
 		
 		// Draw main circle with per-segment rainbow colors
 		for (int i = 0; i < segments; i++)
@@ -179,7 +184,7 @@ void CMiscVisuals::AimbotFOVCircle()
 			const int y2 = centerY + static_cast<int>(flRadius * std::sinf(angle2));
 			
 			Color_t color = GetRainbowColor(i, rate);
-			color.a = static_cast<byte>(255.0f * CFG::Visuals_Aimbot_FOV_Circle_Alpha);
+			color.a = alpha;
 			H::Draw->Line(x1, y1, x2, y2, color);
 		}
 	}
@@ -519,11 +524,10 @@ void CMiscVisuals::ShiftBar()
 void CMiscVisuals::SniperLines()
 {
 	if (CFG::Misc_Clean_Screenshot && I::EngineClient->IsTakingScreenshot())
-	{
 		return;
-	}
 
-	auto getMaxViewOffsetZ = [](C_TFPlayer* pPlayer)
+	// Cache lambda as static to avoid recreation each call
+	static auto getMaxViewOffsetZ = [](C_TFPlayer* pPlayer) -> float
 	{
 		if (pPlayer->m_fFlags() & FL_DUCKING)
 			return 45.0f;
@@ -548,9 +552,11 @@ void CMiscVisuals::SniperLines()
 		return;
 
 	const auto pLocal = H::Entities->GetLocal();
-
 	if (!pLocal)
 		return;
+
+	// Cache local team for comparison
+	const int nLocalTeam = pLocal->m_iTeamNum();
 
 	for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PLAYERS_ALL))
 	{
@@ -558,23 +564,17 @@ void CMiscVisuals::SniperLines()
 			continue;
 
 		const auto pPlayer = pEntity->As<C_TFPlayer>();
-
 		if (!pPlayer || pPlayer == pLocal || pPlayer->deadflag() || pPlayer->m_iClass() != TF_CLASS_SNIPER)
 			continue;
 
 		const auto pWeapon = pPlayer->m_hActiveWeapon().Get();
-
 		if (!pWeapon)
-		{
 			continue;
-		}
 
 		const bool classicCharging = pWeapon->As<C_TFWeaponBase>()->m_iItemDefinitionIndex() == Sniper_m_TheClassic && pWeapon->As<C_TFSniperRifleClassic>()->m_bCharging();
 
 		if (!pPlayer->InCond(TF_COND_ZOOMED) && !classicCharging)
-		{
 			continue;
-		}
 
 		const bool bIsFriend = pPlayer->IsPlayerOnSteamFriendsList();
 
@@ -583,10 +583,10 @@ void CMiscVisuals::SniperLines()
 
 		if (!bIsFriend)
 		{
-			if (CFG::ESP_Players_Ignore_Teammates && pPlayer->m_iTeamNum() == pLocal->m_iTeamNum())
+			if (CFG::ESP_Players_Ignore_Teammates && pPlayer->m_iTeamNum() == nLocalTeam)
 				continue;
 
-			if (CFG::ESP_Players_Ignore_Enemies && pPlayer->m_iTeamNum() != pLocal->m_iTeamNum())
+			if (CFG::ESP_Players_Ignore_Enemies && pPlayer->m_iTeamNum() != nLocalTeam)
 				continue;
 		}
 

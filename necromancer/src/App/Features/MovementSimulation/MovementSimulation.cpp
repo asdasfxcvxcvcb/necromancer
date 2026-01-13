@@ -770,18 +770,6 @@ bool CMovementSimulation::Initialize(C_TFPlayer* pPlayer, MoveStorage& tStorage,
 			tStorage.m_MoveData.m_flSideMove = flMaxSpeed * flSideRatio;   // Strafe left
 		else
 			tStorage.m_MoveData.m_flSideMove = -flMaxSpeed * flSideRatio;  // Strafe right
-		
-		// Debug
-		static int s_nCSSetup = 0;
-		s_nCSSetup++;
-		if ((s_nCSSetup % 66) == 0)
-		{
-			I::CVar->ConsoleColorPrintf({100, 255, 255, 255}, 
-				"[DEBUG] Circle strafe setup: forward=%.1f (%.0f%%) side=%.1f (%.0f%%) avgYaw=%.2f yawFactor=%.2f\n",
-				tStorage.m_MoveData.m_flForwardMove, flForwardRatio * 100.0f,
-				tStorage.m_MoveData.m_flSideMove, flSideRatio * 100.0f,
-				tStorage.m_flAverageYaw, flYawFactor);
-		}
 	}
 
 	// Run initial ticks for choked commands
@@ -833,17 +821,6 @@ bool CMovementSimulation::SetupMoveData(MoveStorage& tStorage)
 				
 				tStorage.m_MoveData.m_flForwardMove = flForwardMove;
 				tStorage.m_MoveData.m_flSideMove = flSideMove;
-				
-				// Debug output
-				static int s_nSetupDebug = 0;
-				s_nSetupDebug++;
-				if ((s_nSetupDebug % 66) == 0)
-				{
-					I::CVar->ConsoleColorPrintf({200, 255, 200, 255}, 
-						"[DEBUG] SetupMoveData: forward=%.1f side=%.1f maxSpeed=%.1f viewYaw=%.1f\n",
-						tStorage.m_MoveData.m_flForwardMove, tStorage.m_MoveData.m_flSideMove,
-						tStorage.m_MoveData.m_flMaxSpeed, tStorage.m_MoveData.m_vecViewAngles.y);
-				}
 			}
 		}
 	}
@@ -923,10 +900,7 @@ void CMovementSimulation::GetAverageYaw(MoveStorage& tStorage, int iSamples)
 	
 	auto& vRecords = m_mRecords[nEntIndex];
 	if (vRecords.size() < 3)
-	{
-		I::CVar->ConsoleColorPrintf({255, 100, 100, 255}, "[DEBUG] GetAverageYaw: Not enough records (%d)\n", (int)vRecords.size());
 		return;
-	}
 
 	const float flMaxSpeed = pPlayer->TeamFortress_CalculateMaxSpeed();
 	iSamples = std::min(iSamples, static_cast<int>(vRecords.size()));
@@ -934,9 +908,6 @@ void CMovementSimulation::GetAverageYaw(MoveStorage& tStorage, int iSamples)
 	float flTotalYaw = 0.0f;
 	int nTotalTicks = 0;
 	int nValidSamples = 0;
-	int nSkippedMode = 0;
-	int nSkippedSpeed = 0;
-	int nSkippedExtreme = 0;
 	
 	for (size_t i = 1; i < static_cast<size_t>(iSamples) && i < vRecords.size(); i++)
 	{
@@ -945,17 +916,11 @@ void CMovementSimulation::GetAverageYaw(MoveStorage& tStorage, int iSamples)
 		
 		// Skip if movement mode changed
 		if (rec1.m_iMode != rec2.m_iMode)
-		{
-			nSkippedMode++;
 			continue;
-		}
 		
 		// Skip if velocity is too low
 		if (rec1.m_vVelocity.Length2D() < 30.0f)
-		{
-			nSkippedSpeed++;
 			continue;
-		}
 		
 		// Calculate yaw change
 		const float flYaw1 = Math::VelocityToAngles(rec1.m_vDirection).y;
@@ -980,10 +945,7 @@ void CMovementSimulation::GetAverageYaw(MoveStorage& tStorage, int iSamples)
 		
 		// Skip extreme yaw changes (teleport/lag)
 		if (fabsf(flYawDelta) > 45.0f)
-		{
-			nSkippedExtreme++;
 			continue;
-		}
 		
 		const int nTicks = std::max(TIME_TO_TICKS(rec1.m_flSimTime - rec2.m_flSimTime), 1);
 		flTotalYaw += flYawDelta;
@@ -991,22 +953,9 @@ void CMovementSimulation::GetAverageYaw(MoveStorage& tStorage, int iSamples)
 		nValidSamples++;
 	}
 	
-	// Debug output
-	static int s_nDebugFrame = 0;
-	s_nDebugFrame++;
-	if ((s_nDebugFrame % 66) == 0)  // Print every ~1 second
-	{
-		I::CVar->ConsoleColorPrintf({255, 255, 100, 255}, 
-			"[DEBUG] GetAverageYaw: records=%d samples=%d valid=%d skipped(mode=%d speed=%d extreme=%d) totalYaw=%.2f ticks=%d\n",
-			(int)vRecords.size(), iSamples, nValidSamples, nSkippedMode, nSkippedSpeed, nSkippedExtreme, flTotalYaw, nTotalTicks);
-	}
-	
 	// Need minimum samples
 	if (nTotalTicks < 3 || nValidSamples < 2)
-	{
-		I::CVar->ConsoleColorPrintf({255, 100, 100, 255}, "[DEBUG] GetAverageYaw: Not enough valid samples (ticks=%d valid=%d)\n", nTotalTicks, nValidSamples);
 		return;
-	}
 	
 	// Calculate average yaw per tick
 	const float flAverageYaw = flTotalYaw / static_cast<float>(nTotalTicks);
@@ -1030,7 +979,6 @@ void CMovementSimulation::GetAverageYaw(MoveStorage& tStorage, int iSamples)
 	{
 		// Strong consistent turning - definitely circle strafing
 		tStorage.m_flAverageYaw = flAverageYaw;
-		I::CVar->ConsoleColorPrintf({100, 255, 100, 255}, "[DEBUG] CIRCLE STRAFE DETECTED: avgYaw=%.3f (strong)\n", flAverageYaw);
 	}
 	else if (fabsf(flAverageYaw) >= 2.0f)
 	{
@@ -1039,18 +987,9 @@ void CMovementSimulation::GetAverageYaw(MoveStorage& tStorage, int iSamples)
 		if (nValidSamples >= 8)
 		{
 			tStorage.m_flAverageYaw = flAverageYaw;
-			I::CVar->ConsoleColorPrintf({255, 255, 100, 255}, "[DEBUG] CIRCLE STRAFE DETECTED: avgYaw=%.3f (medium, %d samples)\n", flAverageYaw, nValidSamples);
-		}
-		else
-		{
-			I::CVar->ConsoleColorPrintf({255, 200, 100, 255}, "[DEBUG] GetAverageYaw: Medium yaw (%.3f) but not enough samples (%d < 8)\n", flAverageYaw, nValidSamples);
 		}
 	}
-	else
-	{
-		// Low average yaw - likely counter-strafing or straight movement
-		I::CVar->ConsoleColorPrintf({255, 200, 100, 255}, "[DEBUG] GetAverageYaw: Below threshold (avgYaw=%.3f < 2.0) - likely counter-strafe\n", flAverageYaw);
-	}
+	// Low average yaw - likely counter-strafing or straight movement, don't set avgYaw
 }
 
 bool CMovementSimulation::StrafePrediction(MoveStorage& tStorage, int iSamples)
@@ -1071,13 +1010,7 @@ bool CMovementSimulation::StrafePrediction(MoveStorage& tStorage, int iSamples)
 	
 	// If we got a valid average yaw, it's circle strafing
 	if (tStorage.m_flAverageYaw != 0.0f)
-	{
-		static int s_nDebugFrame2 = 0;
-		s_nDebugFrame2++;
-		if ((s_nDebugFrame2 % 66) == 0)
-			I::CVar->ConsoleColorPrintf({100, 255, 100, 255}, "[DEBUG] StrafePrediction: Using CIRCLE STRAFE (yaw=%.3f)\n", tStorage.m_flAverageYaw);
 		return true;
-	}
 	
 	// =========================================================================
 	// COUNTER-STRAFE DETECTION (A-D spam)
@@ -1177,22 +1110,9 @@ bool CMovementSimulation::StrafePrediction(MoveStorage& tStorage, int iSamples)
 		const bool bReasonableTime = flTotalTime > 0.15f && flTotalTime < 0.8f;
 		const bool bReasonableRate = nChangeCount >= 2 && (flAvgTimeBetweenChanges / nChangeCount) < 0.4f;
 		
-		// Debug output for counter-strafe
-		static int s_nCSDebug = 0;
-		s_nCSDebug++;
-		if ((s_nCSDebug % 66) == 0)
-		{
-			I::CVar->ConsoleColorPrintf({200, 200, 255, 255}, 
-				"[DEBUG] CounterStrafe check: signChanges=%d time=%.2f changeCount=%d avgTime=%.3f | pattern=%d time=%d rate=%d\n",
-				nSignChanges, flTotalTime, nChangeCount, 
-				nChangeCount > 0 ? flAvgTimeBetweenChanges / nChangeCount : 0.0f,
-				bHasPattern, bReasonableTime, bReasonableRate);
-		}
-		
 		if (bHasPattern && bReasonableTime && bReasonableRate)
 		{
 			tStorage.m_bCounterStrafe = true;
-			I::CVar->ConsoleColorPrintf({255, 100, 255, 255}, "[DEBUG] COUNTER-STRAFE DETECTED!\n");
 			
 			// Get current strafe direction from most recent lateral velocity
 			Vec3 vVel = pPlayer->m_vecVelocity();
@@ -1301,19 +1221,6 @@ void CMovementSimulation::RunTick(MoveStorage& tStorage, bool bPath)
 		SetBounds(tStorage.m_pPlayer);
 
 	float flCorrection = 0.f;
-	
-	// Debug: Show which prediction mode is being used (once per Initialize, not per tick)
-	static int s_nRunTickDebug = 0;
-	s_nRunTickDebug++;
-	if ((s_nRunTickDebug % 200) == 1)  // First tick of each prediction
-	{
-		if (tStorage.m_bCounterStrafe && tStorage.m_bDirectMove)
-			I::CVar->ConsoleColorPrintf({255, 100, 255, 255}, "[DEBUG] RunTick: Using COUNTER-STRAFE mode\n");
-		else if (tStorage.m_flAverageYaw != 0.0f)
-			I::CVar->ConsoleColorPrintf({100, 255, 100, 255}, "[DEBUG] RunTick: Using CIRCLE STRAFE mode (yaw=%.3f)\n", tStorage.m_flAverageYaw);
-		else
-			I::CVar->ConsoleColorPrintf({255, 255, 255, 255}, "[DEBUG] RunTick: Using STRAIGHT LINE mode (no strafe detected)\n");
-	}
 	
 	// =========================================================================
 	// COUNTER-STRAFE PREDICTION - Oscillate left/right

@@ -57,7 +57,7 @@ bool CRapidFire::ShouldStart(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
 		return false;
 
 	// Need DT key held
-	if (!(H::Input->IsDown(CFG::Exploits_RapidFire_Key)))
+	if (!H::Input->IsDown(CFG::Exploits_RapidFire_Key))
 		return false;
 
 	// Weapon must be supported
@@ -79,46 +79,24 @@ bool CRapidFire::ShouldStart(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
 	if (!F::CritHack->ShouldAllowFire(pLocal, pWeapon, G::CurrentUserCmd))
 		return false;
 
+	// Need target and firing intent for all weapon types
+	if (G::nTargetIndex <= 1 || !G::bFiring)
+		return false;
+
 	// ============================================
 	// STICKY LAUNCHER / LOOSE CANNON HANDLING
 	// ============================================
-	// These weapons fire on RELEASE of attack button
-	// We check CanSecondaryAttack (which tracks m_flNextSecondaryAttack)
-	// When you release a sticky, it sets m_flNextSecondaryAttack
-	// We can DT to skip that cooldown
 	if (IsStickyWeapon(pWeapon))
 	{
-		// Need target and firing intent
-		if (G::nTargetIndex <= 1 || !G::bFiring)
+		if (!G::bCanSecondaryAttack || !pWeapon->HasPrimaryAmmoForShot())
 			return false;
-
-		// For sticky: check CanSecondaryAttack (like Amalgam)
-		// This is set when m_flNextSecondaryAttack <= curtime
-		if (!G::bCanSecondaryAttack)
-			return false;
-
-		// Need ammo
-		if (!pWeapon->HasPrimaryAmmoForShot())
-			return false;
-
 		return true;
 	}
 
 	// For projectile weapons: trigger when aimbot wants to fire (G::bFiring)
-	// Same as hitscan - we fire on first tick of shift, then skip cooldown
 	if (IsProjectileWeapon(pWeapon))
 	{
-		// Need target and firing intent
-		if (G::nTargetIndex <= 1 || !G::bFiring)
-			return false;
-		
-		// For projectile: only trigger when weapon is ready to fire
-		// Projectile weapons can't interrupt reload like some hitscan can
-		if (!G::bCanPrimaryAttack)
-			return false;
-
-		// Only DT with full clip and not reloading
-		if (pWeapon->IsInReload())
+		if (!G::bCanPrimaryAttack || pWeapon->IsInReload())
 			return false;
 		
 		const int nMaxClip = pWeapon->GetMaxClip1();
@@ -128,28 +106,18 @@ bool CRapidFire::ShouldStart(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
 		return true;
 	}
 
-	// For hitscan weapons: need target and firing intent
-	if (G::nTargetIndex <= 1 || !G::bFiring)
-		return false;
-
-	// Minigun special case: when fully revved up (FIRING or SPINNING state), allow DT immediately
-	// No 24 tick delay needed - the minigun is already ready to fire
+	// Minigun special case: when fully revved up, allow DT immediately
 	if (pWeapon->GetWeaponID() == TF_WEAPON_MINIGUN)
 	{
 		const int nState = pWeapon->As<C_TFMinigun>()->m_iWeaponState();
 		if (nState == AC_STATE_FIRING || nState == AC_STATE_SPINNING)
 		{
-			// Fully revved - can DT immediately, just need ammo
 			if (!pWeapon->HasPrimaryAmmoForShot())
 				return false;
-			
-			// Still respect target same ticks for accuracy
 			if (G::nTicksTargetSame < CFG::Exploits_RapidFire_Min_Ticks_Target_Same)
 				return false;
-			
 			return true;
 		}
-		// Not fully revved - don't allow DT
 		return false;
 	}
 

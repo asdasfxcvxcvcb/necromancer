@@ -192,7 +192,7 @@ void COutlines::RunModels()
 
 	if (CFG::Outlines_Players_Active)
 	{
-		// Cache local team for faster comparisons
+		// Cache local team and config values for faster comparisons
 		const int nLocalTeam = pLocal->m_iTeamNum();
 		const bool bIgnoreLocal = CFG::Outlines_Players_Ignore_Local;
 		const bool bIgnoreFriends = CFG::Outlines_Players_Ignore_Friends;
@@ -201,7 +201,10 @@ void COutlines::RunModels()
 		const bool bIgnoreTagged = CFG::Outlines_Players_Ignore_Tagged;
 		const bool bShowTeammateMedics = CFG::Outlines_Players_Show_Teammate_Medics;
 		
-		for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PLAYERS_ALL))
+		// Get entity group once
+		const auto& vPlayers = H::Entities->GetGroup(EEntGroup::PLAYERS_ALL);
+		
+		for (const auto pEntity : vPlayers)
 		{
 			if (!pEntity)
 				continue;
@@ -280,6 +283,13 @@ void COutlines::RunModels()
 
 	if (CFG::Outlines_Buildings_Active)
 	{
+		// Cache config values
+		const bool bIgnoreLocal = CFG::Outlines_Buildings_Ignore_Local;
+		const bool bIgnoreTeammates = CFG::Outlines_Buildings_Ignore_Teammates;
+		const bool bIgnoreEnemies = CFG::Outlines_Buildings_Ignore_Enemies;
+		const bool bShowTeammateDispensers = CFG::Outlines_Buildings_Show_Teammate_Dispensers;
+		const int nLocalTeam = pLocal->m_iTeamNum();
+		
 		for (const auto pEntity : H::Entities->GetGroup(EEntGroup::BUILDINGS_ALL))
 		{
 			if (!pEntity)
@@ -292,26 +302,20 @@ void COutlines::RunModels()
 
 			const bool bIsLocal = F::VisualUtils->IsEntityOwnedBy(pBuilding, pLocal);
 
-			if (CFG::Outlines_Buildings_Ignore_Local && bIsLocal)
+			if (bIgnoreLocal && bIsLocal)
 				continue;
 
 			if (!bIsLocal)
 			{
-				if (CFG::Outlines_Buildings_Ignore_Teammates && pBuilding->m_iTeamNum() == pLocal->m_iTeamNum())
+				const int nBuildingTeam = pBuilding->m_iTeamNum();
+				
+				if (bIgnoreTeammates && nBuildingTeam == nLocalTeam)
 				{
-					if (CFG::Outlines_Buildings_Show_Teammate_Dispensers)
-					{
-						if (pBuilding->GetClassId() != ETFClassIds::CObjectDispenser)
-							continue;
-					}
-
-					else
-					{
+					if (!bShowTeammateDispensers || pBuilding->GetClassId() != ETFClassIds::CObjectDispenser)
 						continue;
-					}
 				}
 
-				if (CFG::Outlines_Buildings_Ignore_Enemies && pBuilding->m_iTeamNum() != pLocal->m_iTeamNum())
+				if (bIgnoreEnemies && nBuildingTeam != nLocalTeam)
 					continue;
 			}
 
@@ -329,7 +333,17 @@ void COutlines::RunModels()
 
 	if (CFG::Outlines_World_Active)
 	{
-		if (!CFG::Outlines_World_Ignore_HealthPacks)
+		// Cache config values for world items
+		const bool bIgnoreHealthPacks = CFG::Outlines_World_Ignore_HealthPacks;
+		const bool bIgnoreAmmoPacks = CFG::Outlines_World_Ignore_AmmoPacks;
+		const bool bIgnoreHalloweenGift = CFG::Outlines_World_Ignore_Halloween_Gift;
+		const bool bIgnoreMVMMoney = CFG::Outlines_World_Ignore_MVM_Money;
+		const bool bIgnoreLocalProj = CFG::Outlines_World_Ignore_LocalProjectiles;
+		const bool bIgnoreEnemyProj = CFG::Outlines_World_Ignore_EnemyProjectiles;
+		const bool bIgnoreTeammateProj = CFG::Outlines_World_Ignore_TeammateProjectiles;
+		const int nLocalTeam = pLocal->m_iTeamNum();
+		
+		if (!bIgnoreHealthPacks)
 		{
 			const auto color = CFG::Color_HealthPack;
 
@@ -345,7 +359,7 @@ void COutlines::RunModels()
 			}
 		}
 
-		if (!CFG::Outlines_World_Ignore_AmmoPacks)
+		if (!bIgnoreAmmoPacks)
 		{
 			const auto color = CFG::Color_AmmoPack;
 
@@ -361,7 +375,7 @@ void COutlines::RunModels()
 			}
 		}
 
-		if (!CFG::Outlines_World_Ignore_Halloween_Gift)
+		if (!bIgnoreHalloweenGift)
 		{
 			const auto color = CFG::Color_Halloween_Gift;
 
@@ -377,7 +391,7 @@ void COutlines::RunModels()
 			}
 		}
 
-		if (!CFG::Outlines_World_Ignore_MVM_Money)
+		if (!bIgnoreMVMMoney)
 		{
 			const auto color = CFG::Color_MVM_Money;
 
@@ -393,9 +407,7 @@ void COutlines::RunModels()
 			}
 		}
 
-		const bool bIgnoringAllProjectiles = CFG::Outlines_World_Ignore_LocalProjectiles
-			&& CFG::Outlines_World_Ignore_EnemyProjectiles
-			&& CFG::Outlines_World_Ignore_TeammateProjectiles;
+		const bool bIgnoringAllProjectiles = bIgnoreLocalProj && bIgnoreEnemyProj && bIgnoreTeammateProj;
 
 		if (!bIgnoringAllProjectiles)
 		{
@@ -406,15 +418,17 @@ void COutlines::RunModels()
 
 				const bool bIsLocal = F::VisualUtils->IsEntityOwnedBy(pEntity, pLocal);
 
-				if (CFG::Outlines_World_Ignore_LocalProjectiles && bIsLocal)
+				if (bIgnoreLocalProj && bIsLocal)
 					continue;
 
 				if (!bIsLocal)
 				{
-					if (CFG::Outlines_World_Ignore_EnemyProjectiles && pEntity->m_iTeamNum() != pLocal->m_iTeamNum())
+					const int nProjTeam = pEntity->m_iTeamNum();
+					
+					if (bIgnoreEnemyProj && nProjTeam != nLocalTeam)
 						continue;
 
-					if (CFG::Outlines_World_Ignore_TeammateProjectiles && pEntity->m_iTeamNum() == pLocal->m_iTeamNum())
+					if (bIgnoreTeammateProj && nProjTeam == nLocalTeam)
 						continue;
 				}
 

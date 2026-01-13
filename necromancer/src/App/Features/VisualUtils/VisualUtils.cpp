@@ -53,7 +53,9 @@ Color_t CVisualUtils::GetEntityColor(C_TFPlayer* pLocal, C_BaseEntity* pEntity)
 	if (pEntity->entindex() == G::nTargetIndex)
 		return CFG::Color_Target;
 
-	if (pEntity->GetClassId() == ETFClassIds::CTFPlayer)
+	const auto nClassId = pEntity->GetClassId();
+	
+	if (nClassId == ETFClassIds::CTFPlayer)
 	{
 		const auto pPlayer = pEntity->As<C_TFPlayer>();
 
@@ -68,18 +70,13 @@ Color_t CVisualUtils::GetEntityColor(C_TFPlayer* pLocal, C_BaseEntity* pEntity)
 
 		if (pPlayer != pLocal)
 		{
-			// TODO: Handle these colors in F::Players
 			PlayerPriority info{};
-			F::Players->GetInfo(pPlayer->entindex(), info);
-
-			if (info.Cheater)
+			if (F::Players->GetInfo(pPlayer->entindex(), info))
 			{
-				return CFG::Color_Cheater;
-			}
-
-			if (info.RetardLegit)
-			{
-				return CFG::Color_RetardLegit;
+				if (info.Cheater)
+					return CFG::Color_Cheater;
+				if (info.RetardLegit)
+					return CFG::Color_RetardLegit;
 			}
 		}
 	}
@@ -87,13 +84,13 @@ Color_t CVisualUtils::GetEntityColor(C_TFPlayer* pLocal, C_BaseEntity* pEntity)
 	if (pEntity == pLocal || IsEntityOwnedBy(pEntity, pLocal))
 		return CFG::Color_Local;
 
-	if (pEntity->m_iTeamNum() == pLocal->m_iTeamNum())
+	const int nEntityTeam = pEntity->m_iTeamNum();
+	const int nLocalTeam = pLocal->m_iTeamNum();
+	
+	if (nEntityTeam == nLocalTeam)
 		return CFG::Color_Teammate;
 
-	if (pEntity->m_iTeamNum() != pLocal->m_iTeamNum())
-		return CFG::Color_Enemy;
-
-	return { 255, 255, 255, 255 };
+	return CFG::Color_Enemy;
 }
 
 Color_t CVisualUtils::GetEntityColorForOutlines(C_TFPlayer* pLocal, C_BaseEntity* pEntity)
@@ -107,17 +104,16 @@ Color_t CVisualUtils::GetEntityColorForOutlines(C_TFPlayer* pLocal, C_BaseEntity
 		const auto pPlayer = pEntity->As<C_TFPlayer>();
 		
 		// Only apply HP-based color to enemies (not local, not friends, not teammates)
+		// Check team first (cheapest), then other conditions
 		if (pPlayer != pLocal && 
-			!pPlayer->IsPlayerOnSteamFriendsList() && 
 			pPlayer->m_iTeamNum() != pLocal->m_iTeamNum() &&
 			!pPlayer->IsInvulnerable() &&
-			!pPlayer->IsInvisible())
+			!pPlayer->IsInvisible() &&
+			!pPlayer->IsPlayerOnSteamFriendsList())
 		{
 			// Check if not a tagged player (cheater/retardlegit)
 			PlayerPriority info{};
-			F::Players->GetInfo(pPlayer->entindex(), info);
-			
-			if (!info.Cheater && !info.RetardLegit)
+			if (!F::Players->GetInfo(pPlayer->entindex(), info) || (!info.Cheater && !info.RetardLegit))
 			{
 				return GetHealthColor(pPlayer->m_iHealth(), pPlayer->GetMaxHealth());
 			}
@@ -139,17 +135,16 @@ Color_t CVisualUtils::GetEntityColorForMaterials(C_TFPlayer* pLocal, C_BaseEntit
 		const auto pPlayer = pEntity->As<C_TFPlayer>();
 		
 		// Only apply HP-based color to enemies (not local, not friends, not teammates)
+		// Check team first (cheapest), then other conditions
 		if (pPlayer != pLocal && 
-			!pPlayer->IsPlayerOnSteamFriendsList() && 
 			pPlayer->m_iTeamNum() != pLocal->m_iTeamNum() &&
 			!pPlayer->IsInvulnerable() &&
-			!pPlayer->IsInvisible())
+			!pPlayer->IsInvisible() &&
+			!pPlayer->IsPlayerOnSteamFriendsList())
 		{
 			// Check if not a tagged player (cheater/retardlegit)
 			PlayerPriority info{};
-			F::Players->GetInfo(pPlayer->entindex(), info);
-			
-			if (!info.Cheater && !info.RetardLegit)
+			if (!F::Players->GetInfo(pPlayer->entindex(), info) || (!info.Cheater && !info.RetardLegit))
 			{
 				return GetHealthColor(pPlayer->m_iHealth(), pPlayer->GetMaxHealth());
 			}
@@ -165,8 +160,13 @@ Color_t CVisualUtils::GetHealthColor(int nHealth, int nMaxHealth)
 	if (nHealth > nMaxHealth)
 		return CFG::Color_OverHeal;
 
-	nHealth = std::max(0, std::min(nHealth, nMaxHealth));
-	const int r = std::min((510 * (nMaxHealth - nHealth)) / nMaxHealth, 210);
+	// Clamp health to valid range
+	if (nHealth < 0) nHealth = 0;
+	else if (nHealth > nMaxHealth) nHealth = nMaxHealth;
+	
+	// Pre-calculate to avoid repeated division
+	const int nHealthDiff = nMaxHealth - nHealth;
+	const int r = std::min((510 * nHealthDiff) / nMaxHealth, 210);
 	const int g = std::min((510 * nHealth) / nMaxHealth, 230);
 	return { static_cast<byte>(r), static_cast<byte>(g), 50, 255 };
 }
@@ -195,32 +195,27 @@ int CVisualUtils::CreateTextureFromVTF(const char* name)
 
 int CVisualUtils::GetClassIcon(int nClassNum)
 {
-	//what are arrays
-
-	static int nScout = CreateTextureFromVTF("hud/leaderboard_class_scout.vtf");
-	static int nSoldier = CreateTextureFromVTF("hud/leaderboard_class_soldier.vtf");
-	static int nPyro = CreateTextureFromVTF("hud/leaderboard_class_pyro.vtf");
-	static int nDemoman = CreateTextureFromVTF("hud/leaderboard_class_demo.vtf");
-	static int nHeavy = CreateTextureFromVTF("hud/leaderboard_class_heavy.vtf");
-	static int nEngineer = CreateTextureFromVTF("hud/leaderboard_class_engineer.vtf");
-	static int nMedic = CreateTextureFromVTF("hud/leaderboard_class_medic.vtf");
-	static int nSniper = CreateTextureFromVTF("hud/leaderboard_class_sniper.vtf");
-	static int nSpy = CreateTextureFromVTF("hud/leaderboard_class_spy.vtf");
-
-	switch (nClassNum)
+	// Use static array for O(1) lookup instead of switch statement
+	static int nClassIcons[10] = { 0 };
+	static bool bInitialized = false;
+	
+	if (!bInitialized)
 	{
-	case TF_CLASS_SCOUT: return nScout;
-	case TF_CLASS_SOLDIER: return nSoldier;
-	case TF_CLASS_PYRO: return nPyro;
-	case TF_CLASS_DEMOMAN: return nDemoman;
-	case TF_CLASS_HEAVYWEAPONS: return nHeavy;
-	case TF_CLASS_ENGINEER: return nEngineer;
-	case TF_CLASS_MEDIC: return nMedic;
-	case TF_CLASS_SNIPER: return nSniper;
-	case TF_CLASS_SPY: return nSpy;
-	default: break;
+		nClassIcons[TF_CLASS_SCOUT] = CreateTextureFromVTF("hud/leaderboard_class_scout.vtf");
+		nClassIcons[TF_CLASS_SOLDIER] = CreateTextureFromVTF("hud/leaderboard_class_soldier.vtf");
+		nClassIcons[TF_CLASS_PYRO] = CreateTextureFromVTF("hud/leaderboard_class_pyro.vtf");
+		nClassIcons[TF_CLASS_DEMOMAN] = CreateTextureFromVTF("hud/leaderboard_class_demo.vtf");
+		nClassIcons[TF_CLASS_HEAVYWEAPONS] = CreateTextureFromVTF("hud/leaderboard_class_heavy.vtf");
+		nClassIcons[TF_CLASS_ENGINEER] = CreateTextureFromVTF("hud/leaderboard_class_engineer.vtf");
+		nClassIcons[TF_CLASS_MEDIC] = CreateTextureFromVTF("hud/leaderboard_class_medic.vtf");
+		nClassIcons[TF_CLASS_SNIPER] = CreateTextureFromVTF("hud/leaderboard_class_sniper.vtf");
+		nClassIcons[TF_CLASS_SPY] = CreateTextureFromVTF("hud/leaderboard_class_spy.vtf");
+		bInitialized = true;
 	}
-
+	
+	if (nClassNum >= 1 && nClassNum <= 9)
+		return nClassIcons[nClassNum];
+	
 	return 0;
 }
 
@@ -280,19 +275,30 @@ int CVisualUtils::GetHalloweenGiftTextureId()
 bool CVisualUtils::IsOnScreen(const C_TFPlayer* pLocal, const C_BaseEntity* pEntity)
 {
 	const Vec3& vPos = pEntity->GetAbsOrigin();
-	if (vPos.DistTo(pLocal->GetAbsOrigin()) > 300.0f)
+	const Vec3& vLocalPos = pLocal->GetAbsOrigin();
+	
+	// Quick distance check using squared distance (avoids sqrt)
+	const float dx = vPos.x - vLocalPos.x;
+	const float dy = vPos.y - vLocalPos.y;
+	const float dz = vPos.z - vLocalPos.z;
+	const float flDistSq = dx*dx + dy*dy + dz*dz;
+	
+	// 300^2 = 90000
+	if (flDistSq > 90000.0f)
 	{
 		Vec3 vScreen = {};
 
 		if (H::Draw->W2S(vPos, vScreen))
 		{
+			const int nScreenW = H::Draw->GetScreenW();
+			const int nScreenH = H::Draw->GetScreenH();
+			
 			if (vScreen.x < -400
-				|| vScreen.x > H::Draw->GetScreenW() + 400
+				|| vScreen.x > nScreenW + 400
 				|| vScreen.y < -400
-				|| vScreen.y > H::Draw->GetScreenH() + 400)
+				|| vScreen.y > nScreenH + 400)
 				return false;
 		}
-
 		else
 		{
 			return false;
@@ -304,17 +310,28 @@ bool CVisualUtils::IsOnScreen(const C_TFPlayer* pLocal, const C_BaseEntity* pEnt
 
 bool CVisualUtils::IsOnScreenNoEntity(const C_TFPlayer* pLocal, const Vec3& vAbsOrigin)
 {
-	const Vec3& vPos = vAbsOrigin;
-	if (vPos.DistTo(pLocal->GetAbsOrigin()) > 300.0f)
+	const Vec3& vLocalPos = pLocal->GetAbsOrigin();
+	
+	// Quick distance check using squared distance (avoids sqrt)
+	const float dx = vAbsOrigin.x - vLocalPos.x;
+	const float dy = vAbsOrigin.y - vLocalPos.y;
+	const float dz = vAbsOrigin.z - vLocalPos.z;
+	const float flDistSq = dx*dx + dy*dy + dz*dz;
+	
+	// 300^2 = 90000
+	if (flDistSq > 90000.0f)
 	{
 		Vec3 vScreen = {};
 
-		if (H::Draw->W2S(vPos, vScreen))
+		if (H::Draw->W2S(vAbsOrigin, vScreen))
 		{
+			const int nScreenW = H::Draw->GetScreenW();
+			const int nScreenH = H::Draw->GetScreenH();
+			
 			if (vScreen.x < -400
-				|| vScreen.x > H::Draw->GetScreenW() + 400
+				|| vScreen.x > nScreenW + 400
 				|| vScreen.y < -400
-				|| vScreen.y > H::Draw->GetScreenH() + 400)
+				|| vScreen.y > nScreenH + 400)
 				return false;
 		}
 		else

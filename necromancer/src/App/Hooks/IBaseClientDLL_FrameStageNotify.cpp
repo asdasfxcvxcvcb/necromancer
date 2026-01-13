@@ -50,14 +50,23 @@ MAKE_HOOK(IBaseClientDLL_FrameStageNotify, Memory::GetVFunc(I::BaseClientDLL, 35
 			if (!pLocal)
 				break;
 
-			// Cache local team for faster comparisons
+			// Cache local team and config values for faster comparisons
 			const int nLocalTeam = pLocal->m_iTeamNum();
 			const bool bSetupBonesOpt = CFG::Misc_SetupBones_Optimization;
 			const bool bDisableInterp = CFG::Visuals_Disable_Interp;
 			const bool bAccuracyImprovements = CFG::Misc_Accuracy_Improvements;
+			const bool bDoAnimUpdates = bAccuracyImprovements && bDisableInterp;
+			
+			// Pre-calculate frametime once if needed
+			const float flAnimFrameTime = I::Prediction->m_bEnginePaused ? 0.0f : TICK_INTERVAL;
 
-			for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PLAYERS_ALL))
+			// Get the group once and iterate - use reference to avoid copy
+			const auto& vPlayers = H::Entities->GetGroup(EEntGroup::PLAYERS_ALL);
+			const size_t nPlayerCount = vPlayers.size();
+			
+			for (size_t i = 0; i < nPlayerCount; i++)
 			{
+				const auto pEntity = vPlayers[i];
 				if (!pEntity || pEntity == pLocal)
 					continue;
 
@@ -65,40 +74,31 @@ MAKE_HOOK(IBaseClientDLL_FrameStageNotify, Memory::GetVFunc(I::BaseClientDLL, 35
 				if (!pPlayer)
 					continue;
 
-				if (const auto nDifference = std::clamp(TIME_TO_TICKS(pPlayer->m_flSimulationTime() - pPlayer->m_flOldSimulationTime()), 0, 22))
+				// Cache deadflag check - used multiple times
+				const bool bIsDead = pPlayer->deadflag();
+				
+				const int nDifference = std::clamp(TIME_TO_TICKS(pPlayer->m_flSimulationTime() - pPlayer->m_flOldSimulationTime()), 0, 22);
+				if (nDifference > 0)
 				{
-					//deal with animations, local player is dealt with in RunCommand
 					// Do manual animation updates if Disable Interp is on
-					if (bAccuracyImprovements && bDisableInterp)
+					if (bDoAnimUpdates)
 					{
 						const float flOldFrameTime = I::GlobalVars->frametime;
+						I::GlobalVars->frametime = flAnimFrameTime;
 
-						I::GlobalVars->frametime = I::Prediction->m_bEnginePaused ? 0.0f : TICK_INTERVAL;
-
+						G::bUpdatingAnims = true;
 						for (int n = 0; n < nDifference; n++)
-						{
-							G::bUpdatingAnims = true;
 							pPlayer->UpdateClientSideAnimation();
-							G::bUpdatingAnims = false;
-						}
+						G::bUpdatingAnims = false;
 
 						I::GlobalVars->frametime = flOldFrameTime;
 					}
 
-					//add the lag record - only for enemies unless SetupBones optimization is on
-					if (bSetupBonesOpt)
+					// Add lag record - only for enemies unless SetupBones optimization is on
+					if (!bIsDead)
 					{
-						if (!pPlayer->deadflag())
-						{
+						if (bSetupBonesOpt || pPlayer->m_iTeamNum() != nLocalTeam)
 							F::LagRecords->AddRecord(pPlayer);
-						}
-					}
-					else
-					{
-						if (pPlayer->m_iTeamNum() != nLocalTeam && !pPlayer->deadflag())
-						{
-							F::LagRecords->AddRecord(pPlayer);
-						}
 					}
 				}
 			}
@@ -107,21 +107,19 @@ MAKE_HOOK(IBaseClientDLL_FrameStageNotify, Memory::GetVFunc(I::BaseClientDLL, 35
 			F::LagRecords->UpdateRecords();
 			F::MovementSimulation->Store(); // Store movement records for strafe prediction
 
+			// Clear velocity fix records if too large (prevent memory growth)
 			if (G::mapVelFixRecords.size() > 64)
-			{
 				G::mapVelFixRecords.clear();
-			}
 
-			for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PLAYERS_ALL))
+			// Reuse the same player group we already fetched
+			for (size_t i = 0; i < nPlayerCount; i++)
 			{
+				const auto pEntity = vPlayers[i];
 				if (!pEntity)
 					continue;
 
 				const auto pPlayer = pEntity->As<C_TFPlayer>();
-				if (!pPlayer)
-					continue;
-
-				if (pPlayer->deadflag())
+				if (!pPlayer || pPlayer->deadflag())
 					continue;
 
 				G::mapVelFixRecords[pPlayer] = { pPlayer->m_vecOrigin(), pPlayer->m_fFlags(), pPlayer->m_flSimulationTime() };

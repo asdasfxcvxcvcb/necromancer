@@ -174,9 +174,15 @@ void CRadar::Run()
 		return;
 
 	if (CFG::Misc_Clean_Screenshot && I::EngineClient->IsTakingScreenshot())
-	{
 		return;
-	}
+
+	// Early exit if nothing to draw
+	const bool bDrawWorld = CFG::Radar_World_Active;
+	const bool bDrawBuildings = CFG::Radar_Buildings_Active;
+	const bool bDrawPlayers = CFG::Radar_Players_Active;
+	
+	if (!bDrawWorld && !bDrawBuildings && !bDrawPlayers)
+		return;
 
 	const int nRadarSize = CFG::Radar_Size;
 
@@ -259,7 +265,7 @@ void CRadar::Run()
 	const int nIconSize = CFG::Radar_Icon_Size;
 
 	// Draw world objects
-	if (CFG::Radar_World_Active)
+	if (bDrawWorld)
 	{
 		if (!CFG::Radar_World_Ignore_HealthPacks)
 		{
@@ -320,8 +326,15 @@ void CRadar::Run()
 	}
 
 	// Draw buildings
-	if (CFG::Radar_Buildings_Active)
+	if (bDrawBuildings)
 	{
+		// Cache config values
+		const bool bIgnoreLocal = CFG::Radar_Buildings_Ignore_Local;
+		const bool bIgnoreTeammates = CFG::Radar_Buildings_Ignore_Teammates;
+		const bool bIgnoreEnemies = CFG::Radar_Buildings_Ignore_Enemies;
+		const bool bShowTeammateDispensers = CFG::Radar_Buildings_Show_Teammate_Dispensers;
+		const int nLocalTeam = pLocal->m_iTeamNum();
+		
 		for (const auto pEntity : H::Entities->GetGroup(EEntGroup::BUILDINGS_ALL))
 		{
 			if (!pEntity)
@@ -334,26 +347,20 @@ void CRadar::Run()
 
 			const bool bIsLocal = F::VisualUtils->IsEntityOwnedBy(pBuilding, pLocal);
 
-			if (CFG::Radar_Buildings_Ignore_Local && bIsLocal)
+			if (bIgnoreLocal && bIsLocal)
 				continue;
 
 			if (!bIsLocal)
 			{
-				if (CFG::Radar_Buildings_Ignore_Teammates && pBuilding->m_iTeamNum() == pLocal->m_iTeamNum())
+				const int nBuildingTeam = pBuilding->m_iTeamNum();
+				
+				if (bIgnoreTeammates && nBuildingTeam == nLocalTeam)
 				{
-					if (CFG::Radar_Buildings_Show_Teammate_Dispensers)
-					{
-						if (pBuilding->GetClassId() != ETFClassIds::CObjectDispenser)
-							continue;
-					}
-
-					else
-					{
+					if (!bShowTeammateDispensers || pBuilding->GetClassId() != ETFClassIds::CObjectDispenser)
 						continue;
-					}
 				}
 
-				if (CFG::Radar_Buildings_Ignore_Enemies && pBuilding->m_iTeamNum() != pLocal->m_iTeamNum())
+				if (bIgnoreEnemies && nBuildingTeam != nLocalTeam)
 					continue;
 			}
 
@@ -377,8 +384,17 @@ void CRadar::Run()
 	}
 
 	// Draw players
-	if (CFG::Radar_Players_Active)
+	if (bDrawPlayers)
 	{
+		// Cache config values for faster access
+		const bool bIgnoreLocal = CFG::Radar_Players_Ignore_Local;
+		const bool bIgnoreFriends = CFG::Radar_Players_Ignore_Friends;
+		const bool bIgnoreTeammates = CFG::Radar_Players_Ignore_Teammates;
+		const bool bIgnoreEnemies = CFG::Radar_Players_Ignore_Enemies;
+		const bool bIgnoreInvisible = CFG::Radar_Players_Ignore_Invisible;
+		const bool bShowTeammateMedics = CFG::Radar_Players_Show_Teammate_Medics;
+		const int nLocalTeam = pLocal->m_iTeamNum();
+		
 		for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PLAYERS_ALL))
 		{
 			if (!pEntity)
@@ -390,37 +406,33 @@ void CRadar::Run()
 				continue;
 
 			const bool bIsLocal = pPlayer == pLocal;
-			const bool bIsFriend = pPlayer->IsPlayerOnSteamFriendsList();
 
-			if (CFG::Radar_Players_Ignore_Local && bIsLocal)
-				continue;
-
-			if (CFG::Radar_Players_Ignore_Friends && bIsFriend)
+			if (bIgnoreLocal && bIsLocal)
 				continue;
 
 			if (!bIsLocal)
 			{
-				if (!bIsFriend)
+				// Check invisibility early (cheap check)
+				if (bIgnoreInvisible && pPlayer->m_flInvisibility() >= 1.0f)
+					continue;
+			}
+
+			const bool bIsFriend = pPlayer->IsPlayerOnSteamFriendsList();
+
+			if (bIgnoreFriends && bIsFriend)
+				continue;
+
+			if (!bIsLocal && !bIsFriend)
+			{
+				const int nPlayerTeam = pPlayer->m_iTeamNum();
+				
+				if (bIgnoreTeammates && nPlayerTeam == nLocalTeam)
 				{
-					if (CFG::Radar_Players_Ignore_Teammates && pPlayer->m_iTeamNum() == pLocal->m_iTeamNum())
-					{
-						if (CFG::Radar_Players_Show_Teammate_Medics)
-						{
-							if (pPlayer->m_iClass() != TF_CLASS_MEDIC)
-								continue;
-						}
-
-						else
-						{
-							continue;
-						}
-					}
-
-					if (CFG::Radar_Players_Ignore_Enemies && pPlayer->m_iTeamNum() != pLocal->m_iTeamNum())
+					if (!bShowTeammateMedics || pPlayer->m_iClass() != TF_CLASS_MEDIC)
 						continue;
 				}
 
-				if (CFG::Radar_Players_Ignore_Invisible && pPlayer->m_flInvisibility() >= 1.0f)
+				if (bIgnoreEnemies && nPlayerTeam != nLocalTeam)
 					continue;
 			}
 
@@ -439,7 +451,7 @@ void CRadar::Run()
 	}
 
 	// Draw MvM money
-	if (CFG::Radar_World_Active && !CFG::Radar_World_Ignore_MVM_Money)
+	if (bDrawWorld && !CFG::Radar_World_Ignore_MVM_Money)
 	{
 		for (const auto pEntity : H::Entities->GetGroup(EEntGroup::MVM_MONEY))
 		{

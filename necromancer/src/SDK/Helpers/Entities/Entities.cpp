@@ -79,6 +79,13 @@ void CEntityHelper::UpdatePlayerInfoFromGC()
 
 	g_bWasConnectedForPlayerInfo = true;
 
+	// Throttle GC updates to every 0.5 seconds (reduces CPU overhead significantly)
+	static float flLastGCUpdate = 0.0f;
+	const float flCurrentTime = I::GlobalVars->realtime;
+	if (flCurrentTime - flLastGCUpdate < 0.5f)
+		return;
+	flLastGCUpdate = flCurrentTime;
+
 	// Check if GC system is available
 	if (!I::TFGCClientSystem)
 		return;
@@ -227,10 +234,10 @@ void CEntityHelper::UpdateCache()
 	// Update F2P and party info from GC system
 	UpdatePlayerInfoFromGC();
 
-	// Cache this expensive call
+	// Cache this expensive call once
 	const int nHighestIndex = I::ClientEntityList->GetHighestEntityIndex();
 	
-	// Reserve capacity to avoid reallocation
+	// Reserve capacity to avoid reallocation (only on first run)
 	static bool bFirstRun = true;
 	if (bFirstRun)
 	{
@@ -239,33 +246,32 @@ void CEntityHelper::UpdateCache()
 		bFirstRun = false;
 	}
 
+	// Pre-fetch client entity list pointer to avoid repeated virtual calls
+	IClientEntityList* pEntityList = I::ClientEntityList;
+
 	for (int n = 1; n < nHighestIndex; n++)
 	{
-		IClientEntity* pClientEntity = I::ClientEntityList->GetClientEntity(n);
-
+		IClientEntity* pClientEntity = pEntityList->GetClientEntity(n);
 		if (!pClientEntity || pClientEntity->IsDormant())
 			continue;
 
-		auto pEntity = pClientEntity->As<C_BaseEntity>();
+		const auto pEntity = pClientEntity->As<C_BaseEntity>();
+		const auto nClassId = pEntity->GetClassId();
 
-		switch (pEntity->GetClassId())
+		switch (nClassId)
 		{
 		case ETFClassIds::CTFPlayer:
 		{
-			int nPlayerTeam = 0;
-
 			const auto pPlayer = pEntity->As<C_TFPlayer>();
 			if (pPlayer->deadflag() && pPlayer->m_iObserverMode() != OBS_MODE_NONE)
-			{
 				m_mapGroups[EEntGroup::PLAYERS_OBSERVER].push_back(pEntity);
-			}
 
+			int nPlayerTeam = 0;
 			if (!pEntity->IsInValidTeam(&nPlayerTeam))
 				continue;
 
 			m_mapGroups[EEntGroup::PLAYERS_ALL].push_back(pEntity);
 			m_mapGroups[nLocalTeam != nPlayerTeam ? EEntGroup::PLAYERS_ENEMIES : EEntGroup::PLAYERS_TEAMMATES].push_back(pEntity);
-
 			break;
 		}
 
@@ -274,13 +280,11 @@ void CEntityHelper::UpdateCache()
 		case ETFClassIds::CObjectTeleporter:
 		{
 			int nObjectTeam = 0;
-
 			if (!pEntity->IsInValidTeam(&nObjectTeam))
 				continue;
 
 			m_mapGroups[EEntGroup::BUILDINGS_ALL].push_back(pEntity);
 			m_mapGroups[nLocalTeam != nObjectTeam ? EEntGroup::BUILDINGS_ENEMIES : EEntGroup::BUILDINGS_TEAMMATES].push_back(pEntity);
-
 			break;
 		}
 
@@ -299,21 +303,18 @@ void CEntityHelper::UpdateCache()
 		case ETFClassIds::CTFProjectile_EnergyBall:
 		{
 			int nProjectileTeam = 0;
-
 			if (!pEntity->IsInValidTeam(&nProjectileTeam))
 				continue;
 
-			if (pEntity->GetClassId() == ETFClassIds::CTFGrenadePipebombProjectile)
+			if (nClassId == ETFClassIds::CTFGrenadePipebombProjectile)
 			{
 				const auto pPipebomb = pEntity->As<C_TFGrenadePipebombProjectile>();
-
 				if (pPipebomb->HasStickyEffects() && pPipebomb->As<C_BaseGrenade>()->m_hThrower().Get() == pLocal)
 					m_mapGroups[EEntGroup::PROJECTILES_LOCAL_STICKIES].push_back(pEntity);
 			}
 
 			m_mapGroups[EEntGroup::PROJECTILES_ALL].push_back(pEntity);
 			m_mapGroups[nLocalTeam != nProjectileTeam ? EEntGroup::PROJECTILES_ENEMIES : EEntGroup::PROJECTILES_TEAMMATES].push_back(pEntity);
-
 			break;
 		}
 
@@ -321,31 +322,23 @@ void CEntityHelper::UpdateCache()
 		{
 			if (IsHealthPack(pEntity))
 				m_mapGroups[EEntGroup::HEALTHPACKS].push_back(pEntity);
-
-			if (IsAmmoPack(pEntity))
+			else if (IsAmmoPack(pEntity))
 				m_mapGroups[EEntGroup::AMMOPACKS].push_back(pEntity);
-
 			break;
 		}
 
 		case ETFClassIds::CTFAmmoPack:
-		{
 			m_mapGroups[EEntGroup::AMMOPACKS].push_back(pEntity);
 			break;
-		}
 
 		case ETFClassIds::CHalloweenGiftPickup:
-		{
 			m_mapGroups[EEntGroup::HALLOWEEN_GIFT].push_back(pEntity);
 			break;
-		}
 
 		case ETFClassIds::CCurrencyPack:
 		{
-			if (pEntity->As<C_CurrencyPack>()->m_bDistributed())
-				continue;
-
-			m_mapGroups[EEntGroup::MVM_MONEY].push_back(pEntity);
+			if (!pEntity->As<C_CurrencyPack>()->m_bDistributed())
+				m_mapGroups[EEntGroup::MVM_MONEY].push_back(pEntity);
 			break;
 		}
 

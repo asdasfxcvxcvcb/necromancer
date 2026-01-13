@@ -8,21 +8,27 @@ void CEnginePrediction::AdjustPlayers(C_BaseEntity* pLocal)
 {
 	m_mRestore.clear();
 
-	for (int i = 1; i <= I::EngineClient->GetMaxClients(); i++)
+	const int nMaxClients = I::EngineClient->GetMaxClients();
+	for (int i = 1; i <= nMaxClients; i++)
 	{
-		auto pEntity = I::ClientEntityList->GetClientEntity(i);
+		const auto pEntity = I::ClientEntityList->GetClientEntity(i);
 		if (!pEntity || pEntity->GetClassId() != ETFClassIds::CTFPlayer)
 			continue;
 
-		auto pPlayer = pEntity->As<C_TFPlayer>();
+		const auto pPlayer = pEntity->As<C_TFPlayer>();
 		if (pPlayer == pLocal || pPlayer->deadflag())
 			continue;
 
-		m_mRestore[pPlayer] = { pPlayer->GetAbsOrigin(), pPlayer->m_vecMins(), pPlayer->m_vecMaxs() };
+		// Store original values
+		const Vec3 vAbsOrigin = pPlayer->GetAbsOrigin();
+		const Vec3 vMins = pPlayer->m_vecMins();
+		const Vec3 vMaxs = pPlayer->m_vecMaxs();
+		
+		m_mRestore[pPlayer] = { vAbsOrigin, vMins, vMaxs };
 
 		pPlayer->SetAbsOrigin(pPlayer->m_vecOrigin());
-		pPlayer->m_vecMins() += 0.125f;
-		pPlayer->m_vecMaxs() -= 0.125f;
+		pPlayer->m_vecMins() = vMins + 0.125f;
+		pPlayer->m_vecMaxs() = vMaxs - 0.125f;
 	}
 }
 

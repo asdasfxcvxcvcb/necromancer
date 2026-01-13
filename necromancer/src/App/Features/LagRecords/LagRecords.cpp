@@ -11,12 +11,8 @@ bool CLagRecords::IsSimulationTimeValid(float flCurSimTime, float flCmprSimTime)
 	// NOTE: Don't clamp fake latency here - the fake latency system works by manipulating
 	// sequence numbers, which is separate from the interp system. Amalgam doesn't clamp
 	// fake latency, only fake interp (which is sent to the server via cl_interp).
-	float flMaxTime = 0.2f + m_flFakeLatency;
-	
-	// Clamp to sv_maxunlag to avoid breaking server lag compensation
-	flMaxTime = std::min(flMaxTime, m_flMaxUnlag);
-	
-	return flCurSimTime - flCmprSimTime < flMaxTime;
+	const float flMaxTime = std::min(0.2f + m_flFakeLatency, m_flMaxUnlag);
+	return (flCurSimTime - flCmprSimTime) < flMaxTime;
 }
 
 void CLagRecords::UpdateDatagram()
@@ -71,33 +67,28 @@ void CLagRecords::AddRecord(C_TFPlayer* pPlayer)
 
 	m_bSettingUpBones = true;
 
-	const auto setup_bones_optimization{ CFG::Misc_SetupBones_Optimization };
+	const bool bSetupBonesOpt = CFG::Misc_SetupBones_Optimization;
 
-	if (setup_bones_optimization)
-	{
+	if (bSetupBonesOpt)
 		pPlayer->InvalidateBoneCache();
-	}
 
-	const auto result = pPlayer->SetupBones(newRecord.BoneMatrix, 128, BONE_USED_BY_ANYTHING, I::GlobalVars->curtime);
+	const bool bResult = pPlayer->SetupBones(newRecord.BoneMatrix, 128, BONE_USED_BY_ANYTHING, I::GlobalVars->curtime);
 
-	if (setup_bones_optimization)
+	if (bSetupBonesOpt)
 	{
-		auto attach = pPlayer->FirstMoveChild();
-		while (attach)
+		for (auto attach = pPlayer->FirstMoveChild(); attach; attach = attach->NextMovePeer())
 		{
 			if (attach->ShouldDraw())
 			{
 				attach->InvalidateBoneCache();
 				attach->SetupBones(nullptr, -1, BONE_USED_BY_ANYTHING, I::GlobalVars->curtime);
 			}
-
-			attach = attach->NextMovePeer();
 		}
 	}
 
 	m_bSettingUpBones = false;
 
-	if (!result)
+	if (!bResult)
 		return;
 
 	newRecord.Player = pPlayer;
@@ -155,44 +146,30 @@ void CLagRecords::UpdateRecords()
 	if (!pLocal || pLocal->deadflag() || pLocal->InCond(TF_COND_HALLOWEEN_GHOST_MODE) || pLocal->InCond(TF_COND_HALLOWEEN_KART))
 	{
 		if (!m_LagRecords.empty())
-		{
 			m_LagRecords.clear();
-		}
-
 		return;
 	}
 
-	// Remove invalid players
-	for (const auto pEntity : H::Entities->GetGroup(CFG::Misc_SetupBones_Optimization ? EEntGroup::PLAYERS_ALL : EEntGroup::PLAYERS_ENEMIES))
+	// Get the appropriate entity group once
+	const auto& vPlayers = H::Entities->GetGroup(CFG::Misc_SetupBones_Optimization ? EEntGroup::PLAYERS_ALL : EEntGroup::PLAYERS_ENEMIES);
+
+	// Remove invalid players - iterate the group directly instead of all records
+	for (const auto pEntity : vPlayers)
 	{
 		if (!pEntity || pEntity == pLocal)
-		{
 			continue;
-		}
 
 		const auto pPlayer = pEntity->As<C_TFPlayer>();
-
-		if (pPlayer->deadflag())
-		{
+		if (pPlayer && pPlayer->deadflag())
 			m_LagRecords[pPlayer].clear();
-		}
 	}
 
 	// Remove invalid records
 	for (auto& records : m_LagRecords | std::views::values)
 	{
-		for (auto it = records.begin(); it != records.end(); )
-		{
-			const auto& curRecord = *it;
-			if (!curRecord.Player || !IsSimulationTimeValid(curRecord.Player->m_flSimulationTime(), curRecord.SimulationTime))
-			{
-				it = records.erase(it);
-			}
-			else
-			{
-				++it;
-			}
-		}
+		std::erase_if(records, [](const LagRecord_t& curRecord) {
+			return !curRecord.Player || !F::LagRecords->IsSimulationTimeValid(curRecord.Player->m_flSimulationTime(), curRecord.SimulationTime);
+		});
 	}
 }
 
