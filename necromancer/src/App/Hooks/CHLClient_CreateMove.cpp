@@ -82,6 +82,10 @@ static inline bool AntiAimCheck(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUs
 MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool, __fastcall,
 	CClientModeShared* ecx, float flInputSampleTime, CUserCmd* pCmd)
 {
+	// Safety check for level transitions - just call original
+	if (G::bLevelTransition)
+		return CALL_ORIGINAL(ecx, flInputSampleTime, pCmd);
+
 	// Reset per-frame state
 	G::bSilentAngles = false;
 	G::bPSilentAngles = false;

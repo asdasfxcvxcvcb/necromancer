@@ -518,8 +518,8 @@ void CMaterials::RunFakeAngle()
 
 void CMaterials::Run()
 {
-	// Don't run if we're cleaning up
-	if (m_bCleaningUp)
+	// Don't run if we're cleaning up or during level transitions
+	if (m_bCleaningUp || G::bLevelTransition)
 		return;
 
 

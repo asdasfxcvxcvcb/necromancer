@@ -5,6 +5,13 @@ MAKE_SIGNATURE(CBasePlayer_PostDataUpdate_SetAbsVelocityCall, "client.dll", "E8 
 MAKE_HOOK(CBaseEntity_SetAbsVelocity, Signatures::CBaseEntity_SetAbsVelocity.Get(), void, __fastcall,
 	C_BasePlayer* ecx, const Vector& vecAbsVelocity)
 {
+	// Safety check - skip custom logic during level transitions
+	if (G::bLevelTransition || !ecx)
+	{
+		CALL_ORIGINAL(ecx, vecAbsVelocity);
+		return;
+	}
+
 	if (reinterpret_cast<std::uintptr_t>(_ReturnAddress()) == Signatures::CBasePlayer_PostDataUpdate_SetAbsVelocityCall.Get())
 	{
 		if (const auto pBasePlayer = ecx->As<C_TFPlayer>())

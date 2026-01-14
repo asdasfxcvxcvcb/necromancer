@@ -63,6 +63,14 @@ void CLagRecords::UpdateDatagram()
 
 void CLagRecords::AddRecord(C_TFPlayer* pPlayer)
 {
+	// Validate player before doing anything
+	if (!pPlayer || !pPlayer->GetClientNetworkable() || !pPlayer->GetClientNetworkable()->GetClientClass())
+		return;
+
+	// Check if player has a valid model - if not, skip bone setup
+	if (!pPlayer->GetModel())
+		return;
+
 	LagRecord_t newRecord = {};
 
 	m_bSettingUpBones = true;
@@ -76,8 +84,20 @@ void CLagRecords::AddRecord(C_TFPlayer* pPlayer)
 
 	if (bSetupBonesOpt)
 	{
+		int nIterations = 0;
 		for (auto attach = pPlayer->FirstMoveChild(); attach; attach = attach->NextMovePeer())
 		{
+			// Safety: limit iterations to prevent infinite loops on corrupted entity chains
+			if (++nIterations > 32)
+				break;
+
+			// Validate the attachment is a valid entity with a model
+			if (!attach->GetClientNetworkable() || !attach->GetClientNetworkable()->GetClientClass())
+				continue;
+
+			if (!attach->GetModel())
+				continue;
+
 			if (attach->ShouldDraw())
 			{
 				attach->InvalidateBoneCache();
@@ -210,15 +230,16 @@ void CLagRecordMatrixHelper::Set(const LagRecord_t* pRecord)
 
 	const auto pCachedBoneData = pPlayer->GetCachedBoneData();
 
-	if (!pCachedBoneData)
+	if (!pCachedBoneData || pCachedBoneData->Count() <= 0 || !pCachedBoneData->Base())
 		return;
 
 	m_pPlayer = pPlayer;
 	m_vAbsOrigin = pPlayer->GetAbsOrigin();
 	m_vAbsAngles = pPlayer->GetAbsAngles();
-	memcpy(m_BoneMatrix, pCachedBoneData->Base(), sizeof(matrix3x4_t) * pCachedBoneData->Count());
-
-	memcpy(pCachedBoneData->Base(), pRecord->BoneMatrix, sizeof(matrix3x4_t) * pCachedBoneData->Count());
+	
+	const int nBoneCount = std::min(pCachedBoneData->Count(), 128);
+	memcpy(m_BoneMatrix, pCachedBoneData->Base(), sizeof(matrix3x4_t) * nBoneCount);
+	memcpy(pCachedBoneData->Base(), pRecord->BoneMatrix, sizeof(matrix3x4_t) * nBoneCount);
 
 	pPlayer->SetAbsOrigin(pRecord->AbsOrigin);
 	pPlayer->SetAbsAngles(pRecord->AbsAngles);
@@ -233,12 +254,22 @@ void CLagRecordMatrixHelper::Restore()
 
 	const auto pCachedBoneData = m_pPlayer->GetCachedBoneData();
 
-	if (!pCachedBoneData)
+	if (!pCachedBoneData || pCachedBoneData->Count() <= 0 || !pCachedBoneData->Base())
+	{
+		// Reset state even if we can't restore bones
+		m_pPlayer = nullptr;
+		m_vAbsOrigin = {};
+		m_vAbsAngles = {};
+		std::memset(m_BoneMatrix, 0, sizeof(matrix3x4_t) * 128);
+		m_bSuccessfullyStored = false;
 		return;
+	}
 
 	m_pPlayer->SetAbsOrigin(m_vAbsOrigin);
 	m_pPlayer->SetAbsAngles(m_vAbsAngles);
-	memcpy(pCachedBoneData->Base(), m_BoneMatrix, sizeof(matrix3x4_t) * pCachedBoneData->Count());
+	
+	const int nBoneCount = std::min(pCachedBoneData->Count(), 128);
+	memcpy(pCachedBoneData->Base(), m_BoneMatrix, sizeof(matrix3x4_t) * nBoneCount);
 
 	m_pPlayer = nullptr;
 	m_vAbsOrigin = {};

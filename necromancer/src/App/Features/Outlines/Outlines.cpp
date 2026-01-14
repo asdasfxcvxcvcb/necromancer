@@ -134,8 +134,8 @@ void COutlines::DrawEntity(C_BaseEntity* pEntity, bool bModel)
 
 void COutlines::RunModels()
 {
-	// Don't run if we're cleaning up
-	if (m_bCleaningUp)
+	// Don't run if we're cleaning up or during level transitions
+	if (m_bCleaningUp || G::bLevelTransition)
 		return;
 
 	Initialize();
@@ -454,8 +454,8 @@ void COutlines::RunModels()
 
 void COutlines::Run()
 {
-	// Don't run if we're cleaning up
-	if (m_bCleaningUp)
+	// Don't run if we're cleaning up or during level transitions
+	if (m_bCleaningUp || G::bLevelTransition)
 		return;
 
 	if (!CFG::Outlines_Active || I::EngineVGui->IsGameUIVisible() || F::SpyCamera->IsRendering())

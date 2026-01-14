@@ -13,18 +13,42 @@ MAKE_SIGNATURE(ViewmodelAttachment_DrawModel, "client.dll", "41 8B D5 FF 50 ? 8B
 MAKE_HOOK(IVModelRender_DrawModelExecute, Memory::GetVFunc(I::ModelRender, 19), void, __fastcall,
 	IVModelRender* ecx, const DrawModelState_t& state, ModelRenderInfo_t& pInfo, matrix3x4_t* pCustomBoneToWorld)
 {
+	// Safety check - skip custom logic during level transitions
+	if (G::bLevelTransition)
+	{
+		CALL_ORIGINAL(ecx, state, pInfo, pCustomBoneToWorld);
+		return;
+	}
+
 	if (!F::SpyCamera->IsRendering())
 	{
 		const auto pClientEntity = I::ClientEntityList->GetClientEntity(pInfo.entity_index);
 
 		if (pClientEntity)
 		{
-			if (CFG::Visuals_Disable_Dropped_Weapons && pClientEntity->GetClassId() == ETFClassIds::CTFDroppedWeapon)
+			// Safety: validate entity has a valid client class before calling GetClassId
+			auto pNetworkable = pClientEntity->GetClientNetworkable();
+			if (!pNetworkable)
+			{
+				CALL_ORIGINAL(ecx, state, pInfo, pCustomBoneToWorld);
+				return;
+			}
+
+			auto pClientClass = pNetworkable->GetClientClass();
+			if (!pClientClass)
+			{
+				CALL_ORIGINAL(ecx, state, pInfo, pCustomBoneToWorld);
+				return;
+			}
+
+			const int nClassId = pClientClass->m_ClassID;
+
+			if (CFG::Visuals_Disable_Dropped_Weapons && nClassId == static_cast<int>(ETFClassIds::CTFDroppedWeapon))
 				return;
 
 			const bool clean_ss = CFG::Misc_Clean_Screenshot && I::EngineClient->IsTakingScreenshot();
 
-			if (CFG::Materials_ViewModel_Active && !clean_ss && pClientEntity->GetClassId() == ETFClassIds::CTFViewModel)
+			if (CFG::Materials_ViewModel_Active && !clean_ss && nClassId == static_cast<int>(ETFClassIds::CTFViewModel))
 			{
 				if (const auto pLocal = H::Entities->GetLocal())
 				{
@@ -100,10 +124,10 @@ MAKE_HOOK(IVModelRender_DrawModelExecute, Memory::GetVFunc(I::ModelRender, 19), 
 				}
 			}
 
-			if (CFG::Visuals_Disable_Wearables && pClientEntity->GetClassId() == ETFClassIds::CTFWearable)
+			if (CFG::Visuals_Disable_Wearables && nClassId == static_cast<int>(ETFClassIds::CTFWearable))
 				return;
 
-			if (pClientEntity->GetClassId() == ETFClassIds::CDynamicProp)
+			if (nClassId == static_cast<int>(ETFClassIds::CDynamicProp))
 			{
 				if (CFG::Visuals_World_Modulation_Mode == 0)
 				{

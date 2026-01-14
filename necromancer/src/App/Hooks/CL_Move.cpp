@@ -14,6 +14,13 @@ MAKE_SIGNATURE(net_time, "engine.dll", "F2 0F 10 0D ? ? ? ? F2 0F 5C 0D", 0x4);
 MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 	float accumulated_extra_samples, bool bFinalTick)
 {
+	// Safety check - during level transitions, just call original
+	if (G::bLevelTransition || !I::EngineClient)
+	{
+		CALL_ORIGINAL(accumulated_extra_samples, bFinalTick);
+		return;
+	}
+
 	// Apply ping reducer BEFORE anything else
 	F::NetworkFix->ApplyPingReducer();
 	F::NetworkFix->ApplyAutoInterp();

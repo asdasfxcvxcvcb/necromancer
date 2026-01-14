@@ -7,6 +7,10 @@ MAKE_SIGNATURE(CBaseEntity_BaseInterpolatePart1, "client.dll", "48 89 5C 24 ? 56
 MAKE_HOOK(CBaseEntity_BaseInterpolatePart1, Signatures::CBaseEntity_BaseInterpolatePart1.Get(), int, __fastcall,
 	void* ecx, float& currentTime, Vector& oldOrigin, QAngle& oldAngles, Vector& oldVel, int& bNoMoreChanges)
 {
+	// Safety check - skip custom logic during level transitions
+	if (G::bLevelTransition || !ecx)
+		return CALL_ORIGINAL(ecx, currentTime, oldOrigin, oldAngles, oldVel, bNoMoreChanges);
+
 	auto shouldDisableInterp = [&]
 	{
 		const auto pLocal = H::Entities->GetLocal();
@@ -28,10 +32,21 @@ MAKE_HOOK(CBaseEntity_BaseInterpolatePart1, Signatures::CBaseEntity_BaseInterpol
 		if (!CFG::Misc_Accuracy_Improvements)
 			return false;
 
-		if (pEntity->GetClassId() == ETFClassIds::CTFPlayer)
+		// Safety: validate entity has a valid client class before calling GetClassId
+		auto pNetworkable = pEntity->GetClientNetworkable();
+		if (!pNetworkable)
+			return false;
+
+		auto pClientClass = pNetworkable->GetClientClass();
+		if (!pClientClass)
+			return false;
+
+		const int nClassId = pClientClass->m_ClassID;
+
+		if (nClassId == static_cast<int>(ETFClassIds::CTFPlayer))
 			return pEntity != pLocal;
 
-		if (pEntity->GetClassId() == ETFClassIds::CBaseDoor)
+		if (nClassId == static_cast<int>(ETFClassIds::CBaseDoor))
 			return true;
 
 		return false;

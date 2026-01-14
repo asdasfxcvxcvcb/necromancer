@@ -65,6 +65,10 @@ static std::set<uint32_t> g_setCheckedPlayersForInfo; // Track which players we'
 // Update F2P and party info from GC system (called every frame, only checks new players)
 void CEntityHelper::UpdatePlayerInfoFromGC()
 {
+	// Safety check - don't access during early init
+	if (!I::EngineClient || !I::GlobalVars)
+		return;
+
 	if (!I::EngineClient->IsConnected())
 	{
 		// Reset when disconnected so we check again on next connect
@@ -255,8 +259,25 @@ void CEntityHelper::UpdateCache()
 		if (!pClientEntity || pClientEntity->IsDormant())
 			continue;
 
+		// Safety: Get client class first and validate it exists
+		// This prevents crashes on custom/unknown entities from community servers
+		auto pNetworkable = pClientEntity->GetClientNetworkable();
+		if (!pNetworkable)
+			continue;
+
+		auto pClientClass = pNetworkable->GetClientClass();
+		if (!pClientClass)
+			continue;
+
 		const auto pEntity = pClientEntity->As<C_BaseEntity>();
-		const auto nClassId = pEntity->GetClassId();
+		const int nRawClassId = pClientClass->m_ClassID;
+		
+		// Skip invalid class IDs (0 or negative, or way too high for TF2)
+		// TF2 has ~360 class IDs, anything above 500 is definitely invalid
+		if (nRawClassId <= 0 || nRawClassId > 500)
+			continue;
+
+		const auto nClassId = static_cast<ETFClassIds>(nRawClassId);
 
 		switch (nClassId)
 		{

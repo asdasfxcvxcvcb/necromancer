@@ -231,6 +231,10 @@ void CESP::DrawBones(C_TFPlayer* pPlayer, Color_t color)
 
 void CESP::Run()
 {
+	// Safety check for level transitions
+	if (G::bLevelTransition)
+		return;
+
 	if (!CFG::ESP_Active || I::EngineVGui->IsGameUIVisible() || SDKUtils::BInEndOfMatch() || F::SpyCamera->IsRendering())
 		return;
 

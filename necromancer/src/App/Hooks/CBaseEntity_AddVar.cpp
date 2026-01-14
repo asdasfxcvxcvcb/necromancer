@@ -7,6 +7,13 @@ MAKE_SIGNATURE(CBaseEntity_AddVar, "client.dll", "48 89 5C 24 ? 48 89 6C 24 ? 57
 MAKE_HOOK(CBaseEntity_AddVar, Signatures::CBaseEntity_AddVar.Get(), void, __fastcall,
 	C_BaseEntity* ecx, void* data, IInterpolatedVar* watcher, int type, bool bSetup)
 {
+	// Safety check - skip if entity is invalid or during level transitions
+	if (!ecx || G::bLevelTransition)
+	{
+		CALL_ORIGINAL(ecx, data, watcher, type, bSetup);
+		return;
+	}
+
 	// Block interp vars if Disable Interp is on - choppy but accurate for aimbot
 	if (CFG::Misc_Accuracy_Improvements && CFG::Visuals_Disable_Interp && watcher)
 	{
@@ -24,7 +31,9 @@ MAKE_HOOK(CBaseEntity_AddVar, Signatures::CBaseEntity_AddVar.Get(), void, __fast
 			|| hash == m_iv_flMaxGroundSpeed)
 			return;
 
-		if (ecx != H::Entities->GetLocal())
+		// Only check local player if we have a valid local player
+		auto pLocal = H::Entities->GetLocal();
+		if (pLocal && ecx != pLocal)
 		{
 			if (hash == m_iv_angEyeAngles)
 				return;
@@ -37,15 +46,29 @@ MAKE_HOOK(CBaseEntity_AddVar, Signatures::CBaseEntity_AddVar.Get(), void, __fast
 MAKE_HOOK(CBaseEntity_EstimateAbsVelocity, Signatures::CBaseEntity_EstimateAbsVelocity.Get(), void, __fastcall,
 	C_BaseEntity* ecx, Vector& vel)
 {
-	// Override velocity estimation if Disable Interp is on
-	if (CFG::Misc_Accuracy_Improvements && CFG::Visuals_Disable_Interp && ecx)
+	// Safety check - skip if entity is invalid or during level transitions
+	if (!ecx || G::bLevelTransition)
 	{
-		if (ecx->GetClassId() == ETFClassIds::CTFPlayer)
+		CALL_ORIGINAL(ecx, vel);
+		return;
+	}
+
+	// Override velocity estimation if Disable Interp is on
+	if (CFG::Misc_Accuracy_Improvements && CFG::Visuals_Disable_Interp)
+	{
+		// Safety: validate entity has a valid client class before calling GetClassId
+		if (auto pNetworkable = ecx->GetClientNetworkable())
 		{
-			if (const auto pPlayer = ecx->As<C_TFPlayer>())
+			if (auto pClientClass = pNetworkable->GetClientClass())
 			{
-				vel = pPlayer->m_vecVelocity();
-				return;
+				if (pClientClass->m_ClassID == static_cast<int>(ETFClassIds::CTFPlayer))
+				{
+					if (const auto pPlayer = ecx->As<C_TFPlayer>())
+					{
+						vel = pPlayer->m_vecVelocity();
+						return;
+					}
+				}
 			}
 		}
 	}
