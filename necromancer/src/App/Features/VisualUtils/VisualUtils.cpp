@@ -75,8 +75,14 @@ Color_t CVisualUtils::GetEntityColor(C_TFPlayer* pLocal, C_BaseEntity* pEntity)
 			{
 				if (info.Cheater)
 					return CFG::Color_Cheater;
+				if (info.Targeted)
+					return CFG::Color_Targeted;
+				if (info.Nigger)
+					return CFG::Color_Nigger;
 				if (info.RetardLegit)
 					return CFG::Color_RetardLegit;
+				if (info.Streamer)
+					return CFG::Color_Streamer;
 			}
 		}
 	}
@@ -111,9 +117,9 @@ Color_t CVisualUtils::GetEntityColorForOutlines(C_TFPlayer* pLocal, C_BaseEntity
 			!pPlayer->IsInvisible() &&
 			!pPlayer->IsPlayerOnSteamFriendsList())
 		{
-			// Check if not a tagged player (cheater/retardlegit)
+			// Check if not a tagged player (cheater/targeted/nigger/retardlegit/streamer)
 			PlayerPriority info{};
-			if (!F::Players->GetInfo(pPlayer->entindex(), info) || (!info.Cheater && !info.RetardLegit))
+			if (!F::Players->GetInfo(pPlayer->entindex(), info) || (!info.Cheater && !info.Targeted && !info.Nigger && !info.RetardLegit && !info.Streamer))
 			{
 				return GetHealthColor(pPlayer->m_iHealth(), pPlayer->GetMaxHealth());
 			}
@@ -142,9 +148,9 @@ Color_t CVisualUtils::GetEntityColorForMaterials(C_TFPlayer* pLocal, C_BaseEntit
 			!pPlayer->IsInvisible() &&
 			!pPlayer->IsPlayerOnSteamFriendsList())
 		{
-			// Check if not a tagged player (cheater/retardlegit)
+			// Check if not a tagged player (cheater/targeted/nigger/retardlegit/streamer)
 			PlayerPriority info{};
-			if (!F::Players->GetInfo(pPlayer->entindex(), info) || (!info.Cheater && !info.RetardLegit))
+			if (!F::Players->GetInfo(pPlayer->entindex(), info) || (!info.Cheater && !info.Targeted && !info.Nigger && !info.RetardLegit && !info.Streamer))
 			{
 				return GetHealthColor(pPlayer->m_iHealth(), pPlayer->GetMaxHealth());
 			}

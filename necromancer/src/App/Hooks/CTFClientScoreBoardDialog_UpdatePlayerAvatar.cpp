@@ -29,8 +29,14 @@ static Color_t GetScoreboardColor(int iIndex)
 	{
 		if (priority.Cheater)
 			out = CFG::Color_Cheater;
+		else if (priority.Targeted)
+			out = CFG::Color_Targeted;
+		else if (priority.Nigger)
+			out = CFG::Color_Nigger;
 		else if (priority.RetardLegit)
 			out = CFG::Color_RetardLegit;
+		else if (priority.Streamer)
+			out = CFG::Color_Streamer;
 		else if (priority.Ignored)
 			out = CFG::Color_Friend;
 	}

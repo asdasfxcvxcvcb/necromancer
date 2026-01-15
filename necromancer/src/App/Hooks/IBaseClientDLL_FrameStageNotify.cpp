@@ -8,6 +8,7 @@
 #include "../Features/Crits/Crits.h"
 #include "../Features/Weather/Weather.h"
 #include "../Features/amalgam_port/AmalgamCompat.h"
+#include "../Features/Resolver/Resolver.h"
 
 MAKE_HOOK(IBaseClientDLL_FrameStageNotify, Memory::GetVFunc(I::BaseClientDLL, 35), void, __fastcall,
 	void* ecx, ClientFrameStage_t curStage)
@@ -106,6 +107,7 @@ MAKE_HOOK(IBaseClientDLL_FrameStageNotify, Memory::GetVFunc(I::BaseClientDLL, 35
 			F::LagRecords->UpdateDatagram();
 			F::LagRecords->UpdateRecords();
 			F::MovementSimulation->Store(); // Store movement records for strafe prediction
+			F::Resolver->FrameStageNotify(); // Update resolver data
 
 			// Clear velocity fix records if too large (prevent memory growth)
 			if (G::mapVelFixRecords.size() > 64)

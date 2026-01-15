@@ -281,6 +281,7 @@ void CESP::Run()
 		const bool bIgnoreTeammates = CFG::ESP_Players_Ignore_Teammates;
 		const bool bIgnoreEnemies = CFG::ESP_Players_Ignore_Enemies;
 		const bool bIgnoreTagged = CFG::ESP_Players_Ignore_Tagged;
+		const bool bIgnoreTaggedTeammates = CFG::ESP_Players_Ignore_Tagged_Teammates;
 		const bool bShowTeammateMedics = CFG::ESP_Players_Show_Teammate_Medics;
 
 		for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PLAYERS_ALL))
@@ -320,19 +321,28 @@ void CESP::Run()
 				// Get player info ONCE and reuse throughout
 				bHasPriorityInfo = F::Players->GetInfo(nPlayerIndex, playerPriority);
 				if (bHasPriorityInfo && !bIgnoreTagged)
-					bIsTagged = playerPriority.Cheater || playerPriority.RetardLegit || playerPriority.Ignored;
+					bIsTagged = playerPriority.Cheater || playerPriority.RetardLegit || playerPriority.Ignored || playerPriority.Targeted || playerPriority.Streamer || playerPriority.Nigger;
+
+				// Check if this is a tagged teammate that should be ignored
+				const int nPlayerTeam = pPlayer->m_iTeamNum();
+				const bool bIsTeammate = nPlayerTeam == nLocalTeam;
+				
+				if (bIsTagged && bIsTeammate && bIgnoreTaggedTeammates)
+				{
+					// Exception: show teammate medics if that option is enabled
+					if (!bShowTeammateMedics || pPlayer->m_iClass() != TF_CLASS_MEDIC)
+						continue;
+				}
 
 				if (!bIsFriend && !bIsTagged)
 				{
-					const int nPlayerTeam = pPlayer->m_iTeamNum();
-
-					if (bIgnoreTeammates && nPlayerTeam == nLocalTeam)
+					if (bIgnoreTeammates && bIsTeammate)
 					{
 						if (!bShowTeammateMedics || pPlayer->m_iClass() != TF_CLASS_MEDIC)
 							continue;
 					}
 
-					if (bIgnoreEnemies && nPlayerTeam != nLocalTeam)
+					if (bIgnoreEnemies && !bIsTeammate)
 						continue;
 				}
 			}
@@ -385,8 +395,12 @@ void CESP::Run()
 			{
 				if (playerPriority.Cheater)
 					nameColor = CFG::Color_Cheater;
+				else if (playerPriority.Targeted)
+					nameColor = CFG::Color_Targeted;
 				else if (playerPriority.RetardLegit)
 					nameColor = CFG::Color_RetardLegit;
+				else if (playerPriority.Streamer)
+					nameColor = CFG::Color_Streamer;
 				else if (playerPriority.Ignored)
 					nameColor = CFG::Color_Friend;
 			}
@@ -492,6 +506,34 @@ void CESP::Run()
 					tagOffset += nFontSmallTall + SPACING_Y;
 				}
 
+				// Draw Targeted tag (same priority as Cheater)
+				if (bHasPriorityInfo && playerPriority.Targeted)
+				{
+					H::Draw->String(
+						fontSmall,
+						xCenter,
+						baseY - tagOffset,
+						CFG::Color_Targeted,
+						POS_CENTERX,
+						"Targeted"
+					);
+					tagOffset += nFontSmallTall + SPACING_Y;
+				}
+
+				// Draw Nigger tag (same priority as Cheater)
+				if (bHasPriorityInfo && playerPriority.Nigger)
+				{
+					H::Draw->String(
+						fontSmall,
+						xCenter,
+						baseY - tagOffset,
+						CFG::Color_Nigger,
+						POS_CENTERX,
+						"Nigger"
+					);
+					tagOffset += nFontSmallTall + SPACING_Y;
+				}
+
 				// Draw Retard Legit tag - use cached priority info
 				if (bHasPriorityInfo && playerPriority.RetardLegit)
 				{
@@ -502,6 +544,20 @@ void CESP::Run()
 						CFG::Color_RetardLegit,
 						POS_CENTERX,
 						"Retard Legit"
+					);
+					tagOffset += nFontSmallTall + SPACING_Y;
+				}
+
+				// Draw Streamer tag (same priority as Retard Legit)
+				if (bHasPriorityInfo && playerPriority.Streamer)
+				{
+					H::Draw->String(
+						fontSmall,
+						xCenter,
+						baseY - tagOffset,
+						CFG::Color_Streamer,
+						POS_CENTERX,
+						"Streamer"
 					);
 					tagOffset += nFontSmallTall + SPACING_Y;
 				}

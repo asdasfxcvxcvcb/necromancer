@@ -8,6 +8,9 @@ struct PlayerPriority
 	bool Ignored{};
 	bool Cheater{};
 	bool RetardLegit{};
+	bool Targeted{};   // Same priority as Cheater for fakelag
+	bool Streamer{};   // Same priority as RetardLegit for fakelag
+	bool Nigger{};     // Same priority as Cheater for fakelag
 };
 
 struct PlayerStats

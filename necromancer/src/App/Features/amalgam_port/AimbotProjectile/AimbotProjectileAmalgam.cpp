@@ -6,6 +6,7 @@
 #include "../ProjectileSimulation/ProjectileSimulation.h"
 #include "../../EnginePrediction/EnginePrediction.h"
 #include "../Ticks/Ticks.h"
+#include "../../Players/Players.h"
 
 std::vector<Target_t> CAmalgamAimbotProjectile::GetTargets(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
 {
@@ -39,6 +40,15 @@ std::vector<Target_t> CAmalgamAimbotProjectile::GetTargets(C_TFPlayer* pLocal, C
 				continue;
 			if (pPlayer->InCond(TF_COND_HALLOWEEN_GHOST_MODE))
 				continue;
+
+			// Ignore untagged players when key is held
+			if (CFG::Aimbot_Ignore_Untagged_Key != 0 && H::Input->IsDown(CFG::Aimbot_Ignore_Untagged_Key))
+			{
+				PlayerPriority playerPriority = {};
+				if (!F::Players->GetInfo(pPlayer->entindex(), playerPriority) ||
+					(!playerPriority.Cheater && !playerPriority.Targeted && !playerPriority.Nigger && !playerPriority.RetardLegit && !playerPriority.Streamer))
+					continue;
+			}
 
 			Vec3 vPos = pPlayer->GetCenter();
 			Vec3 vAngleTo = Math::CalcAngle(vLocalPos, vPos);

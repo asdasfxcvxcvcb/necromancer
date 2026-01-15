@@ -399,6 +399,7 @@
     <ClCompile Include="src\App\Features\ProjectileSim\ProjectileSim.cpp" />
     <ClCompile Include="src\App\Features\Radar\Radar.cpp" />
     <ClCompile Include="src\App\Features\RapidFire\RapidFire.cpp" />
+    <ClCompile Include="src\App\Features\Resolver\Resolver.cpp" />
     <ClCompile Include="src\App\Features\SeedPred\SeedPred.cpp" />
     <ClCompile Include="src\App\Features\ShotgunDamagePrediction\ShotgunDamagePrediction.cpp" />
     <ClCompile Include="src\App\Features\ShotgunDamagePrediction\SmartShotgunAimbot.cpp" />
@@ -576,6 +577,7 @@
     <ClInclude Include="src\App\Features\ProjectileSim\ProjectileSim.h" />
     <ClInclude Include="src\App\Features\Radar\Radar.h" />
     <ClInclude Include="src\App\Features\RapidFire\RapidFire.h" />
+    <ClInclude Include="src\App\Features\Resolver\Resolver.h" />
     <ClInclude Include="src\App\Features\SeedPred\SeedPred.h" />
     <ClInclude Include="src\App\Features\ShotgunDamagePrediction\ShotgunDamagePrediction.h" />
     <ClInclude Include="src\App\Features\ShotgunDamagePrediction\SmartShotgunAimbot.h" />

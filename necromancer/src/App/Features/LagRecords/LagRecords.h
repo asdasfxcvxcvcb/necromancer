@@ -51,6 +51,9 @@ public:
 	bool DiffersFromCurrent(const LagRecord_t* pRecord);
 	bool IsSettingUpBones() { return m_bSettingUpBones; }
 	
+	// Resolver support - invalidate cached records when resolver changes
+	void ResolverUpdate(C_TFPlayer* pPlayer);
+	
 	// Fake latency functions
 	void AdjustPing(INetChannel* pNetChan);
 	void RestorePing(INetChannel* pNetChan);

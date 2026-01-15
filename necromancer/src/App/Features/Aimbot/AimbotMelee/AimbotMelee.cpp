@@ -2,6 +2,7 @@
 
 #include "../../CFG.h"
 #include "../../Crits/Crits.h"
+#include "../../Players/Players.h"
 
 int CAimbotMelee::GetSwingTime(C_TFWeaponBase* pWeapon)
 {
@@ -234,6 +235,15 @@ bool CAimbotMelee::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, MeleeT
 
 				if (CFG::Aimbot_Ignore_Taunting && pPlayer->InCond(TF_COND_TAUNTING))
 					continue;
+
+				// Ignore untagged players when key is held
+				if (CFG::Aimbot_Ignore_Untagged_Key != 0 && H::Input->IsDown(CFG::Aimbot_Ignore_Untagged_Key))
+				{
+					PlayerPriority playerPriority = {};
+					if (!F::Players->GetInfo(pPlayer->entindex(), playerPriority) ||
+						(!playerPriority.Cheater && !playerPriority.Targeted && !playerPriority.Nigger && !playerPriority.RetardLegit && !playerPriority.Streamer))
+						continue;
+				}
 			}
 
 			if (pPlayer->m_iTeamNum() != pLocal->m_iTeamNum() && CFG::Aimbot_Melee_Target_LagRecords)

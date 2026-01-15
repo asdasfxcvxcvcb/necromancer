@@ -96,6 +96,7 @@ bool CRapidFire::ShouldStart(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
 	// For projectile weapons: trigger when aimbot wants to fire (G::bFiring)
 	if (IsProjectileWeapon(pWeapon))
 	{
+		// Need full clip for DT - otherwise we fire once then waste ticks on reload
 		if (!G::bCanPrimaryAttack || pWeapon->IsInReload())
 			return false;
 		
@@ -114,18 +115,14 @@ bool CRapidFire::ShouldStart(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
 		{
 			if (!pWeapon->HasPrimaryAmmoForShot())
 				return false;
-			if (G::nTicksTargetSame < CFG::Exploits_RapidFire_Min_Ticks_Target_Same)
-				return false;
 			return true;
 		}
 		return false;
 	}
 
-	// For other hitscan weapons: need 24 ticks since can fire
-	if (G::nTicksSinceCanFire < 24)
-		return false;
-
-	if (G::nTicksTargetSame < CFG::Exploits_RapidFire_Min_Ticks_Target_Same)
+	// For other hitscan weapons: need only 1 tick since can fire
+	// This ensures DT triggers immediately when aimbot wants to shoot
+	if (G::nTicksSinceCanFire < 1)
 		return false;
 
 	return true;
@@ -143,16 +140,44 @@ void CRapidFire::Run(CUserCmd* pCmd, bool* pSendPacket)
 	if (!pWeapon)
 		return;
 
-	// Only interfere with firing if we're about to start a DT shift
-	// Don't block normal firing just because DT key is held - let aimbot work normally
-	// RapidFire should only take over when ShouldStart returns true
+	// For projectile weapons: don't interfere at all if not at full clip
+	// Let aimbot work normally - only take over when we can actually DT
+	if (IsProjectileWeapon(pWeapon))
+	{
+		if (pWeapon->IsInReload())
+			return;
+
+		const int nMaxClip = pWeapon->GetMaxClip1();
+		if (nMaxClip > 0 && pWeapon->m_iClip1() < nMaxClip)
+			return;
+	}
 
 	if (ShouldStart(pLocal, pWeapon))
 	{
 		const bool bIsProjectile = IsProjectileWeapon(pWeapon);
 		const bool bIsSticky = IsStickyWeapon(pWeapon);
 
+		// For projectile weapons: only proceed if aimbot set angles THIS tick
+		// This prevents using stale angles from previous ticks
+		if (bIsProjectile && !G::bSilentAngles && !G::bPSilentAngles)
+			return;
+
+		// Delay shot until we've been locked on target for configured ticks
+		// Skip this for projectile weapons - they need to fire immediately when aimbot calculates
+		if (!bIsProjectile && !bIsSticky)
+		{
+			if (G::nTicksTargetSame < CFG::Exploits_RapidFire_Min_Ticks_Target_Same)
+			{
+				pCmd->buttons &= ~IN_ATTACK;
+				G::bFiring = false;
+				return;
+			}
+		}
+
 		Shifting::bRapidFireWantShift = true;
+
+		// Mark that RapidFire is responsible for this shift
+		m_bRapidFireActive = true;
 
 		// Save the command - we'll modify buttons during shift
 		m_ShiftCmd = *pCmd;
@@ -195,8 +220,8 @@ bool CRapidFire::ShouldExitCreateMove(CUserCmd* pCmd)
 	if (!pLocal)
 		return false;
 
-	// Only handle RapidFire shifts, not Warp
-	if (Shifting::bShifting && !Shifting::bShiftingWarp)
+	// Only handle shifts that RapidFire actually started
+	if (Shifting::bShifting && !Shifting::bShiftingWarp && m_bRapidFireActive)
 	{
 		m_ShiftCmd.command_number = pCmd->command_number;
 
@@ -257,6 +282,10 @@ bool CRapidFire::ShouldExitCreateMove(CUserCmd* pCmd)
 
 		return true;
 	}
+
+	// Reset flag when shift ends
+	if (!Shifting::bShifting)
+		m_bRapidFireActive = false;
 
 	return false;
 }
@@ -345,7 +374,7 @@ int CRapidFire::GetTicks(C_TFWeaponBase* pWeapon)
 		return std::min(CFG::Exploits_RapidFire_Ticks, Shifting::nAvailableTicks);
 	}
 
-	// For projectile weapons: need full clip and not reloading
+	// For projectile weapons: need full clip for effective DT
 	if (IsProjectileWeapon(pWeapon))
 	{
 		if (!G::bCanPrimaryAttack)
@@ -358,8 +387,8 @@ int CRapidFire::GetTicks(C_TFWeaponBase* pWeapon)
 		return std::min(CFG::Exploits_RapidFire_Ticks, Shifting::nAvailableTicks);
 	}
 
-	// For hitscan weapons: need 24 ticks since can fire
-	if (G::nTicksSinceCanFire < 24)
+	// For hitscan weapons: need only 1 tick since can fire
+	if (G::nTicksSinceCanFire < 1)
 		return 0;
 
 	return std::min(CFG::Exploits_RapidFire_Ticks, Shifting::nAvailableTicks);

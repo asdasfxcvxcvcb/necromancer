@@ -50,7 +50,10 @@ MAKE_HOOK(VGuiMenuBuilder_AddMenuItem, Signatures::VGuiMenuBuilder_AddMenuItem.G
 			CALL_ORIGINAL(rcx, std::format("Tags for {}", s_sPlayerName).c_str(), "listtags", "tags");
 			CALL_ORIGINAL(rcx, info.Ignored ? "Remove Ignored" : "Add Ignored", "tag_ignored", "tags");
 			CALL_ORIGINAL(rcx, info.Cheater ? "Remove Cheater" : "Add Cheater", "tag_cheater", "tags");
+			CALL_ORIGINAL(rcx, info.Targeted ? "Remove Targeted" : "Add Targeted", "tag_targeted", "tags");
+			CALL_ORIGINAL(rcx, info.Nigger ? "Remove Nigger" : "Add Nigger", "tag_nigger", "tags");
 			CALL_ORIGINAL(rcx, info.RetardLegit ? "Remove Retard Legit" : "Add Retard Legit", "tag_retardlegit", "tags");
+			CALL_ORIGINAL(rcx, info.Streamer ? "Remove Streamer" : "Add Streamer", "tag_streamer", "tags");
 		}
 
 		return pReturn;
@@ -86,8 +89,11 @@ MAKE_HOOK(CTFClientScoreBoardDialog_OnCommand, Signatures::CTFClientScoreBoardDi
 			std::string tags = "Tags: ";
 			if (info.Ignored) tags += "[Ignored] ";
 			if (info.Cheater) tags += "[Cheater] ";
+			if (info.Targeted) tags += "[Targeted] ";
+			if (info.Nigger) tags += "[Nigger] ";
 			if (info.RetardLegit) tags += "[Retard Legit] ";
-			if (!info.Ignored && !info.Cheater && !info.RetardLegit) tags += "None";
+			if (info.Streamer) tags += "[Streamer] ";
+			if (!info.Ignored && !info.Cheater && !info.Targeted && !info.Nigger && !info.RetardLegit && !info.Streamer) tags += "None";
 			I::ClientModeShared->m_pChatElement->ChatPrintf(0, std::format("{} - {}", s_sPlayerName, tags).c_str());
 		}
 		return;
@@ -117,6 +123,33 @@ MAKE_HOOK(CTFClientScoreBoardDialog_OnCommand, Signatures::CTFClientScoreBoardDi
 		info.RetardLegit = !info.RetardLegit;
 		F::Players->Mark(s_iPlayerIndex, info);
 		I::ClientModeShared->m_pChatElement->ChatPrintf(0, std::format("{} {} Retard Legit tag", s_sPlayerName, info.RetardLegit ? "added to" : "removed from").c_str());
+		return;
+	}
+	else if (strcmp(command, "tag_targeted") == 0)
+	{
+		PlayerPriority info{};
+		F::Players->GetInfo(s_iPlayerIndex, info);
+		info.Targeted = !info.Targeted;
+		F::Players->Mark(s_iPlayerIndex, info);
+		I::ClientModeShared->m_pChatElement->ChatPrintf(0, std::format("{} {} Targeted tag", s_sPlayerName, info.Targeted ? "added to" : "removed from").c_str());
+		return;
+	}
+	else if (strcmp(command, "tag_streamer") == 0)
+	{
+		PlayerPriority info{};
+		F::Players->GetInfo(s_iPlayerIndex, info);
+		info.Streamer = !info.Streamer;
+		F::Players->Mark(s_iPlayerIndex, info);
+		I::ClientModeShared->m_pChatElement->ChatPrintf(0, std::format("{} {} Streamer tag", s_sPlayerName, info.Streamer ? "added to" : "removed from").c_str());
+		return;
+	}
+	else if (strcmp(command, "tag_nigger") == 0)
+	{
+		PlayerPriority info{};
+		F::Players->GetInfo(s_iPlayerIndex, info);
+		info.Nigger = !info.Nigger;
+		F::Players->Mark(s_iPlayerIndex, info);
+		I::ClientModeShared->m_pChatElement->ChatPrintf(0, std::format("{} {} Nigger tag", s_sPlayerName, info.Nigger ? "added to" : "removed from").c_str());
 		return;
 	}
 

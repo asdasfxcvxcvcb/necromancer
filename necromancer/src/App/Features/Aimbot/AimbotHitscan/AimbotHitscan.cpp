@@ -7,6 +7,8 @@
 #include "../../Menu/Menu.h"
 #include "../../Crits/Crits.h"
 #include "../../Hitchance/Hitchance.h"
+#include "../../Players/Players.h"
+#include "../../Resolver/Resolver.h"
 #include <algorithm>
 
 // Get the predicted shoot position accounting for duck state in the command
@@ -288,6 +290,15 @@ bool CAimbotHitscan::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, cons
 			if (CFG::Aimbot_Ignore_Taunting && pPlayer->InCond(TF_COND_TAUNTING))
 				continue;
 
+			// Ignore untagged players when key is held
+			if (CFG::Aimbot_Ignore_Untagged_Key != 0 && H::Input->IsDown(CFG::Aimbot_Ignore_Untagged_Key))
+			{
+				PlayerPriority playerPriority = {};
+				if (!F::Players->GetInfo(pPlayer->entindex(), playerPriority) ||
+					(!playerPriority.Cheater && !playerPriority.Targeted && !playerPriority.Nigger && !playerPriority.RetardLegit && !playerPriority.Streamer))
+					continue;
+			}
+
 			if (CFG::Aimbot_Hitscan_Target_LagRecords)
 			{
 				int nRecords = 0;
@@ -329,6 +340,40 @@ bool CAimbotHitscan::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, cons
 						nStartRecord = std::max(1, nRecords - 5);
 						// Preserve DT last tick avoidance when resetting end record
 						nEndRecord = bDoubletap && nRecords > 1 ? nRecords - 1 : nRecords;
+						
+						// RESOLVER SHOOT DETECTION: When scoped as sniper, prioritize the tick when enemy shot
+						// Cheaters must expose real angles to shoot, so this is the best time to hit them
+						if (CFG::Aimbot_Hitscan_Resolver && F::Resolver->ShouldUseShootRecord(pPlayer, pLocal, pWeapon))
+						{
+							const float flShootSimTime = F::Resolver->GetShootRecordSimTime(pPlayer);
+							
+							// Find the lag record closest to when they shot
+							for (int n = 1; n < nRecords; n++)
+							{
+								const auto pRecord = F::LagRecords->GetRecord(pPlayer, n, true);
+								if (!pRecord)
+									continue;
+									
+								// Check if this record matches the shoot time (within tolerance)
+								if (fabsf(pRecord->SimulationTime - flShootSimTime) < TICK_INTERVAL * 2.0f)
+								{
+									bHasValidLagRecords = true;
+									Vec3 vPos = SDKUtils::GetHitboxPosFromMatrix(pPlayer, nAimHitbox, const_cast<matrix3x4_t*>(pRecord->BoneMatrix));
+									Vec3 vAngleTo = Math::CalcAngle(vLocalPos, vPos);
+									const float flFOVTo = CFG::Aimbot_Hitscan_Sort == 0 ? Math::CalcFov(vLocalAngles, vAngleTo) : 0.0f;
+									const float flDistTo = vLocalPos.DistTo(vPos);
+
+									if (CFG::Aimbot_Hitscan_Sort == 0 && flFOVTo <= CFG::Aimbot_Hitscan_FOV)
+									{
+										// Add shoot record as HIGHEST priority target
+										m_vecTargets.emplace_back(AimTarget_t {
+											pPlayer, vPos, vAngleTo, flFOVTo, flDistTo
+										}, nAimHitbox, pRecord->SimulationTime, pRecord);
+									}
+									break; // Found the shoot record, stop searching
+								}
+							}
+						}
 						
 						// Prioritize the 3rd-from-last backtrack first (best balance, avoids blocking)
 						const int nPriorityRecord = nRecords - 3;
@@ -1146,6 +1191,12 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 			if (bShouldFire)
 			{
 				HandleFire(pCmd, pWeapon);
+				
+				// Track resolver shot for auto-resolve on miss
+				if (CFG::Aimbot_Hitscan_Resolver && target.Entity->GetClassId() == ETFClassIds::CTFPlayer)
+				{
+					F::Resolver->HitscanRan(pLocal, target.Entity->As<C_TFPlayer>(), pWeapon, target.AimedHitbox);
+				}
 			}
 			else
 			{

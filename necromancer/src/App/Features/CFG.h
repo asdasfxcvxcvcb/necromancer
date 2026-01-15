@@ -10,6 +10,7 @@ namespace CFG
 	CFGVAR(Aimbot_AutoShoot, true);
 	CFGVAR(Aimbot_Always_On, false);
 	CFGVAR(Aimbot_Key, 0);
+	CFGVAR(Aimbot_Ignore_Untagged_Key, 0); // When held, only target tagged players (Cheater/Targeted/RetardLegit/Streamer)
 	CFGVAR(Aimbot_Target_Players, true);
 	CFGVAR(Aimbot_Target_Buildings, true);
 	CFGVAR(Aimbot_Ignore_Friends, true);
@@ -45,6 +46,7 @@ namespace CFG
 	CFGVAR(Aimbot_Hitscan_Minigun_TapFire, false);
 	CFGVAR(Aimbot_Hitscan_Smart_Shotgun, false); // Smart shotgun damage prediction - waits for pellet visibility
 	CFGVAR(Aimbot_Hitscan_FakeLagFix, false); // Shoot on unchoke - when enemy sends update, their position is accurate
+	CFGVAR(Aimbot_Hitscan_Resolver, true); // Auto resolver - adjusts aim for fake angles
 
 	CFGVAR(Aimbot_Projectile_Active, true);
 	CFGVAR(Aimbot_Projectile_NoSpread, true);
@@ -242,6 +244,7 @@ namespace CFG
 	CFGVAR(ESP_Players_Ignore_Teammates, true);
 	CFGVAR(ESP_Players_Ignore_Invisible, false);
 	CFGVAR(ESP_Players_Ignore_Tagged, false); // When false, tagged players (Cheater/RetardLegit/Ignored) always show regardless of team
+	CFGVAR(ESP_Players_Ignore_Tagged_Teammates, false); // When true, don't show ESP for tagged teammates (except medics if Show_Teammate_Medics is on)
 	CFGVAR(ESP_Players_Show_Teammate_Medics, true);
 	CFGVAR(ESP_Players_Name, false);
 	CFGVAR(ESP_Players_Weapon_Name, false);
@@ -340,6 +343,7 @@ namespace CFG
 	CFGVAR(Materials_Players_Ignore_Enemies, false);
 	CFGVAR(Materials_Players_Ignore_Teammates, true);
 	CFGVAR(Materials_Players_Ignore_Tagged, false); // When false, tagged players (Cheater/RetardLegit/Ignored) always show regardless of team
+	CFGVAR(Materials_Players_Ignore_Tagged_Teammates, false); // When true, don't show chams for tagged teammates (except medics if Show_Teammate_Medics is on)
 	CFGVAR(Materials_Players_Ignore_LagRecords, false);
 	CFGVAR(Materials_Players_Show_Teammate_Medics, false);
 	CFGVAR(Materials_Players_LagRecords_Style, 1); //0 All 1 Last Only
@@ -397,6 +401,7 @@ namespace CFG
 	CFGVAR(Outlines_Players_Ignore_Enemies, false);
 	CFGVAR(Outlines_Players_Ignore_Teammates, true);
 	CFGVAR(Outlines_Players_Ignore_Tagged, false); // When false, tagged players (Cheater/RetardLegit/Ignored) always show regardless of team
+	CFGVAR(Outlines_Players_Ignore_Tagged_Teammates, false); // When true, don't show outlines for tagged teammates (except medics if Show_Teammate_Medics is on)
 	CFGVAR(Outlines_Players_Show_Teammate_Medics, true);
 
 	CFGVAR(Outlines_Buildings_Active, true);
@@ -772,6 +777,9 @@ namespace CFG
 	CFGVAR(Color_Invisible, Color_t({ 209, 216, 224, 255 }));
 	CFGVAR(Color_Cheater, Color_t({ 248, 253, 8, 255 }));
 	CFGVAR(Color_RetardLegit, Color_t({ 253, 3, 11, 255 }));
+	CFGVAR(Color_Targeted, Color_t({ 255, 100, 0, 255 }));   // Orange for Targeted (same priority as Cheater)
+	CFGVAR(Color_Streamer, Color_t({ 138, 43, 226, 255 }));  // Purple for Streamer (same priority as RetardLegit)
+	CFGVAR(Color_Nigger, Color_t({ 139, 69, 19, 255 }));     // Brown for Nigger (same priority as Cheater)
 	CFGVAR(Color_F2P, Color_t({ 200, 200, 200, 255 })); // F2P player tag color
 	CFGVAR(Color_Custom_Name, Color_t({ 255, 255, 255, 255 })); // Custom name color for all players
 	CFGVAR(Color_FakeModel, Color_t({ 0, 204, 204, 255 })); // Cyan for fake model

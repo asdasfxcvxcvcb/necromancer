@@ -18,6 +18,7 @@ class CRapidFire
 	bool m_bSetCommand = false;
 	bool m_bIsProjectileDT = false;  // True if this DT is for projectile weapon (post-fire cooldown skip)
 	bool m_bIsStickyDT = false;      // True if this DT is for sticky launcher (fires on release)
+	bool m_bRapidFireActive = false; // True if RapidFire started the current shift
 
 	Vec3 m_vShiftStart = {};
 	Vec3 m_vShiftVelocity = {};

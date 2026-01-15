@@ -45,7 +45,10 @@ void CPlayers::Parse()
 			m_Players[key] = {
 				playerEntry.value("ignored", false),
 				playerEntry.value("cheater", false),
-				playerEntry.value("retardlegit", false)
+				playerEntry.value("retardlegit", false),
+				playerEntry.value("targeted", false),
+				playerEntry.value("streamer", false),
+				playerEntry.value("nigger", false)
 			};
 		}
 	}
@@ -232,8 +235,11 @@ void CPlayers::Mark(int entindex, const PlayerPriority& info)
 	playerEntry["ignored"] = info.Ignored;
 	playerEntry["cheater"] = info.Cheater;
 	playerEntry["retardlegit"] = info.RetardLegit;
+	playerEntry["targeted"] = info.Targeted;
+	playerEntry["streamer"] = info.Streamer;
+	playerEntry["nigger"] = info.Nigger;
 
-	if (!info.Ignored && !info.Cheater && !info.RetardLegit)
+	if (!info.Ignored && !info.Cheater && !info.RetardLegit && !info.Targeted && !info.Streamer && !info.Nigger)
 	{
 		j.erase(std::string(playerInfo.guid));
 	}
@@ -304,7 +310,9 @@ void CPlayers::ImportLegacyPlayers()
 			m_Players[key] = {
 				playerEntry.value("ignored", false),
 				playerEntry.value("cheater", false),
-				playerEntry.value("retardlegit", false)
+				playerEntry.value("retardlegit", false),
+				playerEntry.value("targeted", false),
+				playerEntry.value("streamer", false)
 			};
 		}
 

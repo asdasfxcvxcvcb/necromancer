@@ -219,9 +219,10 @@ EFakeLagThreatType CFakeLag::CheckSniperThreat(C_TFPlayer* pLocal, int& outMinTi
 		const bool bHasTag = F::Players->GetInfo(pEnemy->entindex(), pInfo);
 
 		// Determine threat type based on tag
-		if (bHasTag && pInfo.Cheater)
+		// Targeted and Nigger have same priority as Cheater
+		if (bHasTag && (pInfo.Cheater || pInfo.Targeted || pInfo.Nigger))
 		{
-			// CHEATER TAG: 19-24 ticks, no sightline distance check needed
+			// CHEATER/TARGETED/NIGGER TAG: 19-24 ticks, no sightline distance check needed
 			if (eHighestThreat != EFakeLagThreatType::Cheater)
 			{
 				eHighestThreat = EFakeLagThreatType::Cheater;
@@ -232,7 +233,8 @@ EFakeLagThreatType CFakeLag::CheckSniperThreat(C_TFPlayer* pLocal, int& outMinTi
 		}
 
 		// Calculate OBB bounds based on tag type
-		const float flDistMult = (bHasTag && pInfo.RetardLegit) ? 2.0f : 1.0f;
+		// Streamer has same priority as RetardLegit
+		const float flDistMult = (bHasTag && (pInfo.RetardLegit || pInfo.Streamer)) ? 2.0f : 1.0f;
 		
 		Vec3 vMins = vLocalMins;
 		Vec3 vMaxs = vLocalMaxs;
@@ -249,9 +251,10 @@ EFakeLagThreatType CFakeLag::CheckSniperThreat(C_TFPlayer* pLocal, int& outMinTi
 		if (!Math::RayToOBB(pEnemy->GetShootPos(), vForward, vLocalOrigin, vMins, vMaxs, localTransform))
 			continue;
 
-		if (bHasTag && pInfo.RetardLegit)
+		// Streamer has same priority as RetardLegit
+		if (bHasTag && (pInfo.RetardLegit || pInfo.Streamer))
 		{
-			// RETARD LEGIT TAG: 6-12 ticks
+			// RETARD LEGIT/STREAMER TAG: 6-12 ticks
 			if (eHighestThreat != EFakeLagThreatType::Cheater)
 			{
 				eHighestThreat = EFakeLagThreatType::RetardLegit;

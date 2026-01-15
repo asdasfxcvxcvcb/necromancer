@@ -2464,6 +2464,7 @@ void CMenu::MainWindow()
 				CheckBox("Always On", CFG::Aimbot_Always_On);
 				if (!CFG::Aimbot_Always_On)
 					InputKey("Key", CFG::Aimbot_Key);
+				InputKey("Ignore Untagged", CFG::Aimbot_Ignore_Untagged_Key);
 
 				multiselect("Targets", AimbotTargets, {
 					{ "Players", CFG::Aimbot_Target_Players },
@@ -2523,6 +2524,7 @@ void CMenu::MainWindow()
 				CheckBox("Minigun Tapfire", CFG::Aimbot_Hitscan_Minigun_TapFire);
 				CheckBox("Smart Shotgun (Beta)", CFG::Aimbot_Hitscan_Smart_Shotgun);
 				CheckBox("FakeLag Fix", CFG::Aimbot_Hitscan_FakeLagFix);
+				CheckBox("Resolver", CFG::Aimbot_Hitscan_Resolver);
 
 				// Track previous aim type to backup/restore FOV when switching to/from triggerbot
 				static int nPrevAimType = CFG::Aimbot_Hitscan_Aim_Type;
@@ -2939,7 +2941,8 @@ void CMenu::MainWindow()
 					{ "Enemies", CFG::ESP_Players_Ignore_Enemies },
 					{ "Teammates", CFG::ESP_Players_Ignore_Teammates },
 					{ "Invisible", CFG::ESP_Players_Ignore_Invisible },
-					{ "Tagged", CFG::ESP_Players_Ignore_Tagged }
+					{ "Tagged", CFG::ESP_Players_Ignore_Tagged },
+					{ "Tagged Teammates", CFG::ESP_Players_Ignore_Tagged_Teammates }
 					});
 
 				multiselect("Draw", PlayerDraw, {
@@ -3151,7 +3154,8 @@ void CMenu::MainWindow()
 					{ "Friends", CFG::Materials_Players_Ignore_Friends },
 					{ "Enemies", CFG::Materials_Players_Ignore_Enemies },
 					{ "Teammates", CFG::Materials_Players_Ignore_Teammates },
-					{ "Tagged", CFG::Materials_Players_Ignore_Tagged }
+					{ "Tagged", CFG::Materials_Players_Ignore_Tagged },
+					{ "Tagged Teammates", CFG::Materials_Players_Ignore_Tagged_Teammates }
 					});
 
 				CheckBox("Show Team Medics", CFG::Materials_Players_Show_Teammate_Medics);
@@ -3273,7 +3277,8 @@ void CMenu::MainWindow()
 					{ "Friends", CFG::Outlines_Players_Ignore_Friends },
 					{ "Enemies", CFG::Outlines_Players_Ignore_Enemies },
 					{ "Teammates", CFG::Outlines_Players_Ignore_Teammates },
-					{ "Tagged", CFG::Outlines_Players_Ignore_Tagged }
+					{ "Tagged", CFG::Outlines_Players_Ignore_Tagged },
+					{ "Tagged Teammates", CFG::Outlines_Players_Ignore_Tagged_Teammates }
 					});
 
 				CheckBox("Show Team Medics", CFG::Outlines_Players_Show_Teammate_Medics);
@@ -3683,7 +3688,10 @@ void CMenu::MainWindow()
 				ColorPicker("Target", CFG::Color_Target);
 				ColorPicker("Invulnerable", CFG::Color_Invulnerable);
 				ColorPicker("Cheater", CFG::Color_Cheater);
+				ColorPicker("Targeted", CFG::Color_Targeted);
+				ColorPicker("Nigger", CFG::Color_Nigger);
 				ColorPicker("Retard Legit", CFG::Color_RetardLegit);
+				ColorPicker("Streamer", CFG::Color_Streamer);
 				ColorPicker("F2P", CFG::Color_F2P);
 				ColorPicker("Invisible", CFG::Color_Invisible);
 				ColorPicker("Over Heal", CFG::Color_OverHeal);
@@ -4577,8 +4585,14 @@ void CMenu::MainWindow()
 					nameColor = CFG::Color_Friend;
 				else if (custom_info.Cheater)
 					nameColor = CFG::Color_Cheater;
+				else if (custom_info.Targeted)
+					nameColor = CFG::Color_Targeted;
+				else if (custom_info.Nigger)
+					nameColor = CFG::Color_Nigger;
 				else if (custom_info.RetardLegit)
 					nameColor = CFG::Color_RetardLegit;
+				else if (custom_info.Streamer)
+					nameColor = CFG::Color_Streamer;
 				else if (pResource)
 				{
 					// Use team color if no priority set
@@ -5019,10 +5033,16 @@ void CMenu::MainWindow()
 		Color_t nameColor = bIsTeammate ? CFG::Color_Teammate : CFG::Color_Enemy;
 		if (custom_info.Cheater)
 			nameColor = CFG::Color_Cheater;
+		else if (custom_info.Targeted)
+			nameColor = CFG::Color_Targeted;
+		else if (custom_info.Nigger)
+			nameColor = CFG::Color_Nigger;
 		else if (custom_info.Ignored)
 			nameColor = CFG::Color_Friend;
 		else if (custom_info.RetardLegit)
 			nameColor = CFG::Color_RetardLegit;
+		else if (custom_info.Streamer)
+			nameColor = CFG::Color_Streamer;
 
 		H::Draw->String(H::Fonts->Get(EFonts::Menu), nInfoX, nInfoY, nameColor, POS_DEFAULT, "%s", player_info.name);
 		nInfoY += H::Fonts->Get(EFonts::Menu).m_nTall + 2;
@@ -5211,6 +5231,7 @@ void CMenu::MainWindow()
 			m_nCursorY += CFG::Menu_Spacing_Y;
 
 			// Radio-style tag buttons - only one can be active at a time
+			// Row 1: Ignored, Cheater, Targeted
 			int tagStartX = m_nCursorX;
 			int tagY = m_nCursorY;
 
@@ -5218,9 +5239,9 @@ void CMenu::MainWindow()
 			if (playerListButton(L"ignored", 80, custom_info.Ignored ? CFG::Color_Friend : CFG::Menu_Text_Inactive, true))
 			{
 				if (!custom_info.Ignored)
-					F::Players->Mark(nSelectedPlayerIndex, { true, false, false }); // Set Ignored, clear others
+					F::Players->Mark(nSelectedPlayerIndex, { true, false, false, false, false, false }); // Set Ignored, clear others
 				else
-					F::Players->Mark(nSelectedPlayerIndex, { false, false, false }); // Clear all
+					F::Players->Mark(nSelectedPlayerIndex, { false, false, false, false, false, false }); // Clear all
 			}
 
 			m_nCursorX += m_nLastButtonW + CFG::Menu_Spacing_X;
@@ -5230,25 +5251,63 @@ void CMenu::MainWindow()
 			if (playerListButton(L"cheater", 80, custom_info.Cheater ? CFG::Color_Cheater : CFG::Menu_Text_Inactive, true))
 			{
 				if (!custom_info.Cheater)
-					F::Players->Mark(nSelectedPlayerIndex, { false, true, false }); // Set Cheater, clear others
+					F::Players->Mark(nSelectedPlayerIndex, { false, true, false, false, false, false }); // Set Cheater, clear others
 				else
-					F::Players->Mark(nSelectedPlayerIndex, { false, false, false }); // Clear all
+					F::Players->Mark(nSelectedPlayerIndex, { false, false, false, false, false, false }); // Clear all
 			}
 
 			m_nCursorX += m_nLastButtonW + CFG::Menu_Spacing_X;
 			m_nCursorY = tagY;
 
+			// Targeted button (same priority as Cheater)
+			if (playerListButton(L"targeted", 80, custom_info.Targeted ? CFG::Color_Targeted : CFG::Menu_Text_Inactive, true))
+			{
+				if (!custom_info.Targeted)
+					F::Players->Mark(nSelectedPlayerIndex, { false, false, false, true, false, false }); // Set Targeted, clear others
+				else
+					F::Players->Mark(nSelectedPlayerIndex, { false, false, false, false, false, false }); // Clear all
+			}
+
+			// Row 2: Retard Legit, Streamer, Nigger
+			m_nCursorX = tagStartX;
+			m_nCursorY = tagY + H::Fonts->Get(EFonts::Menu).m_nTall + CFG::Menu_Spacing_Y * 3;
+			int tagY2 = m_nCursorY;
+
 			// Retard Legit button
 			if (playerListButton(L"retard legit", 80, custom_info.RetardLegit ? CFG::Color_RetardLegit : CFG::Menu_Text_Inactive, true))
 			{
 				if (!custom_info.RetardLegit)
-					F::Players->Mark(nSelectedPlayerIndex, { false, false, true }); // Set RetardLegit, clear others
+					F::Players->Mark(nSelectedPlayerIndex, { false, false, true, false, false, false }); // Set RetardLegit, clear others
 				else
-					F::Players->Mark(nSelectedPlayerIndex, { false, false, false }); // Clear all
+					F::Players->Mark(nSelectedPlayerIndex, { false, false, false, false, false, false }); // Clear all
+			}
+
+			m_nCursorX += m_nLastButtonW + CFG::Menu_Spacing_X;
+			m_nCursorY = tagY2;
+
+			// Streamer button (same priority as Retard Legit)
+			if (playerListButton(L"streamer", 80, custom_info.Streamer ? CFG::Color_Streamer : CFG::Menu_Text_Inactive, true))
+			{
+				if (!custom_info.Streamer)
+					F::Players->Mark(nSelectedPlayerIndex, { false, false, false, false, true, false }); // Set Streamer, clear others
+				else
+					F::Players->Mark(nSelectedPlayerIndex, { false, false, false, false, false, false }); // Clear all
+			}
+
+			m_nCursorX += m_nLastButtonW + CFG::Menu_Spacing_X;
+			m_nCursorY = tagY2;
+
+			// Nigger button (same priority as Cheater)
+			if (playerListButton(L"nigger", 80, custom_info.Nigger ? CFG::Color_Nigger : CFG::Menu_Text_Inactive, true))
+			{
+				if (!custom_info.Nigger)
+					F::Players->Mark(nSelectedPlayerIndex, { false, false, false, false, false, true }); // Set Nigger, clear others
+				else
+					F::Players->Mark(nSelectedPlayerIndex, { false, false, false, false, false, false }); // Clear all
 			}
 
 			m_nCursorX = tagStartX;
-			m_nCursorY = tagY + H::Fonts->Get(EFonts::Menu).m_nTall + CFG::Menu_Spacing_Y * 2;
+			m_nCursorY = tagY2 + H::Fonts->Get(EFonts::Menu).m_nTall + CFG::Menu_Spacing_Y * 2;
 		}
 		GroupBoxEnd();
 

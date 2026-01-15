@@ -596,6 +596,7 @@ void CMaterials::Run()
 		const bool bIgnoreTeammates = CFG::Materials_Players_Ignore_Teammates;
 		const bool bIgnoreEnemies = CFG::Materials_Players_Ignore_Enemies;
 		const bool bIgnoreTagged = CFG::Materials_Players_Ignore_Tagged;
+		const bool bIgnoreTaggedTeammates = CFG::Materials_Players_Ignore_Tagged_Teammates;
 		const bool bShowTeammateMedics = CFG::Materials_Players_Show_Teammate_Medics;
 		
 		// Get entity group once
@@ -625,29 +626,38 @@ void CMaterials::Run()
 			if (bIgnoreFriends && bIsFriend)
 				continue;
 
-			// Check if player is tagged (Cheater/RetardLegit/Ignored)
+			// Check if player is tagged (Cheater/RetardLegit/Ignored/Targeted/Streamer/Nigger)
 			bool bIsTagged = false;
 			if (!bIgnoreTagged)
 			{
 				PlayerPriority playerPriority = {};
 				if (F::Players->GetInfo(pPlayer->entindex(), playerPriority))
 				{
-					bIsTagged = playerPriority.Cheater || playerPriority.RetardLegit || playerPriority.Ignored;
+					bIsTagged = playerPriority.Cheater || playerPriority.RetardLegit || playerPriority.Ignored || playerPriority.Targeted || playerPriority.Streamer || playerPriority.Nigger;
 				}
+			}
+
+			// Check if this is a tagged teammate that should be ignored
+			const int nPlayerTeam = pPlayer->m_iTeamNum();
+			const bool bIsTeammate = nPlayerTeam == nLocalTeam;
+			
+			if (bIsTagged && bIsTeammate && bIgnoreTaggedTeammates)
+			{
+				// Exception: show teammate medics if that option is enabled
+				if (!bShowTeammateMedics || pPlayer->m_iClass() != TF_CLASS_MEDIC)
+					continue;
 			}
 
 			// Skip team/enemy filtering if player is tagged (and not ignoring tagged)
 			if (!bIsLocal && !bIsFriend && !bIsTagged)
 			{
-				const int nPlayerTeam = pPlayer->m_iTeamNum();
-				
-				if (bIgnoreTeammates && nPlayerTeam == nLocalTeam)
+				if (bIgnoreTeammates && bIsTeammate)
 				{
 					if (!bShowTeammateMedics || pPlayer->m_iClass() != TF_CLASS_MEDIC)
 						continue;
 				}
 
-				if (bIgnoreEnemies && nPlayerTeam != nLocalTeam)
+				if (bIgnoreEnemies && !bIsTeammate)
 					continue;
 			}
 

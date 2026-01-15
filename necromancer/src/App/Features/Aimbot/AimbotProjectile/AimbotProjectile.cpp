@@ -3,6 +3,7 @@
 #include "../../CFG.h"
 #include "../../MovementSimulation/MovementSimulation.h"
 #include "../../ProjectileSim/ProjectileSim.h"
+#include "../../Players/Players.h"
 
 void DrawProjPath(const CUserCmd* pCmd, float time)
 {
@@ -1209,6 +1210,15 @@ bool CAimbotProjectile::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, c
 
 				if (CFG::Aimbot_Ignore_Taunting && pPlayer->InCond(TF_COND_TAUNTING))
 					continue;
+
+				// Ignore untagged players when key is held
+				if (CFG::Aimbot_Ignore_Untagged_Key != 0 && H::Input->IsDown(CFG::Aimbot_Ignore_Untagged_Key))
+				{
+					PlayerPriority playerPriority = {};
+					if (!F::Players->GetInfo(pPlayer->entindex(), playerPriority) ||
+						(!playerPriority.Cheater && !playerPriority.Targeted && !playerPriority.Nigger && !playerPriority.RetardLegit && !playerPriority.Streamer))
+						continue;
+				}
 			}
 
 			else

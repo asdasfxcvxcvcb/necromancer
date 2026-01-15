@@ -168,7 +168,7 @@ void CApp::Start()
 		msgColor = { 28, 179, 210, 255 };
 	}
 
-	I::CVar->ConsoleColorPrintf(msgColor, "[Necromancer beta] loaded and bloated! haha just kidding, anyways this cheat was made by blizzman, enjoy!\n");
+	I::CVar->ConsoleColorPrintf(msgColor, "[Necromancer] loaded and bloated! haha just kidding, anyways this cheat was made by blizzman, enjoy!\n");
 }
 
 void CApp::Loop()
@@ -217,7 +217,7 @@ void CApp::Shutdown()
 		}
 	}
 	
-	I::CVar->ConsoleColorPrintf({ 255, 70, 70, 255 }, "[Necromancer beta] Unloaded, enjoy being a retarded legit!\n");
+	I::CVar->ConsoleColorPrintf({ 255, 70, 70, 255 }, "[Necromancer] Unloaded, enjoy being a retarded legit!\n");
 
 	// Shutdown crash handler last
 	CrashHandler->Shutdown();

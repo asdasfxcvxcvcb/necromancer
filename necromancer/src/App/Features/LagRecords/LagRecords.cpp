@@ -379,3 +379,19 @@ float CLagRecords::GetFakeLatency() const
 	// sequence numbers, which is separate from the interp system that sends cl_interp to server.
 	return m_flFakeLatency;
 }
+
+
+// Resolver support - when resolver angles change, we need to invalidate cached records
+// so they get rebuilt with the new resolver angles
+void CLagRecords::ResolverUpdate(C_TFPlayer* pPlayer)
+{
+	if (!pPlayer)
+		return;
+		
+	// Clear all cached records for this player
+	// They will be rebuilt on the next frame with updated resolver angles
+	if (m_LagRecords.contains(pPlayer))
+	{
+		m_LagRecords[pPlayer].clear();
+	}
+}

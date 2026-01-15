@@ -1,6 +1,7 @@
 #include "AimbotWrangler.h"
 #include "../../CFG.h"
 #include "../../amalgam_port/AmalgamCompat.h"
+#include "../../Players/Players.h"
 #include <algorithm>
 #include <cmath>
 
@@ -401,6 +402,15 @@ bool CAimbotWrangler::GetHitscanTarget(C_TFPlayer* pLocal, C_ObjectSentrygun* pS
 			if (CFG::Aimbot_Ignore_Taunting && pPlayer->InCond(TF_COND_TAUNTING))
 				continue;
 			
+			// Ignore untagged players when key is held
+			if (CFG::Aimbot_Ignore_Untagged_Key != 0 && H::Input->IsDown(CFG::Aimbot_Ignore_Untagged_Key))
+			{
+				PlayerPriority playerPriority = {};
+				if (!F::Players->GetInfo(pPlayer->entindex(), playerPriority) ||
+					(!playerPriority.Cheater && !playerPriority.Targeted && !playerPriority.Nigger && !playerPriority.RetardLegit && !playerPriority.Streamer))
+					continue;
+			}
+			
 			// Target body for sentry (more reliable)
 			Vec3 vPos = pPlayer->GetHitboxPos(HITBOX_PELVIS);
 			
@@ -515,6 +525,15 @@ bool CAimbotWrangler::GetRocketTarget(C_TFPlayer* pLocal, C_ObjectSentrygun* pSe
 			
 			if (CFG::Aimbot_Ignore_Taunting && pPlayer->InCond(TF_COND_TAUNTING))
 				continue;
+			
+			// Ignore untagged players when key is held
+			if (CFG::Aimbot_Ignore_Untagged_Key != 0 && H::Input->IsDown(CFG::Aimbot_Ignore_Untagged_Key))
+			{
+				PlayerPriority playerPriority = {};
+				if (!F::Players->GetInfo(pPlayer->entindex(), playerPriority) ||
+					(!playerPriority.Cheater && !playerPriority.Targeted && !playerPriority.Nigger && !playerPriority.RetardLegit && !playerPriority.Streamer))
+					continue;
+			}
 			
 			// Initial position for FOV check (from player's view)
 			Vec3 vCurrentPos = pPlayer->GetCenter();
