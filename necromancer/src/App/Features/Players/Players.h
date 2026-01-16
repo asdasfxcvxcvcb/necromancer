@@ -36,11 +36,17 @@ class CPlayers
 	std::set<uint64_t> m_CurrentSessionPlayers; // Players seen this session (to track LastSeen properly)
 	std::filesystem::path m_LogPath;
 	std::filesystem::path m_StatsPath;
+	
+	// Deferred save system
+	bool m_bStatsDirty = false;
+	std::chrono::steady_clock::time_point m_flLastStatsChange;
 
 public:
 	void Parse();
 	void ParseStats();
 	void SaveStats();
+	void MarkStatsDirty();
+	void CheckDeferredSave(); // Call this every frame
 	void ImportLegacyPlayers(); // Import players.json from old seonwdde folder
 	void Mark(int entindex, const PlayerPriority& info);
 	bool GetInfo(int entindex, PlayerPriority& out);

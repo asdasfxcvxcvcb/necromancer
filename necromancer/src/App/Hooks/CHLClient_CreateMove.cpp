@@ -19,6 +19,7 @@
 #include "../Features/amalgam_port/AmalgamCompat.h"
 #include "../Features/amalgam_port/Ticks/Ticks.h"
 #include "../Features/Resolver/Resolver.h"
+#include "../Features/Players/Players.h"
 
 // Taunt delay processing - defined in IVEngineClient013_ClientCmd.cpp
 extern void ProcessTauntDelay();
@@ -96,6 +97,9 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 	G::LastUserCmd = G::CurrentUserCmd ? G::CurrentUserCmd : pCmd;
 	G::CurrentUserCmd = pCmd;
 	G::OriginalCmd = *pCmd;
+	
+	// Check for deferred player stats save (prevents freeze on kills)
+	F::Players->CheckDeferredSave();
 	
 	// Store TRUE original angles before ANY modification
 	// This is used for view restoration and should NEVER be modified by anti-cheat

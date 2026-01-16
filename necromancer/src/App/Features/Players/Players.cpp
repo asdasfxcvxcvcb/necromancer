@@ -126,6 +126,29 @@ void CPlayers::SaveStats()
 
 	outFile << std::setw(4) << j;
 	outFile.close();
+	
+	m_bStatsDirty = false;
+}
+
+void CPlayers::MarkStatsDirty()
+{
+	m_bStatsDirty = true;
+	m_flLastStatsChange = std::chrono::steady_clock::now();
+}
+
+void CPlayers::CheckDeferredSave()
+{
+	if (!m_bStatsDirty)
+		return;
+	
+	// Save after 2 seconds of no changes
+	auto now = std::chrono::steady_clock::now();
+	auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_flLastStatsChange).count();
+	
+	if (elapsed >= 2000) // 2 seconds
+	{
+		SaveStats();
+	}
 }
 
 void CPlayers::RecordEncounter(uint64_t steamID64)
@@ -155,7 +178,7 @@ void CPlayers::RecordEncounter(uint64_t steamID64)
 	stats.LastSeen = stats.MostRecent;
 	stats.MostRecent = now;
 	
-	SaveStats();
+	MarkStatsDirty();
 }
 
 void CPlayers::RecordKill(uint64_t steamID64)
@@ -166,7 +189,7 @@ void CPlayers::RecordKill(uint64_t steamID64)
 	stats.Kills++;
 	// Don't update LastSeen on kills - only on encounters
 	
-	SaveStats();
+	MarkStatsDirty();
 }
 
 void CPlayers::RecordDeath(uint64_t steamID64)
@@ -177,7 +200,7 @@ void CPlayers::RecordDeath(uint64_t steamID64)
 	stats.Deaths++;
 	// Don't update LastSeen on deaths - only on encounters
 	
-	SaveStats();
+	MarkStatsDirty();
 }
 
 bool CPlayers::GetStats(uint64_t steamID64, PlayerStats& out)
