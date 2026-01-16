@@ -4,6 +4,7 @@
 #include "../Features/CFG.h"
 #include "../Features/NetworkFix/NetworkFix.h"
 #include "../Features/MiscVisuals/MiscVisuals.h"
+#include "../Features/ChatESP/ChatESP.h"
 
 MAKE_HOOK(IBaseClientDLL_LevelInitPostEntity, Memory::GetVFunc(I::BaseClientDLL, 6), void, __fastcall,
 	void* ecx)
@@ -21,6 +22,9 @@ MAKE_HOOK(IBaseClientDLL_LevelInitPostEntity, Memory::GetVFunc(I::BaseClientDLL,
 	
 	// Reapply aspect ratio on level change
 	F::MiscVisuals->ReapplyAspectRatio();
+	
+	// Clear chat bubbles from previous map
+	F::ChatESP->OnLevelInit();
 
 	if (CFG::Visuals_Chat_Player_List_Info)
 	{

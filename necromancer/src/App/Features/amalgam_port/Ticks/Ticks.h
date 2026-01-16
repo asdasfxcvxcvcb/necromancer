@@ -115,8 +115,3 @@ public:
 };
 
 MAKE_SINGLETON_SCOPED(CAmalgamTicks, AmalgamTicks, F);
-
-// Alias for compatibility with Amalgam code
-namespace F {
-    inline CAmalgamTicks& Ticks = *F::AmalgamTicks;
-}

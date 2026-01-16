@@ -21,14 +21,40 @@ bool CFakeLagFix::ShouldShoot(C_TFPlayer* pTarget)
 		}
 	}
 
-	// Calculate how many ticks they choked
-	const int nChokedTicks = GetChokedTicks(pTarget);
-
-	// nChokedTicks >= 1 means they just sent an update (simtime changed) - their position is fresh, shoot now
-	// nChokedTicks == 0 means no simtime change this tick - they're either idle or we're waiting for update
-	// For idle targets (standing still), simtime won't change, so we should still allow shooting
-	// The key is: only block when we KNOW they're fakelagging (high choke count in previous frames)
-	return nChokedTicks >= 1;
+	const int nEntIndex = pTarget->entindex();
+	const float flCurrentSimTime = pTarget->m_flSimulationTime();
+	
+	// Check if simtime changed (player sent an update)
+	const auto it = m_mLastSimTime.find(nEntIndex);
+	const bool bSimTimeChanged = (it == m_mLastSimTime.end() || it->second != flCurrentSimTime);
+	
+	if (bSimTimeChanged)
+	{
+		// Simtime changed - they sent an update
+		const int nChokedTicks = GetChokedTicks(pTarget);
+		
+		// Check if they were choking before (waited multiple ticks)
+		const auto tickIt = m_mTicksSinceUpdate.find(nEntIndex);
+		const int nTicksSinceUpdate = (tickIt != m_mTicksSinceUpdate.end()) ? tickIt->second : 0;
+		
+		// Update tracking
+		m_mLastSimTime[nEntIndex] = flCurrentSimTime;
+		m_mTicksSinceUpdate[nEntIndex] = 0;
+		
+		// Only shoot if they were actually choking (unchoke event)
+		// nChokedTicks >= FAKELAG_CHOKE_THRESHOLD means they choked multiple ticks
+		// OR if they weren't choking, allow shooting (normal case)
+		return nChokedTicks >= FAKELAG_CHOKE_THRESHOLD || nTicksSinceUpdate < FAKELAG_CHOKE_THRESHOLD;
+	}
+	else
+	{
+		// Simtime didn't change - they're choking or idle
+		// Increment ticks since last update
+		m_mTicksSinceUpdate[nEntIndex]++;
+		
+		// Don't shoot while waiting for unchoke
+		return false;
+	}
 }
 
 int CFakeLagFix::GetChokedTicks(C_TFPlayer* pPlayer)

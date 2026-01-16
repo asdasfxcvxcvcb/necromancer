@@ -656,10 +656,11 @@ namespace CFG
 	CFGVAR(Exploits_RapidFire_Ticks, 21);
 	CFGVAR(Exploits_RapidFire_Min_Ticks_Target_Same, 3);
 	CFGVAR(Exploits_RapidFire_Antiwarp, true);
-	CFGVAR(Exploits_RapidFire_Max_Commands, 14);  // Max commands per packet during NORMAL play (lower = better for high ping)
-	CFGVAR(Exploits_RapidFire_DT_Commands, 23);   // Max commands per packet during DOUBLETAP (higher = faster DT)
+	CFGVAR(Exploits_RapidFire_Max_Commands, 15);  // Max commands per packet during NORMAL play
+	CFGVAR(Exploits_RapidFire_DT_Commands, 24);   // Max commands per packet during DOUBLETAP
 	CFGVAR(Exploits_RapidFire_Tick_Tracking, 0);  // 0=Disabled, 1=Linear
 	CFGVAR(Exploits_RapidFire_Deficit_Tracking, true);  // Auto-recover when server rejects commands
+	CFGVAR(Exploits_RapidFire_Auto_Settings, true);  // Auto-adjust based on ping
 	
 	CFGVAR(Exploits_Warp_Key, 0);
 	CFGVAR(Exploits_Warp_Mode, 1); //0 Slow 1 Full

@@ -6,7 +6,10 @@ enum class EFonts
 {
 	Menu,
 	ESP, ESP_CONDS, ESP_SMALL,
-	CritIndicator // Dynamic font for crit indicator text mode
+	CritIndicator, // Dynamic font for crit indicator text mode
+	ChatESP_Large,   // ChatESP fonts at different sizes for distance scaling
+	ChatESP_Medium,
+	ChatESP_Small
 };
 
 class CFont

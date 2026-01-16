@@ -9,10 +9,16 @@
 // Based on Amalgam's implementation.
 // This is ADDITIVE - it doesn't change your existing DT logic,
 // it just makes prediction more accurate during shifts.
+//
+// With CL_Move Rebuild:
+// - Charging: We skip CL_Move calls, banking ticks
+// - Shifting: We call CL_Move multiple times, spending banked ticks
+// - The tickbase adjustment ensures prediction matches server state
 // ============================================
 
 #include "../../SDK/SDK.h"
 #include "../Features/EnginePrediction/EnginePrediction.h"
+#include "../Features/TickbaseManip/TickbaseManip.h"
 
 // Signature for CPrediction::RunSimulation (different from RunCommand!)
 // RunSimulation is called for each command during prediction

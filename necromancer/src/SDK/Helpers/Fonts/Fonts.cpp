@@ -7,6 +7,9 @@ void CFontManager::Reload()
 	m_mapFonts[EFonts::ESP_CONDS] = { "Small Fonts", 9, FONTFLAG_OUTLINE, 0 };
 	m_mapFonts[EFonts::ESP_SMALL] = { "Small Fonts", 11, FONTFLAG_OUTLINE, 0 };
 	m_mapFonts[EFonts::CritIndicator] = { "Small Fonts", 11, FONTFLAG_OUTLINE, 0 }; // Default size, will be updated dynamically
+	m_mapFonts[EFonts::ChatESP_Large] = { "Small Fonts", 11, FONTFLAG_OUTLINE, 0 };  // Close range
+	m_mapFonts[EFonts::ChatESP_Medium] = { "Small Fonts", 9, FONTFLAG_OUTLINE, 0 };  // Medium range
+	m_mapFonts[EFonts::ChatESP_Small] = { "Small Fonts", 7, FONTFLAG_OUTLINE, 0 };   // Far range
 
 	for (auto &v : m_mapFonts)
 	{

@@ -36,7 +36,6 @@
     <ClCompile Include="src\App\Features\RapidFire\RapidFire.cpp" />
     <ClCompile Include="src\App\Features\SeedPred\SeedPred.cpp" />
     <ClCompile Include="src\App\Features\ShotgunDamagePrediction\ShotgunDamagePrediction.cpp" />
-    <ClCompile Include="src\App\Features\ShotgunDamagePrediction\SmartShotgunAimbot.cpp" />
     <ClCompile Include="src\App\Features\SpectatorList\SpectatorList.cpp" />
     <ClCompile Include="src\App\Features\SpyCamera\SpyCamera.cpp" />
     <ClCompile Include="src\App\Features\SpyWarning\SpyWarning.cpp" />
@@ -164,6 +163,8 @@
     <ClCompile Include="src\App\Hooks\CInventoryManager_ShowItemsPickedUp.cpp" />
     <ClCompile Include="src\App\Hooks\NotificationQueue_Add.cpp" />
     <ClCompile Include="src\App\Features\Resolver\Resolver.cpp" />
+    <ClCompile Include="src\App\Features\TF2Glow\TF2Glow.cpp" />
+    <ClCompile Include="src\App\Features\TickbaseManip\TickbaseManip.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\nlohmann\json_fwd.hpp" />
@@ -209,7 +210,6 @@
     <ClInclude Include="src\App\Features\RapidFire\RapidFire.h" />
     <ClInclude Include="src\App\Features\SeedPred\SeedPred.h" />
     <ClInclude Include="src\App\Features\ShotgunDamagePrediction\ShotgunDamagePrediction.h" />
-    <ClInclude Include="src\App\Features\ShotgunDamagePrediction\SmartShotgunAimbot.h" />
     <ClInclude Include="src\App\Features\SpectatorList\SpectatorList.h" />
     <ClInclude Include="src\App\Features\SpyCamera\SpyCamera.h" />
     <ClInclude Include="src\App\Features\SpyWarning\SpyWarning.h" />
@@ -387,5 +387,7 @@
     <ClInclude Include="src\App\Features\Aimbot\AimbotWrangler\AimbotWrangler.h" />
     <ClInclude Include="src\App\Features\ChatESP\ChatESP.h" />
     <ClInclude Include="src\App\Features\Resolver\Resolver.h" />
+    <ClInclude Include="src\App\Features\TF2Glow\TF2Glow.h" />
+    <ClInclude Include="src\App\Features\TickbaseManip\TickbaseManip.h" />
   </ItemGroup>
 </Project>

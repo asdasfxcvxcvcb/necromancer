@@ -3853,16 +3853,20 @@ void CMenu::MainWindow()
 			InputKey("Fast Sticky Key", CFG::Exploits_FastSticky_Key);
 			InputKey("Warp Key", CFG::Exploits_Warp_Key);
 			
-			// Tick limits
-			SliderInt("Recharge Limit", CFG::Exploits_Shifting_Recharge_Limit, 2, 24, 1);
-			const bool bLimitTicks = CFG::Misc_AntiCheat_Enabled && !CFG::Misc_AntiCheat_IgnoreTickLimit;
-			const int nMaxSlider = bLimitTicks ? 8 : 22;
-			SliderInt(bLimitTicks ? "Doubletap Ticks (Safe)" : "Doubletap Ticks", CFG::Exploits_RapidFire_Ticks, 2, nMaxSlider, 1);
-			SliderInt("Doubletap Delay Ticks", CFG::Exploits_RapidFire_Min_Ticks_Target_Same, 0, 5, 1);
+			// Auto settings - adjusts based on ping
+			CheckBox("Auto Settings (Ping)", CFG::Exploits_RapidFire_Auto_Settings);
 			
-			// Commands per packet
-			SliderInt("Cmds/Packet (Idle)", CFG::Exploits_RapidFire_Max_Commands, 2, 15, 1);
-			SliderInt("Cmds/Packet (Shifting)", CFG::Exploits_RapidFire_DT_Commands, 15, 24, 1);
+			// Manual tick settings (hidden when auto is on)
+			if (!CFG::Exploits_RapidFire_Auto_Settings)
+			{
+				SliderInt("Recharge Limit", CFG::Exploits_Shifting_Recharge_Limit, 2, 24, 1);
+				const bool bLimitTicks = CFG::Misc_AntiCheat_Enabled && !CFG::Misc_AntiCheat_IgnoreTickLimit;
+				const int nMaxSlider = bLimitTicks ? 8 : 22;
+				SliderInt(bLimitTicks ? "Doubletap Ticks (Safe)" : "Doubletap Ticks", CFG::Exploits_RapidFire_Ticks, 2, nMaxSlider, 1);
+				SliderInt("Doubletap Delay Ticks", CFG::Exploits_RapidFire_Min_Ticks_Target_Same, 0, 5, 1);
+				SliderInt("Cmds/Packet (Idle)", CFG::Exploits_RapidFire_Max_Commands, 1, 15, 1);
+				SliderInt("Cmds/Packet (Shifting)", CFG::Exploits_RapidFire_DT_Commands, 1, 24, 1);
+			}
 			
 			// Warp settings
 			SelectSingle("Warp Mode", CFG::Exploits_Warp_Mode, {

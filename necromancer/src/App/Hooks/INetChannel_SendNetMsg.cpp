@@ -3,6 +3,7 @@
 #include "../Features/Misc/AntiCheatCompat/AntiCheatCompat.h"
 #include "../Features/NetworkFix/NetworkFix.h"
 #include "../Features/CFG.h"
+#include "../Features/TickbaseManip/TickbaseManip.h"
 
 MAKE_SIGNATURE(INetChannel_SendNetMsg, "engine.dll", "48 89 5C 24 ? 48 89 74 24 ? 48 89 7C 24 ? 41 56 48 83 EC ? 48 8B F1 45 0F B6 F1", 0x0);
 MAKE_SIGNATURE(WriteUsercmd, "client.dll", "40 56 57 48 83 EC ? 41 8B 40", 0x0);
@@ -222,16 +223,17 @@ MAKE_HOOK(INetChannel_SendNetMsg, Signatures::INetChannel_SendNetMsg.Get(), bool
 
 		// Dynamic command priority: use DT setting during doubletap shifts to push attack commands faster
 		// Use normal setting when idle to reduce bandwidth/improve stability
+		// If auto settings enabled, use F::Ticks->GetOptimal* functions
 		int nMaxNewCommands;
 		if (Shifting::bShifting && !Shifting::bShiftingWarp)
 		{
-			// During doubletap: use DT commands setting (user configurable, default 24)
-			nMaxNewCommands = std::min(CFG::Exploits_RapidFire_DT_Commands, static_cast<int>(MAX_NEW_COMMANDS));
+			// During doubletap
+			nMaxNewCommands = std::min(F::Ticks->GetOptimalDTCommands(), static_cast<int>(MAX_NEW_COMMANDS));
 		}
 		else
 		{
-			// Normal: use configured value (lower = better for high ping stability)
-			nMaxNewCommands = std::min(CFG::Exploits_RapidFire_Max_Commands, MAX_NEW_COMMANDS);
+			// Normal/idle
+			nMaxNewCommands = std::min(F::Ticks->GetOptimalMaxCommands(), MAX_NEW_COMMANDS);
 		}
 		
 		pMsg->m_nNewCommands = 1 + nChokedCommands;

@@ -127,19 +127,14 @@ void CResolver::CreateMove(C_TFPlayer* pLocal)
 			// Increment miss count
 			data.m_nMissCount++;
 			
-			// Auto-resolve yaw - cycle through common fake angle offsets
+			// Auto-resolve yaw - use incremental cycling like Amalgam
+			// This allows hitting any angle, not just 4 fixed ones
 			if (data.m_bAutoSetYaw)
 			{
-				// Cycle: 0° -> 90° -> -90° -> 180° -> repeat
-				switch (data.m_nMissCount % 4)
-				{
-				case 0: data.m_flYaw = 0.0f; break;
-				case 1: data.m_flYaw = 90.0f; break;
-				case 2: data.m_flYaw = -90.0f; break;
-				case 3: data.m_flYaw = 180.0f; break;
-				}
-				
-				data.m_bYaw = (data.m_flYaw != 0.0f);
+				// Increment by 45 degrees on each miss (configurable amount)
+				constexpr float flAutoResolveYawAmount = 45.0f;
+				data.m_flYaw = Math::NormalizeAngle(data.m_flYaw + flAutoResolveYawAmount);
+				data.m_bYaw = true;
 			}
 			
 			// Auto-resolve pitch

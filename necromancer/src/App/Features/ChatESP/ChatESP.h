@@ -21,6 +21,8 @@ public:
 	void OnChatMessage(int iPlayerIndex, const std::string& sMessage);
 	void Draw();
 	void Think();
+	void OnLevelInit(); // Clear bubbles on map change
+	void OnLevelShutdown(); // Clear bubbles when leaving map
 
 private:
 	std::deque<ChatBubble_t> m_vBubbles;

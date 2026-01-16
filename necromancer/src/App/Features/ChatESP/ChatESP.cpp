@@ -80,6 +80,16 @@ void CChatESP::Think()
 	}
 }
 
+void CChatESP::OnLevelInit()
+{
+	m_vBubbles.clear();
+}
+
+void CChatESP::OnLevelShutdown()
+{
+	m_vBubbles.clear();
+}
+
 
 // Ease out cubic function for smooth animation
 static float EaseOutCubic(float t)
@@ -96,7 +106,6 @@ void CChatESP::Draw()
 	if (!pLocal)
 		return;
 
-	const auto& fFont = H::Fonts->Get(EFonts::ESP);
 	std::unordered_map<int, int> mPlayerOffsets;
 
 	for (auto& tBubble : m_vBubbles)
@@ -121,15 +130,30 @@ void CChatESP::Draw()
 		if (flDist > flMaxDist)
 			continue;
 
-		// Distance-based scale: 1.0 at close range, scales down to 0.4 at max distance
-		// This keeps text readable but smaller for far players
+		// Select font and scale based on distance relative to max distance slider
+		// Full size when close, scales down smoothly as you approach max distance
+		const CFont* pFont;
 		float flDistScale = 1.0f;
-		if (flDist > 300.f)
+		
+		float flDistRatio = flDist / flMaxDist; // 0.0 = close, 1.0 = at max distance
+		
+		if (flDistRatio < 0.33f)
 		{
-			float flScaleRange = flMaxDist - 300.f;
-			float flDistRatio = (flDist - 300.f) / flScaleRange;
-			flDistScale = 1.0f - (flDistRatio * 0.6f); // Scale from 1.0 to 0.4
-			flDistScale = std::max(0.4f, flDistScale);
+			// Close range: full size
+			pFont = &H::Fonts->Get(EFonts::ChatESP_Large);
+			flDistScale = 1.0f;
+		}
+		else if (flDistRatio < 0.66f)
+		{
+			// Medium range
+			pFont = &H::Fonts->Get(EFonts::ChatESP_Medium);
+			flDistScale = 0.75f;
+		}
+		else
+		{
+			// Far range: smallest
+			pFont = &H::Fonts->Get(EFonts::ChatESP_Small);
+			flDistScale = 0.5f;
 		}
 
 		vHeadPos.z += 45.f;
@@ -156,9 +180,9 @@ void CChatESP::Draw()
 		if (flAlpha <= 0.01f)
 			continue;
 
-		// Animation scale (pop in effect) combined with distance scale
+		// Animation scale for pop-in effect combined with distance scale
 		float flAnimScale = 0.5f + 0.5f * EaseOutCubic(tBubble.m_flAnimProgress);
-		float flTotalScale = flDistScale * flAnimScale;
+		float flTotalScale = flAnimScale * flDistScale;
 
 		// Truncate long messages
 		std::string sDisplay = tBubble.m_sMessage;
@@ -166,21 +190,18 @@ void CChatESP::Draw()
 		if (static_cast<int>(sDisplay.length()) > iMaxChars)
 			sDisplay = sDisplay.substr(0, iMaxChars - 3) + "...";
 
+		// Get text size using the selected font
 		int iTextW = 0, iTextH = 0;
-		I::MatSystemSurface->GetTextSize(fFont.m_dwFont, Utils::ConvertUtf8ToWide(sDisplay).c_str(), iTextW, iTextH);
+		I::MatSystemSurface->GetTextSize(pFont->m_dwFont, Utils::ConvertUtf8ToWide(sDisplay).c_str(), iTextW, iTextH);
 
-		// Scale text dimensions
-		int iScaledTextW = static_cast<int>(iTextW * flTotalScale);
-		int iScaledTextH = static_cast<int>(iTextH * flTotalScale);
-
-		// Padding and dimensions (scaled)
-		int iPadX = static_cast<int>(10 * flTotalScale);
-		int iPadY = static_cast<int>(6 * flTotalScale);
-		int iBubbleW = iScaledTextW + iPadX * 2;
-		int iBubbleH = iScaledTextH + iPadY * 2;
+		// Padding scales with distance, text size comes from font
+		int iPadX = static_cast<int>(8 * flTotalScale);
+		int iPadY = static_cast<int>(4 * flTotalScale);
+		int iBubbleW = iTextW + iPadX * 2;
+		int iBubbleH = iTextH + iPadY * 2;
 		int iBubbleX = static_cast<int>(vScreen.x) - iBubbleW / 2;
 		int iBubbleY = static_cast<int>(vScreen.y) - iBubbleH;
-		int iRadius = static_cast<int>(4 * flTotalScale); // Corner radius scaled
+		int iRadius = static_cast<int>(4 * flTotalScale);
 
 		// Get entity color for outline (uses Color_Enemy from menu)
 		Color_t tOutlineColor = F::VisualUtils->GetEntityColor(pLocal, pPlayer);
@@ -215,12 +236,11 @@ void CChatESP::Draw()
 			H::Draw->Line(iTriX + iTriSize, iTriY, iTriX, iTriY + iTriSize, tBorderColor);
 		}
 
-		// Text (centered in bubble) - use clipping to fit scaled size
+		// Text (centered in bubble)
 		Color_t tTextColor = CFG::Menu_Text_Active;
 		tTextColor.a = static_cast<byte>(255 * flAlpha);
 		
-		// Draw text scaled by using the screen position
-		H::Draw->String(fFont, iBubbleX + iBubbleW / 2, iBubbleY + iBubbleH / 2, tTextColor, POS_CENTERXY, sDisplay.c_str());
+		H::Draw->String(*pFont, iBubbleX + iBubbleW / 2, iBubbleY + iBubbleH / 2, tTextColor, POS_CENTERXY, sDisplay.c_str());
 	}
 }
 

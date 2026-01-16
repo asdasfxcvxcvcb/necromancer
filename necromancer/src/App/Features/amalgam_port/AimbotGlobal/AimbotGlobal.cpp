@@ -182,7 +182,7 @@ bool CAimbotGlobal::ShouldAim()
     case Vars::Aimbot::General::AimTypeEnum::Plain:
     case Vars::Aimbot::General::AimTypeEnum::Silent:
         // Only aim if we can attack OR we're reloading (queued attack) OR timing is unsure
-        if (!G::bCanPrimaryAttack && !G::bReloading && !F::Ticks.IsTimingUnsure())
+        if (!G::bCanPrimaryAttack && !G::bReloading && !F::AmalgamTicks->IsTimingUnsure())
             return false;
     }
 

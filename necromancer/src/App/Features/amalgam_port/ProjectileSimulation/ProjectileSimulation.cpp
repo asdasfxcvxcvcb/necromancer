@@ -314,7 +314,7 @@ bool CAmalgamProjectileSimulation::GetInfo(C_TFPlayer* pPlayer, C_TFWeaponBase* 
 	filter.pSkip = pPlayer;  // Skip the local player in trace
 
 	// Use saved shoot position which accounts for predicted duck state from CrouchWhileAirborne
-	Vec3 vStart = bQuick ? pPlayer->GetEyePosition() : F::Ticks.GetShootPos();
+	Vec3 vStart = bQuick ? pPlayer->GetEyePosition() : F::AmalgamTicks->GetShootPos();
 	Vec3 vEnd = tProjInfo.m_vPos;
 
 	SDK::TraceHull(vStart, vEnd, tProjInfo.m_vHull * -1.f, tProjInfo.m_vHull, MASK_SOLID, &filter, &trace);

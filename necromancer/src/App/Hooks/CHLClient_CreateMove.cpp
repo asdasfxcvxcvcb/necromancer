@@ -384,7 +384,7 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 		
 		// IMPORTANT: Save shoot position AFTER prediction starts but BEFORE aimbot
 		// This ensures projectile aimbot uses the correct predicted eye position
-		F::Ticks.SaveShootPos(pLocal);
+		F::AmalgamTicks->SaveShootPos(pLocal);
 		
 		F::Resolver->CreateMove(pLocal); // Update resolver (auto-resolve on miss)
 		F::Misc->AutoMedigun(pCmd);

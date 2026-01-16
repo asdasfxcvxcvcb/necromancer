@@ -2,7 +2,7 @@
 
 #include "../../CFG.h"
 #include "../../RapidFire/RapidFire.h"
-#include "../../ShotgunDamagePrediction/SmartShotgunAimbot.h"
+#include "../../TickbaseManip/TickbaseManip.h"
 #include "../../FakeLagFix/FakeLagFix.h"
 #include "../../Menu/Menu.h"
 #include "../../Crits/Crits.h"
@@ -737,38 +737,6 @@ bool CAimbotHitscan::ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWe
 			wid == TF_WEAPON_SHOTGUN_HWG ||
 			wid == TF_WEAPON_SHOTGUN_PYRO
 		);
-
-		if (bIsShotgun)
-		{
-			// Check if double-tap is available
-			const bool bDoubleTapKeyHeld = CFG::Exploits_RapidFire_Key != 0 && H::Input->IsDown(CFG::Exploits_RapidFire_Key);
-			const int nStoredTicks = F::RapidFire->GetTicks(pWeapon);
-			const bool bCanDoubleTap = bDoubleTapKeyHeld && nStoredTicks >= CFG::Exploits_RapidFire_Ticks;
-
-			// Only apply smart shotgun logic when double-tap is ready
-			if (bCanDoubleTap)
-			{
-				const auto pPlayer = target.Entity->As<C_TFPlayer>();
-
-				// Build config for double-tap mode
-				SmartShotgunConfig config = {};
-				config.bDoubleTapEnabled = true;
-				config.nDoubleTapTicksRequired = CFG::Exploits_RapidFire_Ticks;
-				config.nDoubleTapTicksStored = nStoredTicks;
-				config.flDoubleTapMinPelletPercent = 0.50f;  // 50% for double tap
-				config.flNormalMinPelletPercent = 0.10f;
-				config.bCanCrit = pLocal->IsCritBoosted();
-				config.bHoldingCritKey = CFG::Exploits_Crits_Force_Crit_Key != 0 && H::Input->IsDown(CFG::Exploits_Crits_Force_Crit_Key);
-				config.bRapidFireReady = true;
-				
-				// Get smart shot decision
-				SmartShotDecision decision = g_SmartShotgun.ShouldShoot(pLocal, pWeapon, pPlayer, config);
-				
-				if (!decision.bShouldShoot)
-					return false;
-			}
-			// When not double-tapping, use normal aimbot logic (no additional checks)
-		}
 	}
 
 	// Hitchance check - calculate if we meet the required hit probability
@@ -808,7 +776,7 @@ bool CAimbotHitscan::ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWe
 		// Check if RapidFire/DoubleTap is active
 		const bool bRapidFireKey = CFG::Exploits_RapidFire_Key != 0 && H::Input->IsDown(CFG::Exploits_RapidFire_Key);
 		const int nStoredTicks = F::RapidFire->GetTicks(pWeapon);
-		const bool bRapidFireActive = bRapidFireKey && nStoredTicks >= CFG::Exploits_RapidFire_Ticks;
+		const bool bRapidFireActive = bRapidFireKey && nStoredTicks >= F::Ticks->GetOptimalDTTicks();
 		const int nRapidFireShots = bRapidFireActive ? 2 : 1; // DoubleTap fires 2 shots
 
 		const Vec3 vShootPos = pLocal->GetShootPos();
