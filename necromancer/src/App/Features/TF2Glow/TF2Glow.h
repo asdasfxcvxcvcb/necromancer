@@ -9,6 +9,7 @@ struct TF2GlowEntity_t
 	int m_nGlowIndex;
 	Color_t m_Color;
 	float m_flAlpha;
+	bool m_bSeenThisFrame; // Used to track which entities are still valid
 };
 
 class CTF2Glow

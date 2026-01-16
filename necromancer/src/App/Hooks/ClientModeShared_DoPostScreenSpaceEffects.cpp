@@ -8,12 +8,17 @@
 MAKE_HOOK(ClientModeShared_DoPostScreenSpaceEffects, Memory::GetVFunc(I::ClientModeShared, 39), bool, __fastcall,
 	CClientModeShared* ecx, const CViewSetup* pSetup)
 {
-	// TF2 native glow rendering - must be called BEFORE the original to render properly
+	// For TF2 native glow (Style 4), we handle rendering ourselves
+	// This is because TF2's original DoPostScreenSpaceEffects skips glow during freezecam
+	// and we want more control over when/how glows are rendered
 	if (CFG::Outlines_Active && CFG::Outlines_Style == 4 && !(CFG::Misc_Clean_Screenshot && I::EngineClient->IsTakingScreenshot()))
 	{
+		// Render our registered glow objects using TF2's native RenderGlowEffects
 		F::TF2Glow->Render(pSetup);
 	}
 
+	// Call original - TF2 will also try to render any remaining glow objects
+	// (like native game glows on dropped weapons, etc.)
 	const auto original = CALL_ORIGINAL(ecx, pSetup);
 
 	F::MiscVisuals->SniperLines();

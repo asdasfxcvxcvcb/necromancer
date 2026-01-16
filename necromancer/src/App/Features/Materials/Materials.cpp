@@ -102,7 +102,10 @@ void SetModelStencilForOutlines(C_BaseEntity* pEntity)
 
 	if (!IsEntGoingToBeGlowed())
 	{
-		pRenderContext->SetStencilEnable(false);
+		// Properly disable stencil with full state reset
+		ShaderStencilState_t stencilStateDisable = {};
+		stencilStateDisable.m_bEnable = false;
+		stencilStateDisable.SetStencilState(pRenderContext);
 	}
 
 	else
@@ -911,6 +914,15 @@ void CMaterials::Run()
 
 		if (CFG::Materials_World_No_Depth)
 			pRenderContext->DepthRange(0.0f, 1.0f);
+	}
+
+	// CRITICAL: Disable stencil at the end of all rendering
+	// This prevents corruption of TF2's native glow/outline system
+	// The stencil was enabled per-entity in SetModelStencilForOutlines()
+	// and must be disabled here to restore proper render state
+	if (pRenderContext)
+	{
+		pRenderContext->SetStencilEnable(false);
 	}
 }
 

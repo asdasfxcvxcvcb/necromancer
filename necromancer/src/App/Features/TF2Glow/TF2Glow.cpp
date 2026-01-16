@@ -28,9 +28,58 @@ void CTF2Glow::Run()
 	if (!pLocal)
 		return;
 
-	// Clear the vector - like Outlines does
-	if (!m_vecGlowEntities.empty())
-		m_vecGlowEntities.clear();
+	// Mark all existing glow entities as "not seen this frame"
+	for (auto& glowEntity : m_vecGlowEntities)
+	{
+		glowEntity.m_bSeenThisFrame = false;
+	}
+
+	// Helper to find or create glow entry for an entity
+	auto FindOrCreateGlow = [&](C_BaseEntity* pEntity, const Color_t& color, float flAlpha) -> bool
+	{
+		Vec3 glowColor = { color.r / 255.0f, color.g / 255.0f, color.b / 255.0f };
+
+		// Check if we already have a glow for this entity
+		for (auto& glowEntity : m_vecGlowEntities)
+		{
+			if (glowEntity.m_pEntity == pEntity)
+			{
+				// Update existing glow
+				glowEntity.m_bSeenThisFrame = true;
+				glowEntity.m_Color = color;
+				glowEntity.m_flAlpha = flAlpha;
+
+				// Update the glow manager entry if valid
+				if (glowEntity.m_nGlowIndex >= 0 && glowEntity.m_nGlowIndex < pGlowManager->m_GlowObjectDefinitions.Count())
+				{
+					if (!pGlowManager->m_GlowObjectDefinitions[glowEntity.m_nGlowIndex].IsUnused())
+					{
+						pGlowManager->SetColor(glowEntity.m_nGlowIndex, glowColor);
+						pGlowManager->SetAlpha(glowEntity.m_nGlowIndex, flAlpha);
+						return true;
+					}
+				}
+
+				// Glow index was invalid, re-register
+				int nGlowIndex = pGlowManager->RegisterGlowObject(pEntity, glowColor, flAlpha, true, true);
+				if (nGlowIndex >= 0)
+				{
+					glowEntity.m_nGlowIndex = nGlowIndex;
+					return true;
+				}
+				return false;
+			}
+		}
+
+		// New entity, register it
+		int nGlowIndex = pGlowManager->RegisterGlowObject(pEntity, glowColor, flAlpha, true, true);
+		if (nGlowIndex >= 0)
+		{
+			m_vecGlowEntities.push_back({pEntity, nGlowIndex, color, flAlpha, true});
+			return true;
+		}
+		return false;
+	};
 
 	// Players
 	if (CFG::Outlines_Players_Active)
@@ -97,14 +146,7 @@ void CTF2Glow::Run()
 			}
 
 			const auto entColor = F::VisualUtils->GetEntityColorForOutlines(pLocal, pPlayer);
-			Vec3 glowColor = { entColor.r / 255.0f, entColor.g / 255.0f, entColor.b / 255.0f };
-
-			// Register with glow manager and store in vector
-			int nGlowIndex = pGlowManager->RegisterGlowObject(pEntity, glowColor, flAlpha, true, true);
-			if (nGlowIndex >= 0)
-			{
-				m_vecGlowEntities.push_back({pEntity, nGlowIndex, entColor, flAlpha});
-			}
+			FindOrCreateGlow(pEntity, entColor, flAlpha);
 		}
 	}
 
@@ -149,13 +191,7 @@ void CTF2Glow::Run()
 				continue;
 
 			const auto entColor = F::VisualUtils->GetEntityColor(pLocal, pBuilding);
-			Vec3 glowColor = { entColor.r / 255.0f, entColor.g / 255.0f, entColor.b / 255.0f };
-
-			int nGlowIndex = pGlowManager->RegisterGlowObject(pEntity, glowColor, flAlpha, true, true);
-			if (nGlowIndex >= 0)
-			{
-				m_vecGlowEntities.push_back({pEntity, nGlowIndex, entColor, flAlpha});
-			}
+			FindOrCreateGlow(pEntity, entColor, flAlpha);
 		}
 	}
 
@@ -175,36 +211,26 @@ void CTF2Glow::Run()
 		if (!bIgnoreHealthPacks)
 		{
 			const auto color = CFG::Color_HealthPack;
-			Vec3 glowColor = { color.r / 255.0f, color.g / 255.0f, color.b / 255.0f };
 
 			for (const auto pEntity : H::Entities->GetGroup(EEntGroup::HEALTHPACKS))
 			{
 				if (!pEntity || !F::VisualUtils->IsOnScreen(pLocal, pEntity))
 					continue;
 
-				int nGlowIndex = pGlowManager->RegisterGlowObject(pEntity, glowColor, flAlpha, true, true);
-				if (nGlowIndex >= 0)
-				{
-					m_vecGlowEntities.push_back({pEntity, nGlowIndex, color, flAlpha});
-				}
+				FindOrCreateGlow(pEntity, color, flAlpha);
 			}
 		}
 
 		if (!bIgnoreAmmoPacks)
 		{
 			const auto color = CFG::Color_AmmoPack;
-			Vec3 glowColor = { color.r / 255.0f, color.g / 255.0f, color.b / 255.0f };
 
 			for (const auto pEntity : H::Entities->GetGroup(EEntGroup::AMMOPACKS))
 			{
 				if (!pEntity || !F::VisualUtils->IsOnScreen(pLocal, pEntity))
 					continue;
 
-				int nGlowIndex = pGlowManager->RegisterGlowObject(pEntity, glowColor, flAlpha, true, true);
-				if (nGlowIndex >= 0)
-				{
-					m_vecGlowEntities.push_back({pEntity, nGlowIndex, color, flAlpha});
-				}
+				FindOrCreateGlow(pEntity, color, flAlpha);
 			}
 		}
 
@@ -235,14 +261,30 @@ void CTF2Glow::Run()
 					continue;
 
 				const auto color = F::VisualUtils->GetEntityColor(pLocal, pEntity);
-				Vec3 glowColor = { color.r / 255.0f, color.g / 255.0f, color.b / 255.0f };
+				FindOrCreateGlow(pEntity, color, flAlpha);
+			}
+		}
+	}
 
-				int nGlowIndex = pGlowManager->RegisterGlowObject(pEntity, glowColor, flAlpha, true, true);
-				if (nGlowIndex >= 0)
+	// Remove glow objects for entities that weren't seen this frame
+	// (they went off screen, died, etc.)
+	for (auto it = m_vecGlowEntities.begin(); it != m_vecGlowEntities.end();)
+	{
+		if (!it->m_bSeenThisFrame)
+		{
+			// Unregister from glow manager
+			if (it->m_nGlowIndex >= 0 && it->m_nGlowIndex < pGlowManager->m_GlowObjectDefinitions.Count())
+			{
+				if (!pGlowManager->m_GlowObjectDefinitions[it->m_nGlowIndex].IsUnused())
 				{
-					m_vecGlowEntities.push_back({pEntity, nGlowIndex, color, flAlpha});
+					pGlowManager->UnregisterGlowObject(it->m_nGlowIndex);
 				}
 			}
+			it = m_vecGlowEntities.erase(it);
+		}
+		else
+		{
+			++it;
 		}
 	}
 }
@@ -256,7 +298,8 @@ void CTF2Glow::Render(const CViewSetup* pViewSetup)
 	if (!pGlowManager)
 		return;
 
-	// Call TF2's native RenderGlowEffects function FIRST (while objects are still registered)
+	// Call TF2's native RenderGlowEffects function
+	// Our glow objects are already registered and will be rendered
 	using RenderGlowEffectsFn = void(__fastcall*)(CGlowObjectManager*, const CViewSetup*, int);
 	static auto fnRenderGlowEffects = reinterpret_cast<RenderGlowEffectsFn>(Signatures::RenderGlowEffects.Get());
 	
@@ -265,17 +308,8 @@ void CTF2Glow::Render(const CViewSetup* pViewSetup)
 		fnRenderGlowEffects(pGlowManager, pViewSetup, 0); // 0 = split screen slot
 	}
 
-	// AFTER rendering, unregister all glow objects from this frame
-	for (const auto& glowEntity : m_vecGlowEntities)
-	{
-		if (glowEntity.m_nGlowIndex >= 0 && glowEntity.m_nGlowIndex < pGlowManager->m_GlowObjectDefinitions.Count())
-		{
-			if (!pGlowManager->m_GlowObjectDefinitions[glowEntity.m_nGlowIndex].IsUnused())
-			{
-				pGlowManager->UnregisterGlowObject(glowEntity.m_nGlowIndex);
-			}
-		}
-	}
+	// NOTE: We no longer unregister here - glow objects persist until
+	// the entity goes off screen or is no longer valid
 }
 
 void CTF2Glow::CleanUp()
