@@ -1226,9 +1226,11 @@ void CAmalgamAimbotProjectile::Aim(CUserCmd* pCmd, Vec3& vAngle, int iMethod, bo
 		I::EngineClient->SetViewAngles(vOut);
 		break;
 	case Vars::Aimbot::General::AimTypeEnum::Silent:
-		// For silent aim, only change angles on the tick we actually fire
-		// This matches the original AimbotProjectile behavior
-		if (bIsFiring && G::bCanPrimaryAttack)
+		// For silent aim, apply angles when we're firing
+		// Removed G::bCanPrimaryAttack check - projectile weapons can fire even when
+		// CanPrimaryAttack returns false (e.g., Beggar's Bazooka loading, reload interrupt)
+		// The bIsFiring parameter already indicates we want to shoot
+		if (bIsFiring)
 		{
 			H::AimUtils->FixMovement(pCmd, vOut);
 			pCmd->viewangles = vOut;

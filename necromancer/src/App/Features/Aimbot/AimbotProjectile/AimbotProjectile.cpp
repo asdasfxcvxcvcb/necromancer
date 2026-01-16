@@ -1341,7 +1341,13 @@ void CAimbotProjectile::Aim(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* 
 
 	case 1:
 	{
-		if (m_CurProjInfo.Flamethrower ? true : G::bCanPrimaryAttack)
+		// For pSilent, we need to apply angles when:
+		// 1. Flamethrower (always)
+		// 2. Normal weapons when G::bCanPrimaryAttack is true
+		// 3. Stickies/pipes when releasing charge (G::bFiring is set by IsFiring check)
+		const bool bShouldApply = m_CurProjInfo.Flamethrower || G::bCanPrimaryAttack || (m_CurProjInfo.Pipes && G::bFiring);
+		
+		if (bShouldApply)
 		{
 			H::AimUtils->FixMovement(pCmd, vAngleTo);
 
@@ -1379,6 +1385,30 @@ bool CAimbotProjectile::ShouldFire(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeapo
 	return true;
 }
 
+void CAimbotProjectile::CancelCharge(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
+{
+	const int nWeaponID = pWeapon->GetWeaponID();
+	
+	if (nWeaponID == TF_WEAPON_PIPEBOMBLAUNCHER || nWeaponID == TF_WEAPON_CANNON)
+	{
+		// Stickies/Cannon need weapon switch to cancel
+		// Only check first 8 slots (primary, secondary, melee, pda, pda2, building, action, misc)
+		for (int i = 0; i < 8; i++)
+		{
+			auto pSwap = pLocal->GetWeaponFromSlot(i);
+			if (!pSwap || pSwap == pWeapon)
+				continue;
+
+			pCmd->weaponselect = pSwap->entindex();
+			m_iCancelWeaponIdx = pWeapon->entindex();
+			break;
+		}
+	}
+	
+	m_bChargePending = false;
+	m_vChargeAngles = {};
+}
+
 void CAimbotProjectile::HandleFire(CUserCmd* pCmd, C_TFWeaponBase* pWeapon, C_TFPlayer* pLocal, const ProjTarget_t& target)
 {
 	const bool bIsBazooka = pWeapon->m_iItemDefinitionIndex() == Soldier_m_TheBeggarsBazooka;
@@ -1390,23 +1420,46 @@ void CAimbotProjectile::HandleFire(CUserCmd* pCmd, C_TFWeaponBase* pWeapon, C_TF
 		return;
 
 	const int nWeaponID = pWeapon->GetWeaponID();
-	if (nWeaponID == TF_WEAPON_COMPOUND_BOW || nWeaponID == TF_WEAPON_PIPEBOMBLAUNCHER)
+	if (nWeaponID == TF_WEAPON_PIPEBOMBLAUNCHER)
 	{
+		const float flChargeBeginTime = pWeapon->As<C_TFPipebombLauncher>()->m_flChargeBeginTime();
+		
+		if (flChargeBeginTime > 0.0f)
+		{
+			// Already charging - release to fire
+			// Save angles on the tick we release so pSilent uses correct angles
+			m_vChargeAngles = target.AngleTo;
+			m_bChargePending = false;
+			pCmd->buttons &= ~IN_ATTACK;
+		}
+		else
+		{
+			// Not charging - start charging and save angles for next tick
+			m_vChargeAngles = target.AngleTo;
+			m_bChargePending = true;
+			pCmd->buttons |= IN_ATTACK;
+		}
+	}
+
+	else if (nWeaponID == TF_WEAPON_COMPOUND_BOW)
+	{
+		// Huntsman - simple charge/release, no cancel logic
 		if (pWeapon->As<C_TFPipebombLauncher>()->m_flChargeBeginTime() > 0.0f)
 			pCmd->buttons &= ~IN_ATTACK;
-
-		else pCmd->buttons |= IN_ATTACK;
+		else
+			pCmd->buttons |= IN_ATTACK;
 	}
 
 	else if (nWeaponID == TF_WEAPON_CANNON)
 	{
+		const float flDetonateTime = pWeapon->As<C_TFGrenadeLauncher>()->m_flDetonateTime();
+		
 		if (CFG::Aimbot_Projectile_Auto_Double_Donk)
 		{
 			// Amalgam-style improved auto double donk
 			// Uses GRENADE_CHECK_INTERVAL (0.195f) for proper grenade physics timing
 			constexpr float GRENADE_CHECK_INTERVAL = 0.195f;
 			
-			const float flDetonateTime = pWeapon->As<C_TFGrenadeLauncher>()->m_flDetonateTime();
 			const float flTimeToTarget = target.TimeToTarget;
 			
 			// Calculate network desync compensation (similar to Amalgam's GetDesync)
@@ -1434,6 +1487,8 @@ void CAimbotProjectile::HandleFire(CUserCmd* pCmd, C_TFWeaponBase* pWeapon, C_TF
 					if (flNextFuse < flTimeNeeded || flFuseRemaining <= flTimeToTarget)
 					{
 						// Fire now - we won't have a better opportunity
+						m_vChargeAngles = target.AngleTo;
+						m_bChargePending = false;
 						pCmd->buttons &= ~IN_ATTACK;
 					}
 					else
@@ -1450,22 +1505,34 @@ void CAimbotProjectile::HandleFire(CUserCmd* pCmd, C_TFWeaponBase* pWeapon, C_TF
 				else
 				{
 					// Fire now
+					m_vChargeAngles = target.AngleTo;
+					m_bChargePending = false;
 					pCmd->buttons &= ~IN_ATTACK;
 				}
 			}
 			else
 			{
 				// Not charging yet - start charging
+				m_vChargeAngles = target.AngleTo;
+				m_bChargePending = true;
 				pCmd->buttons |= IN_ATTACK;
 			}
 		}
 		else
 		{
-			// Simple mode - just release when charged
-			if (pWeapon->As<C_TFGrenadeLauncher>()->m_flDetonateTime() > 0.0f)
+			// Simple mode - track charge state for cancel logic
+			if (flDetonateTime > 0.0f)
+			{
+				m_vChargeAngles = target.AngleTo;
+				m_bChargePending = false;
 				pCmd->buttons &= ~IN_ATTACK;
+			}
 			else
+			{
+				m_vChargeAngles = target.AngleTo;
+				m_bChargePending = true;
 				pCmd->buttons |= IN_ATTACK;
+			}
 		}
 	}
 
@@ -1517,6 +1584,22 @@ bool CAimbotProjectile::IsFiring(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFW
 
 void CAimbotProjectile::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
 {
+	// Switch back to sticky launcher after cancel - do this FIRST before any other checks
+	// because we might have switched to a non-projectile weapon
+	if (m_iCancelWeaponIdx != 0)
+	{
+		if (pWeapon->entindex() != m_iCancelWeaponIdx)
+		{
+			// Not on sticky launcher yet, switch to it
+			pCmd->weaponselect = m_iCancelWeaponIdx;
+		}
+		else
+		{
+			// We're back on the sticky launcher, reset
+			m_iCancelWeaponIdx = 0;
+		}
+	}
+
 	if (!CFG::Aimbot_Projectile_Active)
 		return;
 
@@ -1533,8 +1616,55 @@ void CAimbotProjectile::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* 
 	if (!CFG::Aimbot_Always_On && !H::Input->IsDown(CFG::Aimbot_Key))
 		return;
 
+	// Handle charge weapons (sticky and loose cannon)
+	const int nWeaponID = pWeapon->GetWeaponID();
+	const bool bIsChargeWeapon = (nWeaponID == TF_WEAPON_PIPEBOMBLAUNCHER || nWeaponID == TF_WEAPON_CANNON);
+	
+	// Get charge time - sticky uses m_flChargeBeginTime, cannon uses m_flDetonateTime
+	float flChargeBeginTime = 0.0f;
+	if (nWeaponID == TF_WEAPON_PIPEBOMBLAUNCHER)
+		flChargeBeginTime = pWeapon->As<C_TFPipebombLauncher>()->m_flChargeBeginTime();
+	else if (nWeaponID == TF_WEAPON_CANNON)
+		flChargeBeginTime = pWeapon->As<C_TFGrenadeLauncher>()->m_flDetonateTime();
+	
+	const bool bIsCharging = flChargeBeginTime > 0.0f;
+
+	// Check if user started charging BEFORE aimbot key was pressed
+	// G::OriginalCmd has the unmodified buttons from user input
+	const bool bUserManualCharge = !m_bChargePending && bIsCharging;
+
 	ProjTarget_t target = {};
-	if (GetTarget(pLocal, pWeapon, pCmd, target) && target.Entity)
+	const bool bHasTarget = GetTarget(pLocal, pWeapon, pCmd, target) && target.Entity;
+
+	// Only cancel charge if:
+	// 1. AutoShoot is on
+	// 2. We're charging
+	// 3. No valid target
+	// 4. We have a pending charge that WE started (m_bChargePending)
+	// 5. User didn't start this charge manually
+	if (bIsChargeWeapon && bIsCharging && !bHasTarget && CFG::Aimbot_AutoShoot && m_bChargePending && !bUserManualCharge)
+	{
+		CancelCharge(pCmd, pLocal, pWeapon);
+		return;
+	}
+
+	// Reset charge pending if not charging
+	if (!bIsCharging)
+		m_bChargePending = false;
+
+	// DEBUG: Show when charge weapon has no target but is charging
+	if (bIsChargeWeapon && bIsCharging && !bHasTarget)
+	{
+		I::CVar->ConsoleColorPrintf({ 255, 100, 100, 255 },
+			"[Charge FAIL] Tick=%d NoTarget! Charging=%d Pending=%d Manual=%d Weapon=%d\n",
+			I::GlobalVars->tickcount,
+			bIsCharging ? 1 : 0,
+			m_bChargePending ? 1 : 0,
+			bUserManualCharge ? 1 : 0,
+			nWeaponID);
+	}
+
+	if (bHasTarget)
 	{
 		G::nTargetIndexEarly = target.Entity->entindex();
 		G::nTargetIndex = target.Entity->entindex();
@@ -1547,10 +1677,20 @@ void CAimbotProjectile::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* 
 
 		if (ShouldAim(pCmd, pLocal, pWeapon) || bIsFiring)
 		{
-			// Apply dodge prediction offset for players
+			// For charge weapons with pSilent: use saved angles on release tick
+			// This ensures the angles match what we calculated when starting the charge
 			Vec3 vFinalAngles = target.AngleTo;
-			if (target.Entity->GetClassId() == ETFClassIds::CTFPlayer && CFG::Aimbot_Projectile_Use_Dodge_Prediction)
+			const char* szAngleSource = "target.AngleTo";
+			
+			// If we're firing a charge weapon and have saved angles, use those instead
+			if (bIsFiring && bIsChargeWeapon && !m_vChargeAngles.IsZero())
 			{
+				vFinalAngles = m_vChargeAngles;
+				szAngleSource = "m_vChargeAngles (saved)";
+			}
+			else if (target.Entity->GetClassId() == ETFClassIds::CTFPlayer && CFG::Aimbot_Projectile_Use_Dodge_Prediction)
+			{
+				// Apply dodge prediction offset for players (only when not using saved angles)
 				const int nTargetIdx = target.Entity->entindex();
 				auto* pBehavior = F::MovementSimulation->GetPlayerBehavior(nTargetIdx);
 
@@ -1573,11 +1713,53 @@ void CAimbotProjectile::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* 
 						case 2:  vFinalAngles.x -= flOffset * 0.7f; break;
 						case 3:  break;
 						}
+						szAngleSource = "dodge prediction";
 					}
 				}
 			}
 
+			// DEBUG OUTPUT for charge weapons (sticky and cannon)
+			if (bIsChargeWeapon)
+			{
+				const Vec3 vOrigAngles = pCmd->viewangles;
+				const char* szAimType = (CFG::Aimbot_Projectile_Aim_Type == 1) ? "pSilent" : "Plain";
+				const char* szWeapon = (nWeaponID == TF_WEAPON_PIPEBOMBLAUNCHER) ? "Sticky" : "Cannon";
+				
+				I::CVar->ConsoleColorPrintf({ 255, 255, 0, 255 },
+					"[%s] Tick=%d Fire=%d Charge=%d Pending=%d\n",
+					szWeapon,
+					I::GlobalVars->tickcount,
+					bIsFiring ? 1 : 0,
+					bIsCharging ? 1 : 0,
+					m_bChargePending ? 1 : 0);
+				
+				I::CVar->ConsoleColorPrintf({ 0, 255, 255, 255 },
+					"  Orig=(%.1f,%.1f) Final=(%.1f,%.1f) Src=%s\n",
+					vOrigAngles.x, vOrigAngles.y,
+					vFinalAngles.x, vFinalAngles.y,
+					szAngleSource);
+				
+				I::CVar->ConsoleColorPrintf({ 0, 255, 255, 255 },
+					"  Saved=(%.1f,%.1f) Type=%s\n",
+					m_vChargeAngles.x, m_vChargeAngles.y,
+					szAimType);
+			}
+
 			Aim(pCmd, pLocal, pWeapon, vFinalAngles);
+			
+			// DEBUG: Print what angles were actually set after Aim()
+			if (bIsChargeWeapon && bIsFiring)
+			{
+				I::CVar->ConsoleColorPrintf({ 0, 255, 0, 255 },
+					"  FIRED! Cmd=(%.1f,%.1f) pSilent=%d Silent=%d\n",
+					pCmd->viewangles.x, pCmd->viewangles.y,
+					G::bPSilentAngles ? 1 : 0,
+					G::bSilentAngles ? 1 : 0);
+			}
+			
+			// Clear saved angles after firing
+			if (bIsFiring && bIsChargeWeapon)
+				m_vChargeAngles = {};
 
 			// Notify behavior system that we fired at this target
 			if (bIsFiring && target.Entity->GetClassId() == ETFClassIds::CTFPlayer)

@@ -22,6 +22,11 @@ class CAimbotProjectile
 
 	ProjectileInfo_t m_CurProjInfo = {};
 
+	// Sticky/Huntsman charge state tracking for pSilent
+	Vec3 m_vChargeAngles = {};      // Angles saved when charge started
+	bool m_bChargePending = false;  // True if we started a charge and need to release
+	int m_iCancelWeaponIdx = 0;     // Weapon index to switch back to after cancel
+
 	bool GetProjectileInfo(C_TFWeaponBase* pWeapon);
 	bool CalcProjAngle(const Vec3& vFrom, const Vec3& vTo, Vec3& vAngleOut, float& flTimeOut);
 	void OffsetPlayerPosition(C_TFWeaponBase* pWeapon, Vec3& vPos, C_TFPlayer* pPlayer, bool bDucked, bool bOnGround, const Vec3& vLocalPos);
@@ -34,6 +39,7 @@ class CAimbotProjectile
 	void Aim(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, const Vec3& vAngles);
 	bool ShouldFire(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon);
 	void HandleFire(CUserCmd* pCmd, C_TFWeaponBase* pWeapon, C_TFPlayer* pLocal, const ProjTarget_t& target);
+	void CancelCharge(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon);
 
 public:
 	bool IsFiring(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon);
