@@ -28,44 +28,9 @@ void CTF2Glow::Run()
 	if (!pLocal)
 		return;
 
-	// Clean up dead/dormant entities - the RAII wrapper will auto-unregister
-	auto& allPlayers = H::Entities->GetGroup(EEntGroup::PLAYERS_ALL);
-	
-	for (auto it = m_mapGlowObjects.begin(); it != m_mapGlowObjects.end();)
-	{
-		if (!it->first)
-		{
-			it = m_mapGlowObjects.erase(it); // Destructor auto-unregisters
-			continue;
-		}
-		
-		// Check if entity still exists
-		bool bFound = false;
-		for (const auto pEntity : allPlayers)
-		{
-			if (pEntity == it->first)
-			{
-				bFound = true;
-				break;
-			}
-		}
-		
-		if (!bFound || it->first->IsDormant())
-		{
-			it = m_mapGlowObjects.erase(it); // Destructor auto-unregisters
-		}
-		else
-		{
-			++it;
-		}
-	}
-
-	// Limit total glow objects
-	const int MAX_GLOW_OBJECTS = 32;
-	if (m_mapGlowObjects.size() >= MAX_GLOW_OBJECTS)
-		return;
-
-	int nEntitiesAdded = 0;
+	// Clear the vector - like Outlines does
+	if (!m_vecGlowEntities.empty())
+		m_vecGlowEntities.clear();
 
 	// Players
 	if (CFG::Outlines_Players_Active)
@@ -134,28 +99,11 @@ void CTF2Glow::Run()
 			const auto entColor = F::VisualUtils->GetEntityColorForOutlines(pLocal, pPlayer);
 			Vec3 glowColor = { entColor.r / 255.0f, entColor.g / 255.0f, entColor.b / 255.0f };
 
-			if (m_mapGlowObjects.find(pEntity) != m_mapGlowObjects.end())
+			// Register with glow manager and store in vector
+			int nGlowIndex = pGlowManager->RegisterGlowObject(pEntity, glowColor, flAlpha, true, true);
+			if (nGlowIndex >= 0)
 			{
-				// Update existing glow - directly modify the glow manager's data
-				auto pGlowManager = SDKUtils::GetGlowObjectManager();
-				if (pGlowManager)
-				{
-					for (int i = 0; i < pGlowManager->m_GlowObjectDefinitions.Count(); ++i)
-					{
-						if (!pGlowManager->m_GlowObjectDefinitions[i].IsUnused() && 
-							pGlowManager->m_GlowObjectDefinitions[i].m_hEntity.Get() == pEntity)
-						{
-							pGlowManager->m_GlowObjectDefinitions[i].m_vGlowColor = glowColor;
-							pGlowManager->m_GlowObjectDefinitions[i].m_flGlowAlpha = flAlpha;
-							break;
-						}
-					}
-				}
-			}
-			else
-			{
-				// Create new glow (RAII wrapper auto-registers)
-				m_mapGlowObjects[pEntity] = CGlowObjectWrapper(pEntity, glowColor, flAlpha, true, true);
+				m_vecGlowEntities.push_back({pEntity, nGlowIndex, entColor, flAlpha});
 			}
 		}
 	}
@@ -203,27 +151,10 @@ void CTF2Glow::Run()
 			const auto entColor = F::VisualUtils->GetEntityColor(pLocal, pBuilding);
 			Vec3 glowColor = { entColor.r / 255.0f, entColor.g / 255.0f, entColor.b / 255.0f };
 
-			if (m_mapGlowObjects.find(pEntity) != m_mapGlowObjects.end())
+			int nGlowIndex = pGlowManager->RegisterGlowObject(pEntity, glowColor, flAlpha, true, true);
+			if (nGlowIndex >= 0)
 			{
-				// Update existing glow - directly modify the glow manager's data
-				auto pGlowManager = SDKUtils::GetGlowObjectManager();
-				if (pGlowManager)
-				{
-					for (int i = 0; i < pGlowManager->m_GlowObjectDefinitions.Count(); ++i)
-					{
-						if (!pGlowManager->m_GlowObjectDefinitions[i].IsUnused() && 
-							pGlowManager->m_GlowObjectDefinitions[i].m_hEntity.Get() == pEntity)
-						{
-							pGlowManager->m_GlowObjectDefinitions[i].m_vGlowColor = glowColor;
-							pGlowManager->m_GlowObjectDefinitions[i].m_flGlowAlpha = flAlpha;
-							break;
-						}
-					}
-				}
-			}
-			else
-			{
-				m_mapGlowObjects[pEntity] = CGlowObjectWrapper(pEntity, glowColor, flAlpha, true, true);
+				m_vecGlowEntities.push_back({pEntity, nGlowIndex, entColor, flAlpha});
 			}
 		}
 	}
@@ -251,27 +182,10 @@ void CTF2Glow::Run()
 				if (!pEntity || !F::VisualUtils->IsOnScreen(pLocal, pEntity))
 					continue;
 
-				if (m_mapGlowObjects.find(pEntity) != m_mapGlowObjects.end())
+				int nGlowIndex = pGlowManager->RegisterGlowObject(pEntity, glowColor, flAlpha, true, true);
+				if (nGlowIndex >= 0)
 				{
-					// Update existing glow - directly modify the glow manager's data
-					auto pGlowManager = SDKUtils::GetGlowObjectManager();
-					if (pGlowManager)
-					{
-						for (int i = 0; i < pGlowManager->m_GlowObjectDefinitions.Count(); ++i)
-						{
-							if (!pGlowManager->m_GlowObjectDefinitions[i].IsUnused() && 
-								pGlowManager->m_GlowObjectDefinitions[i].m_hEntity.Get() == pEntity)
-							{
-								pGlowManager->m_GlowObjectDefinitions[i].m_vGlowColor = glowColor;
-								pGlowManager->m_GlowObjectDefinitions[i].m_flGlowAlpha = flAlpha;
-								break;
-							}
-						}
-					}
-				}
-				else
-				{
-					m_mapGlowObjects[pEntity] = CGlowObjectWrapper(pEntity, glowColor, flAlpha, true, true);
+					m_vecGlowEntities.push_back({pEntity, nGlowIndex, color, flAlpha});
 				}
 			}
 		}
@@ -286,27 +200,10 @@ void CTF2Glow::Run()
 				if (!pEntity || !F::VisualUtils->IsOnScreen(pLocal, pEntity))
 					continue;
 
-				if (m_mapGlowObjects.find(pEntity) != m_mapGlowObjects.end())
+				int nGlowIndex = pGlowManager->RegisterGlowObject(pEntity, glowColor, flAlpha, true, true);
+				if (nGlowIndex >= 0)
 				{
-					// Update existing glow - directly modify the glow manager's data
-					auto pGlowManager = SDKUtils::GetGlowObjectManager();
-					if (pGlowManager)
-					{
-						for (int i = 0; i < pGlowManager->m_GlowObjectDefinitions.Count(); ++i)
-						{
-							if (!pGlowManager->m_GlowObjectDefinitions[i].IsUnused() && 
-								pGlowManager->m_GlowObjectDefinitions[i].m_hEntity.Get() == pEntity)
-							{
-								pGlowManager->m_GlowObjectDefinitions[i].m_vGlowColor = glowColor;
-								pGlowManager->m_GlowObjectDefinitions[i].m_flGlowAlpha = flAlpha;
-								break;
-							}
-						}
-					}
-				}
-				else
-				{
-					m_mapGlowObjects[pEntity] = CGlowObjectWrapper(pEntity, glowColor, flAlpha, true, true);
+					m_vecGlowEntities.push_back({pEntity, nGlowIndex, color, flAlpha});
 				}
 			}
 		}
@@ -340,27 +237,10 @@ void CTF2Glow::Run()
 				const auto color = F::VisualUtils->GetEntityColor(pLocal, pEntity);
 				Vec3 glowColor = { color.r / 255.0f, color.g / 255.0f, color.b / 255.0f };
 
-				if (m_mapGlowObjects.find(pEntity) != m_mapGlowObjects.end())
+				int nGlowIndex = pGlowManager->RegisterGlowObject(pEntity, glowColor, flAlpha, true, true);
+				if (nGlowIndex >= 0)
 				{
-					// Update existing glow - directly modify the glow manager's data
-					auto pGlowManager = SDKUtils::GetGlowObjectManager();
-					if (pGlowManager)
-					{
-						for (int i = 0; i < pGlowManager->m_GlowObjectDefinitions.Count(); ++i)
-						{
-							if (!pGlowManager->m_GlowObjectDefinitions[i].IsUnused() && 
-								pGlowManager->m_GlowObjectDefinitions[i].m_hEntity.Get() == pEntity)
-							{
-								pGlowManager->m_GlowObjectDefinitions[i].m_vGlowColor = glowColor;
-								pGlowManager->m_GlowObjectDefinitions[i].m_flGlowAlpha = flAlpha;
-								break;
-							}
-						}
-					}
-				}
-				else
-				{
-					m_mapGlowObjects[pEntity] = CGlowObjectWrapper(pEntity, glowColor, flAlpha, true, true);
+					m_vecGlowEntities.push_back({pEntity, nGlowIndex, color, flAlpha});
 				}
 			}
 		}
@@ -376,10 +256,7 @@ void CTF2Glow::Render(const CViewSetup* pViewSetup)
 	if (!pGlowManager)
 		return;
 
-	// Check if glow is enabled
-	static auto glow_outline_enable = I::CVar->FindVar("glow_outline_effect_enable");
-	
-	// Call TF2's native RenderGlowEffects function
+	// Call TF2's native RenderGlowEffects function FIRST (while objects are still registered)
 	using RenderGlowEffectsFn = void(__fastcall*)(CGlowObjectManager*, const CViewSetup*, int);
 	static auto fnRenderGlowEffects = reinterpret_cast<RenderGlowEffectsFn>(Signatures::RenderGlowEffects.Get());
 	
@@ -387,24 +264,37 @@ void CTF2Glow::Render(const CViewSetup* pViewSetup)
 	{
 		fnRenderGlowEffects(pGlowManager, pViewSetup, 0); // 0 = split screen slot
 	}
+
+	// AFTER rendering, unregister all glow objects from this frame
+	for (const auto& glowEntity : m_vecGlowEntities)
+	{
+		if (glowEntity.m_nGlowIndex >= 0 && glowEntity.m_nGlowIndex < pGlowManager->m_GlowObjectDefinitions.Count())
+		{
+			if (!pGlowManager->m_GlowObjectDefinitions[glowEntity.m_nGlowIndex].IsUnused())
+			{
+				pGlowManager->UnregisterGlowObject(glowEntity.m_nGlowIndex);
+			}
+		}
+	}
 }
 
 void CTF2Glow::CleanUp()
 {
-	// First clear our map - this will trigger RAII destructors to unregister
-	m_mapGlowObjects.clear();
-	
-	// Also manually clear any remaining glow objects from the manager as a safety measure
 	auto pGlowManager = SDKUtils::GetGlowObjectManager();
 	if (pGlowManager)
 	{
-		// Unregister all glow objects (in case RAII didn't work or we're uninjecting)
-		for (int i = pGlowManager->m_GlowObjectDefinitions.Count() - 1; i >= 0; --i)
+		// Unregister all our glow objects
+		for (const auto& glowEntity : m_vecGlowEntities)
 		{
-			if (!pGlowManager->m_GlowObjectDefinitions[i].IsUnused())
+			if (glowEntity.m_nGlowIndex >= 0 && glowEntity.m_nGlowIndex < pGlowManager->m_GlowObjectDefinitions.Count())
 			{
-				pGlowManager->UnregisterGlowObject(i);
+				if (!pGlowManager->m_GlowObjectDefinitions[glowEntity.m_nGlowIndex].IsUnused())
+				{
+					pGlowManager->UnregisterGlowObject(glowEntity.m_nGlowIndex);
+				}
 			}
 		}
 	}
+	
+	m_vecGlowEntities.clear();
 }
