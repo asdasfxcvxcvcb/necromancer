@@ -1765,6 +1765,7 @@ void CAimbotProjectile::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* 
 			if (bIsFiring && target.Entity->GetClassId() == ETFClassIds::CTFPlayer)
 			{
 				F::MovementSimulation->OnShotFired(target.Entity->entindex());
+				Sleep(500); // We need this here so it doesn't eat up the CPU since bIsFiring isn't safe.
 			}
 
 			if (bIsFiring && m_TargetPath.size() > 1)
