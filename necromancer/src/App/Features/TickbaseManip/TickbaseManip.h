@@ -14,37 +14,33 @@ class CTickbaseManip
 public:
 	// Getters - read from Shifting namespace
 	int GetChargedTicks() const { return Shifting::nAvailableTicks; }
+	int GetProcessableTicks() const;
 	bool IsCharging() const { return Shifting::bRecharging; }
 	bool IsShifting() const { return Shifting::bShifting; }
 	bool IsShiftingWarp() const { return Shifting::bShiftingWarp; }
-	int GetShiftTick() const { return Shifting::nCurrentShiftTick; }
-	int GetShiftTotal() const { return Shifting::nTotalShiftTicks; }
-	
+
 	bool CanShift(int nTicks) const
 	{
 		if (Shifting::bShifting || Shifting::bRecharging || Shifting::bShiftingWarp)
 			return false;
-		return Shifting::nAvailableTicks >= nTicks;
+		return GetProcessableTicks() >= nTicks;
 	}
-	
+
 	void StartCharging() { Shifting::bRecharging = true; }
 	void StopCharging() { Shifting::bRecharging = false; }
-	
+
 	void Reset()
 	{
 		Shifting::Reset();
 	}
-	
+
 	// ============================================
-	// Auto Settings
+	// Settings
 	// ============================================
 	float GetPingMs();
 	int GetOptimalRechargeLimit();
 	int GetOptimalDTTicks();
 	int GetOptimalDelayTicks();
-	int GetOptimalTickTrackingMode();   // Auto-select tick tracking mode based on ping/deficit
-	bool GetOptimalDeficitTracking();   // Auto-enable deficit tracking when ping is high
-	int GetMaxSafeShiftTicks();         // Max ticks we can shift without exceeding sv_maxusrcmdprocessticks
 };
 
 MAKE_SINGLETON_SCOPED(CTickbaseManip, Ticks, F);

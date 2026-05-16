@@ -64,13 +64,18 @@ MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 	nMaxTicks = std::min(nMaxTicks, nUserLimit);
 
 	// Deficit Compensation — reduce available ticks when server drops commands
-	// no idea what this does
-	if (F::Ticks->GetOptimalDeficitTracking() && Shifting::nDeficit > 0)
+	if (Shifting::nDeficit > 0)
 	{
 		Shifting::nDeficit--;
 		if (Shifting::nAvailableTicks > 0)
 			Shifting::nAvailableTicks--;
 	}
+
+	auto callOriginal = [&](bool bFinal)
+	{
+		G::UpdatePathStorage();
+		F::Networking->CL_Move(accumulated_extra_samples, bFinal);
+	};
 
 	// Handle recharging
 	// When fast sticky sets a recharge target, stop at that count instead of the global max
@@ -92,6 +97,8 @@ MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 		if (Shifting::bRecharging)
 		{
 			Shifting::nAvailableTicks++;
+			if (I::ClientState->chokedcommands)
+				callOriginal(bFinalTick);
 			return;
 		}
 	}
@@ -103,73 +110,77 @@ MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 			Shifting::nStickyRechargeTarget = 0;
 	}
 
-	auto callOriginal = [&](bool bFinal)
-	{
-		G::UpdatePathStorage();
-		F::Networking->CL_Move(accumulated_extra_samples, bFinal);
-	};
-
 	// RapidFire/DoubleTap shifting
-	// not working, i hate DT code
 	if (Shifting::bRapidFireWantShift)
 	{
 		Shifting::bRapidFireWantShift = false;
 		Shifting::bShifting = true;
-		Shifting::bShiftingRapidFire = true;
 
-		const int nTicks = std::min({F::Ticks->GetOptimalDTTicks(), Shifting::nAvailableTicks, F::Ticks->GetMaxSafeShiftTicks()});
-		
-		Shifting::nTotalShiftTicks = nTicks;
-		Shifting::nCurrentShiftTick = 0;
+		// Amalgam-style: account for choked commands eating server budget
+		const int nTicks = std::min(CFG::Exploits_RapidFire_Ticks, F::Ticks->GetProcessableTicks());
 
-		for (int n = 0; n < nTicks && Shifting::nAvailableTicks > 0; n++)
+		if (nTicks > 0)
 		{
-			Shifting::nCurrentShiftTick = n;
-			callOriginal(n == nTicks - 1);
-			Shifting::nAvailableTicks--;
+			Shifting::nTotalShiftTicks = nTicks;
+			Shifting::nCurrentShiftTick = 0;
+			Shifting::bTickbaseFixRecorded = false;
+
+			for (int n = 0; n < nTicks && Shifting::nAvailableTicks > 0; n++)
+			{
+				Shifting::nCurrentShiftTick = n;
+				Shifting::nAvailableTicks--;
+				callOriginal(n == nTicks - 1);
+			}
+
+			Shifting::OnCommandsSent(nTicks);
+
+			Shifting::bShifting = false;
+			Shifting::nCurrentShiftTick = 0;
+			Shifting::nTotalShiftTicks = 0;
+			Shifting::bTickbaseFixRecorded = false;
+		}
+		else
+		{
+			Shifting::bShifting = false;
 		}
 
-		// Track how many commands we sent for deficit detection
-		// dont think this does anything useful but im not removing this, yet
-		Shifting::OnCommandsSent(nTicks);
-
-		Shifting::bShifting = false;
-		Shifting::bShiftingRapidFire = false;
-		Shifting::nCurrentShiftTick = 0;
-		Shifting::nTotalShiftTicks = 0;
-		
 		return;
 	}
 
-	// Sticky DT shifting, working, not great sometimes, needs some improvements since we switched to cl_moverebuild
+	// Sticky DT shifting
 	if (Shifting::bStickyDTWantShift)
 	{
 		Shifting::bStickyDTWantShift = false;
 		Shifting::bShifting = true;
-		Shifting::bShiftingRapidFire = true;
 
-		const int nTicks = std::min(Shifting::nStickyDTTicksToUse, Shifting::nAvailableTicks);
+		const int nTicks = std::min(Shifting::nStickyDTTicksToUse, F::Ticks->GetProcessableTicks());
 		Shifting::nStickyDTTicksToUse = 0;
-		
-		Shifting::nTotalShiftTicks = nTicks;
-		Shifting::nCurrentShiftTick = 0;
 
-		for (int n = 0; n < nTicks && Shifting::nAvailableTicks > 0; n++)
+		if (nTicks > 0)
 		{
-			Shifting::nCurrentShiftTick = n;
-			callOriginal(n == nTicks - 1);
-			Shifting::nAvailableTicks--;
+			Shifting::nTotalShiftTicks = nTicks;
+			Shifting::nCurrentShiftTick = 0;
+			Shifting::bTickbaseFixRecorded = false;
+
+			for (int n = 0; n < nTicks && Shifting::nAvailableTicks > 0; n++)
+			{
+				Shifting::nCurrentShiftTick = n;
+				Shifting::nAvailableTicks--;
+				callOriginal(n == nTicks - 1);
+			}
+
+			Shifting::OnCommandsSent(nTicks);
+
+			Shifting::bShifting = false;
+			Shifting::nCurrentShiftTick = 0;
+			Shifting::nTotalShiftTicks = 0;
+			Shifting::bTickbaseFixRecorded = false;
+		}
+		else
+		{
+			Shifting::bShifting = false;
 		}
 
-		// Track how many commands we sent for deficit detection
-		// huh? why
-		Shifting::OnCommandsSent(nTicks);
-
-		Shifting::bShifting = false;
-		Shifting::bShiftingRapidFire = false;
-		Shifting::nCurrentShiftTick = 0;
-		Shifting::nTotalShiftTicks = 0;
-		
 		return;
 	}
 
@@ -187,8 +198,8 @@ MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 			const int nTicks = Shifting::nAvailableTicks;
 			for (int n = 0; n < nTicks; n++)
 			{
-				callOriginal(n == nTicks - 1);
 				Shifting::nAvailableTicks--;
+				callOriginal(n == nTicks - 1);
 			}
 
 			Shifting::OnCommandsSent(nTicks);
@@ -208,20 +219,23 @@ MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 
 				if (CFG::Exploits_Warp_Mode == 0)
 				{
-					for (int n = 0; n < 2 && Shifting::nAvailableTicks > 0; n++)
+					int nTicksSent = 0;
+					const int nTicksToSend = std::min(2, Shifting::nAvailableTicks);
+					for (int n = 0; n < nTicksToSend && Shifting::nAvailableTicks > 0; n++)
 					{
-						callOriginal(n == 1);
 						Shifting::nAvailableTicks--;
+						callOriginal(n == nTicksToSend - 1);
+						nTicksSent++;
 					}
-					Shifting::OnCommandsSent(2);
+					Shifting::OnCommandsSent(nTicksSent);
 				}
 				else
 				{
 					const int nTicks = Shifting::nAvailableTicks;
 					for (int n = 0; n < nTicks; n++)
 					{
-						callOriginal(n == nTicks - 1);
 						Shifting::nAvailableTicks--;
+						callOriginal(n == nTicks - 1);
 					}
 					Shifting::OnCommandsSent(nTicks);
 				}

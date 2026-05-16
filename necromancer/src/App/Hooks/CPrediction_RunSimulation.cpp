@@ -28,6 +28,7 @@ MAKE_SIGNATURE(CPrediction_RunSimulation, "client.dll", "48 83 EC 38 4C 8B 44", 
 struct TickbaseFix_t
 {
     CUserCmd* m_pCmd;                  // The first shift command (identifies the shift batch)
+    int m_iCommandNumber;
     int m_iLastOutgoingCommand;        // lastoutgoingcommand at shift start
     int m_iTickbaseShift;              // Number of ticks shifted (N)
 };
@@ -40,36 +41,17 @@ MAKE_HOOK(CPrediction_RunSimulation, Signatures::CPrediction_RunSimulation.Get()
     if (!localPlayer || !cmd)
         return CALL_ORIGINAL(rcx, current_command, curtime, cmd, localPlayer);
 
-    // During recharging, skip prediction for local player to avoid
-    // stale prediction state (we're not sending commands)
-    if (Shifting::bRecharging)
-    {
-        if (const auto pLocal = H::Entities->GetLocal())
-        {
-            if (localPlayer == pLocal)
-                return;
-        }
-    }
-
-    // Tickbase fix: when a shift starts, record the shift info
-    // (bShifting is set true in CL_Move before the shift loop, and
-    //  nCurrentShiftTick == 0 means this is the first shift tick)
-    if (Shifting::bShifting && Shifting::nCurrentShiftTick == 0 && Shifting::nTotalShiftTicks > 0)
-    {
-        s_vTickbaseFixes.emplace_back(G::CurrentUserCmd, I::ClientState->lastoutgoingcommand, Shifting::nTotalShiftTicks);
-    }
-
     // Apply tickbase fix for shift commands
     for (auto it = s_vTickbaseFixes.begin(); it != s_vTickbaseFixes.end();)
     {
         // Clean up entries that have been ACKed by the server
-        if (it->m_iLastOutgoingCommand < I::ClientState->last_command_ack)
+        if (it->m_iCommandNumber <= I::ClientState->last_command_ack)
         {
             it = s_vTickbaseFixes.erase(it);
             continue;
         }
         // If this command is part of a shift batch, subtract the shift amount
-        if (cmd == it->m_pCmd)
+        if (cmd == it->m_pCmd || cmd->command_number == it->m_iCommandNumber)
         {
             localPlayer->m_nTickBase() -= it->m_iTickbaseShift;
             break;
@@ -85,6 +67,24 @@ MAKE_HOOK(CPrediction_RunSimulation, Signatures::CPrediction_RunSimulation.Get()
 // Public interface for level shutdown cleanup
 namespace TickbaseFix
 {
-    inline void Clear() { s_vTickbaseFixes.clear(); }
-    inline void OnShiftStart(int) {}
+    void Add(CUserCmd* pCmd, int nLastOutgoingCommand, int nTickbaseShift)
+    {
+        if (!pCmd || nTickbaseShift <= 0)
+            return;
+
+        for (auto& fix : s_vTickbaseFixes)
+        {
+            if (fix.m_pCmd == pCmd || fix.m_iCommandNumber == pCmd->command_number)
+            {
+                fix.m_iCommandNumber = pCmd->command_number;
+                fix.m_iLastOutgoingCommand = nLastOutgoingCommand;
+                fix.m_iTickbaseShift = nTickbaseShift;
+                return;
+            }
+        }
+
+        s_vTickbaseFixes.emplace_back(pCmd, pCmd->command_number, nLastOutgoingCommand, nTickbaseShift);
+    }
+
+    void Clear() { s_vTickbaseFixes.clear(); }
 }

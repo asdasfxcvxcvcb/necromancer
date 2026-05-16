@@ -5,15 +5,6 @@
 MAKE_HOOK(CPrediction_RunCommand, Memory::GetVFunc(I::Prediction, 17), void, __fastcall,
 	CPrediction* ecx, C_BasePlayer* player, CUserCmd* pCmd, IMoveHelper* moveHelper)
 {
-	if (Shifting::bRecharging)
-	{
-		if (const auto pLocal = H::Entities->GetLocal())
-		{
-			if (player == pLocal)
-				return;
-		}
-	}
-
 	// NOTE: AdjustPlayers/RestorePlayers are called in CPrediction_RunSimulation,
 	// which wraps the entire prediction cycle including RunCommand.
 	// Calling them here too causes double-adjustment which breaks ESP scaling.

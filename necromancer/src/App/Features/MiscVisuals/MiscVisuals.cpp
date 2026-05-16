@@ -446,10 +446,11 @@ void CMiscVisuals::ShiftBar()
 	if (CFG::Misc_AntiCheat_Enabled && !CFG::Misc_AntiCheat_IgnoreTickLimit)
 		nMaxTicksBudget = std::min(nMaxTicksBudget, 8);
 
-	int nSavedDTTicks = Shifting::nAvailableTicks;
 	int nChokedCommands = I::ClientState->chokedcommands;
+	int nProcessableTicks = F::Ticks->GetProcessableTicks();
+	int nServerBudget = Shifting::GetServerProcessBudget();
 
-	bool bCanDT = F::RapidFire->GetTicks(pWeapon) > 0;
+	bool bCanDT = F::RapidFire->CanDoubleTapNow(pLocal, pWeapon);
 	bool bShifting = Shifting::bShifting || Shifting::bShiftingWarp;
 	bool bRecharging = Shifting::bRecharging;
 
@@ -467,14 +468,8 @@ void CMiscVisuals::ShiftBar()
 	H::Draw->Rect(nBarX, nBarY, nActualBarWidth, nBarHeight, clrBarBg);
 	H::Draw->OutlinedRect(nBarX, nBarY, nActualBarWidth, nBarHeight, clrOutline);
 
-	// Effective available ticks = stored ticks + choked commands (anti-aim ticks excluded)
-	// This matches Amalgam's display: choked commands are ticks being used by the
-	// connection, so they count toward the available budget.
-	int nAntiAimTicks = F::FakeAngle->AntiAimOn() ? F::FakeAngle->AntiAimTicks() : 0;
-	int nEffectiveTicks = std::clamp(nSavedDTTicks + std::max(nChokedCommands - nAntiAimTicks, 0), 0, nMaxTicksBudget);
-
 	// Calculate fill ratios (no interpolation - instant)
-	float flDTRatio = static_cast<float>(nEffectiveTicks) / static_cast<float>(nMaxTicksBudget);
+	float flDTRatio = static_cast<float>(nProcessableTicks) / static_cast<float>((std::max)(nServerBudget, 1));
 	float flChokeRatio = static_cast<float>(nChokedCommands) / static_cast<float>(nMaxTicksBudget);
 
 	int nInnerWidth = nActualBarWidth - 2;
@@ -623,7 +618,7 @@ void CMiscVisuals::ShiftBar()
 	// === ROW 2: TICKS label (left) and STATUS (right) ===
 	// Left: TICKS: X/MAX
 	H::Draw->String(font, nLeftX, nDrawY, clrText, POS_DEFAULT,
-		std::format("TICKS: {}/{}", nEffectiveTicks, nMaxTicksBudget).c_str());
+		std::format("TICKS: {}/{}", nProcessableTicks, nServerBudget).c_str());
 
 	// Right: Status
 	if (bShifting)
@@ -638,10 +633,10 @@ void CMiscVisuals::ShiftBar()
 	nDrawY += nRowHeight;
 
 	// === ROW 3: Choked info (right-aligned) ===
-	if (nChokedCommands > 0)
+	if (nChokedCommands > 0 || Shifting::nDeficit > 0)
 	{
 		H::Draw->String(font, nTextRightX, nDrawY, {200, 150, 255, 255}, POS_CENTERX,
-			std::format("CHOKE: {}", nChokedCommands).c_str());
+			std::format("USED: {} DROP: {}", nChokedCommands, Shifting::nDeficit).c_str());
 	}
 }
 

@@ -484,9 +484,9 @@ namespace Shifting
 	inline int nStickyDTTicksToUse = 0;       // How many ticks to use for sticky DT (set by RapidFire)
 	inline int nStickyRechargeTarget = 0;     // When > 0, stop recharging at this count instead of global max
 	inline bool bShiftingWarp = false;
-	inline bool bShiftingRapidFire = false;  // True when shifting for rapid fire (not warp)
 	inline int nCurrentShiftTick = 0;        // Current tick index during rapid fire shift (0-indexed)
 	inline int nTotalShiftTicks = 0;         // Total ticks being shifted
+	inline bool bTickbaseFixRecorded = false;
 
 	// Saved command state (from Amalgam)
 	inline CUserCmd SavedCmd = {};
@@ -520,6 +520,23 @@ namespace Shifting
 	inline int nMaxUsrCmdProcessTicks = 24;   // sv_maxusrcmdprocessticks value (cached)
 	inline int nLastAckedCommandCount = 0;    // Commands acked in last server update
 	inline int nCommandsSentSinceAck = 0;    // Commands sent since last server ack
+
+	inline int GetOutstandingCommandCost()
+	{
+		return I::ClientState ? (std::max)(I::ClientState->chokedcommands, 0) : 0;
+	}
+
+	inline int GetServerProcessBudget(int nReservedTicks = 0)
+	{
+		const int nServerMax = (std::max)(nMaxUsrCmdProcessTicks, 1);
+		const int nUsedTicks = GetOutstandingCommandCost() + (std::max)(nDeficit, 0) + (std::max)(nReservedTicks, 0);
+		return std::clamp(nServerMax - nUsedTicks, 0, nServerMax);
+	}
+
+	inline int GetProcessableTicks(int nReservedTicks = 0)
+	{
+		return std::clamp(nAvailableTicks, 0, GetServerProcessBudget(nReservedTicks));
+	}
 
 	// Update tick tracking - call this every frame
 	inline void UpdateTickTracking(int nServerTick, int nCommandAck, float flLatency)
@@ -597,9 +614,9 @@ namespace Shifting
 		bShifting = false;
 		bRapidFireWantShift = false;
 		bShiftingWarp = false;
-		bShiftingRapidFire = false;
 		nCurrentShiftTick = 0;
 		nTotalShiftTicks = 0;
+		bTickbaseFixRecorded = false;
 		// Reset saved command state
 		bHasSavedCmd = false;
 		bSavedAngles = false;

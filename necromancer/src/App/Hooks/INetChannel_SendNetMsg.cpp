@@ -210,8 +210,50 @@ MAKE_HOOK(INetChannel_SendNetMsg, Signatures::INetChannel_SendNetMsg.Get(), bool
 		}
 	}
 	
-	// clc_Move is now handled by the rebuilt CL_Sendmove in Networking.cpp
-	// No longer need to intercept it here
+	if (msg.GetType() == clc_Move)
+	{
+		auto pMsg = reinterpret_cast<CLC_Move*>(&msg);
+		if (!pMsg)
+			return true;
+
+		const int nLastOutgoingCommand = I::ClientState->lastoutgoingcommand;
+		const int nChokedCommands = I::ClientState->chokedcommands;
+		const int nNextCommandNr = nLastOutgoingCommand + nChokedCommands + 1;
+
+		std::byte data[4000];
+		pMsg->m_DataOut.StartWriting(data, sizeof(data));
+
+		const int nCommands = 1 + nChokedCommands;
+		pMsg->m_nNewCommands = std::clamp(nCommands, 0, MAX_NEW_COMMANDS);
+
+		const int nExtraCommands = nCommands - pMsg->m_nNewCommands;
+		pMsg->m_nBackupCommands = std::clamp(std::max(2, nExtraCommands), 0, MAX_BACKUP_COMMANDS);
+
+		bool bOk = true;
+		const int nNumCmds = pMsg->m_nNewCommands + pMsg->m_nBackupCommands;
+		int nFrom = -1;
+		for (int nTo = nNextCommandNr - nNumCmds + 1; nTo <= nNextCommandNr; nTo++)
+		{
+			const bool bIsNewCmd = nTo >= nNextCommandNr - pMsg->m_nNewCommands + 1;
+			bOk = bOk && I::BaseClientDLL->WriteUsercmdDeltaToBuffer(&pMsg->m_DataOut, nFrom, nTo, bIsNewCmd);
+			nFrom = nTo;
+		}
+
+		if (bOk)
+		{
+			if (nExtraCommands > 0)
+				pNet->m_nChokedPackets -= nExtraCommands;
+
+			CALL_ORIGINAL(pNet, reinterpret_cast<INetMessage&>(*pMsg), bForceReliable, bVoice);
+		}
+
+		const int nAllowedNewCommands = std::max(Shifting::nMaxUsrCmdProcessTicks - Shifting::nAvailableTicks, 0);
+		const int nCmdCount = pMsg->m_nNewCommands + pMsg->m_nBackupCommands - 3;
+		if (nCmdCount > nAllowedNewCommands)
+			Shifting::nDeficit = std::max(Shifting::nDeficit, nCmdCount - nAllowedNewCommands);
+
+		return true;
+	}
 	
 	return CALL_ORIGINAL(pNet, msg, bForceReliable, bVoice);
 }

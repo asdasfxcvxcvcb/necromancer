@@ -33,9 +33,6 @@ void CNetworking::CL_Sendmove()
 	}
 
 	if (bOK) {
-		if (ExtraCommands)
-			pNetChan->m_nChokedPackets -= ExtraCommands;
-
 		I::ClientState->m_NetChannel->SendNetMsg(Message, false, false);
 	}
 }

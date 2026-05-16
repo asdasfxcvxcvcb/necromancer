@@ -1141,10 +1141,12 @@ bool CAimbotHitscan::ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWe
 	return true;
 }
 
+static bool CanInterruptReload(C_TFWeaponBase* pWeapon);
+
 // Handles and updated the IN_ATTACK state
 void CAimbotHitscan::HandleFire(CUserCmd* pCmd, C_TFWeaponBase* pWeapon)
 {
-	if (!pWeapon->HasPrimaryAmmoForShot())
+	if (!pWeapon->HasPrimaryAmmoForShot() && !CanInterruptReload(pWeapon))
 		return;
 
 	if (pWeapon->GetWeaponID() == TF_WEAPON_SNIPERRIFLE_CLASSIC)
@@ -1167,7 +1169,7 @@ void CAimbotHitscan::HandleFire(CUserCmd* pCmd, C_TFWeaponBase* pWeapon)
 
 bool CAimbotHitscan::IsFiring(const CUserCmd* pCmd, C_TFWeaponBase* pWeapon)
 {
-	if (!pWeapon->HasPrimaryAmmoForShot())
+	if (!pWeapon->HasPrimaryAmmoForShot() && !CanInterruptReload(pWeapon))
 		return false;
 
 	if (pWeapon->GetWeaponID() == TF_WEAPON_SNIPERRIFLE_CLASSIC)
@@ -1179,8 +1181,7 @@ bool CAimbotHitscan::IsFiring(const CUserCmd* pCmd, C_TFWeaponBase* pWeapon)
 	
 	// Reload interrupt case: attacking during reload with single-reload weapon that has ammo
 	// For these weapons, pressing attack will abort reload and fire immediately
-	if ((pCmd->buttons & IN_ATTACK) && pWeapon->IsInReload() && 
-		pWeapon->m_bReloadsSingly() && pWeapon->m_iClip1() > 0)
+	if ((pCmd->buttons & IN_ATTACK) && CanInterruptReload(pWeapon))
 	{
 		return true;
 	}
@@ -1190,16 +1191,36 @@ bool CAimbotHitscan::IsFiring(const CUserCmd* pCmd, C_TFWeaponBase* pWeapon)
 
 static bool CanInterruptReload(C_TFWeaponBase* pWeapon)
 {
-	if (!pWeapon || !pWeapon->HasPrimaryAmmoForShot() || pWeapon->m_iClip1() <= 0 || !pWeapon->IsInReload())
+	if (!pWeapon || pWeapon->m_iClip1() <= 0 || !pWeapon->IsInReload())
 		return false;
 
 	if (pWeapon->m_bReloadsSingly())
 		return true;
 
-	const int nWeaponID = pWeapon->GetWeaponID();
-	return nWeaponID == TF_WEAPON_SMG || nWeaponID == TF_WEAPON_CHARGED_SMG
-		|| nWeaponID == TF_WEAPON_PISTOL || nWeaponID == TF_WEAPON_PISTOL_SCOUT
-		|| nWeaponID == TF_WEAPON_MINIGUN;
+	switch (pWeapon->GetWeaponID())
+	{
+	case TF_WEAPON_SHOTGUN_PRIMARY:
+	case TF_WEAPON_SHOTGUN_SOLDIER:
+	case TF_WEAPON_SHOTGUN_HWG:
+	case TF_WEAPON_SHOTGUN_PYRO:
+	case TF_WEAPON_SHOTGUN_BUILDING_RESCUE:
+	case TF_WEAPON_SCATTERGUN:
+	case TF_WEAPON_SODA_POPPER:
+	case TF_WEAPON_PEP_BRAWLER_BLASTER:
+	case TF_WEAPON_SMG:
+	case TF_WEAPON_CHARGED_SMG:
+	case TF_WEAPON_PISTOL:
+	case TF_WEAPON_PISTOL_SCOUT:
+	case TF_WEAPON_REVOLVER:
+	case TF_WEAPON_HANDGUN_SCOUT_PRIMARY:
+	case TF_WEAPON_HANDGUN_SCOUT_SECONDARY:
+	case TF_WEAPON_MINIGUN:
+		return true;
+	default:
+		break;
+	}
+
+	return H::AimUtils->GetWeaponType(pWeapon) == EWeaponType::HITSCAN && pWeapon->GetSlot() != WEAPON_SLOT_MELEE;
 }
 
 void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
@@ -1219,6 +1240,7 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 
 	const bool isFiring = IsFiring(pCmd, pWeapon);
 	const auto aimKeyDown = CFG::Aimbot_Always_On || H::Input->IsDown(CFG::Aimbot_Key);
+	const bool canFireDuringReload = CFG::Aimbot_AutoShoot && aimKeyDown && CanInterruptReload(pWeapon);
 
 	// Auto Rev: spin up minigun when aim key is held, even without a target
 	if (CFG::Aimbot_Hitscan_Auto_Rev && aimKeyDown && pWeapon->GetWeaponID() == TF_WEAPON_MINIGUN)
@@ -1236,7 +1258,7 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 
 		G::nTargetIndexEarly = target.Entity->entindex();
 
-		if (aimKeyDown || isFiring)
+		if (aimKeyDown || isFiring || canFireDuringReload)
 		{
 			G::nTargetIndex = target.Entity->entindex();
 			F::CrashHandler->s_Context.m_nTargetIndex = G::nTargetIndex;

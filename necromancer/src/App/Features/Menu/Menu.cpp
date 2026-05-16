@@ -4249,25 +4249,17 @@ void CMenu::MainWindow()
 		m_mapGroupBoxes["Exploits_Shifting"].m_fnRenderContent = [this]() {
 			// Keys
 			InputKey("Recharge Key", CFG::Exploits_Shifting_Recharge_Key);
-			{ static bool bDTDisabled = false; CheckBox("DT (currently disabled)", bDTDisabled); bDTDisabled = false; }
+			InputKey("Rapid Fire Key", CFG::Exploits_RapidFire_Key);
 			InputKey("Fast Sticky Key", CFG::Exploits_FastSticky_Key);
 			InputKey("Warp Key", CFG::Exploits_Warp_Key);
-			
-			// Auto settings - adjusts based on ping
-			CheckBox("Auto Settings (Ping)", CFG::Exploits_RapidFire_Auto_Settings);
-			
-			// Manual tick settings (hidden when auto is on)
-			if (!CFG::Exploits_RapidFire_Auto_Settings)
-			{
-				SliderInt("Recharge Limit", CFG::Exploits_Shifting_Recharge_Limit, 2, 24, 1);
-				const bool bLimitTicks = CFG::Misc_AntiCheat_Enabled && !CFG::Misc_AntiCheat_IgnoreTickLimit;
-				const int nMaxSlider = bLimitTicks ? 8 : 22;
-				SliderInt(bLimitTicks ? "DT Ticks (Safe)" : "DT Ticks", CFG::Exploits_RapidFire_Ticks, 2, nMaxSlider, 1);
-				SliderInt("DT Delay Ticks", CFG::Exploits_RapidFire_Min_Ticks_Target_Same, 0, 5, 1);
-				SliderInt("Cmds/Packet (Idle)", CFG::Exploits_RapidFire_Max_Commands, 1, 15, 1);
-				SliderInt("Cmds/Packet (Shifting)", CFG::Exploits_RapidFire_DT_Commands, 1, 24, 1);
-			}
-			
+
+			// Tick settings
+			SliderInt("Recharge Limit", CFG::Exploits_Shifting_Recharge_Limit, 2, 24, 1);
+			const bool bLimitTicks = CFG::Misc_AntiCheat_Enabled && !CFG::Misc_AntiCheat_IgnoreTickLimit;
+			const int nMaxSlider = bLimitTicks ? 8 : 22;
+			SliderInt(bLimitTicks ? "DT Ticks (Safe)" : "DT Ticks", CFG::Exploits_RapidFire_Ticks, 2, nMaxSlider, 1);
+			SliderInt("DT Delay Ticks", CFG::Exploits_RapidFire_Min_Ticks_Target_Same, 0, 5, 1);
+
 			// Warp settings
 			SelectSingle("Warp Mode", CFG::Exploits_Warp_Mode, {
 				{ "Slow", 0 }, { "Full", 1 }
@@ -4275,14 +4267,10 @@ void CMenu::MainWindow()
 			SelectSingle("Warp Exploit", CFG::Exploits_Warp_Exploit, {
 				{ "None", 0 }, { "Fake Peek", 1 }, { "0 Velocity", 2 }
 			});
-			
-			// Tracking & safety
-			SelectSingle("Tick Tracking", CFG::Exploits_RapidFire_Tick_Tracking, {
-				{ "Disabled", 0 }, { "Adaptive", 1 }
-			});
-			CheckBox("Deficit Tracking", CFG::Exploits_RapidFire_Deficit_Tracking);
+
+			// Antiwarp
 			CheckBox("DT Antiwarp", CFG::Exploits_RapidFire_Antiwarp);
-			
+
 			// Visual
 			CheckBox("Draw Indicator", CFG::Exploits_Shifting_Draw_Indicator);
 			if (CFG::Exploits_Shifting_Draw_Indicator)

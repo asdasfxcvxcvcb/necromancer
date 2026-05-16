@@ -28,6 +28,11 @@
 // Taunt delay processing - defined in IVEngineClient013_ClientCmd.cpp
 extern void ProcessTauntDelay();
 
+namespace TickbaseFix
+{
+	void Add(CUserCmd* pCmd, int nLastOutgoingCommand, int nTickbaseShift);
+}
+
 MAKE_SIGNATURE(ValidateUserCmd_, "client.dll", "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 20 48 8B F9 41 8B D8", 0, 0);
 MAKE_HOOK(ValidateUserCmd, Signatures::ValidateUserCmd_.Get(), void, __fastcall, void* rcx, CUserCmd* cmd,
 	int sequence_number) {
@@ -85,6 +90,40 @@ static inline bool AntiAimCheck(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUs
 	return bAntiAim;
 }
 
+static inline bool CanInterruptReload(C_TFWeaponBase* pWeapon)
+{
+	if (!pWeapon || pWeapon->m_iClip1() <= 0 || !pWeapon->IsInReload())
+		return false;
+
+	if (pWeapon->m_bReloadsSingly())
+		return true;
+
+	switch (pWeapon->GetWeaponID())
+	{
+	case TF_WEAPON_SHOTGUN_PRIMARY:
+	case TF_WEAPON_SHOTGUN_SOLDIER:
+	case TF_WEAPON_SHOTGUN_HWG:
+	case TF_WEAPON_SHOTGUN_PYRO:
+	case TF_WEAPON_SHOTGUN_BUILDING_RESCUE:
+	case TF_WEAPON_SCATTERGUN:
+	case TF_WEAPON_SODA_POPPER:
+	case TF_WEAPON_PEP_BRAWLER_BLASTER:
+	case TF_WEAPON_SMG:
+	case TF_WEAPON_CHARGED_SMG:
+	case TF_WEAPON_PISTOL:
+	case TF_WEAPON_PISTOL_SCOUT:
+	case TF_WEAPON_REVOLVER:
+	case TF_WEAPON_HANDGUN_SCOUT_PRIMARY:
+	case TF_WEAPON_HANDGUN_SCOUT_SECONDARY:
+	case TF_WEAPON_MINIGUN:
+		return true;
+	default:
+		break;
+	}
+
+	return H::AimUtils->GetWeaponType(pWeapon) == EWeaponType::HITSCAN && pWeapon->GetSlot() != WEAPON_SLOT_MELEE;
+}
+
 MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool, __fastcall,
 	CClientModeShared* ecx, float flInputSampleTime, CUserCmd* pCmd)
 {
@@ -138,22 +177,25 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 	if (!pBufferCmd)
 		pBufferCmd = pCmd;
 
-	// Run Prediction::Update on the first shift tick of each frame, and always
-	// during non-shift frames. On subsequent shift ticks in the same frame,
-	// m_nDeltaTick hasn't changed (no new server ACK), so replaying would
-	// double-advance tickbase. Running on shift tick 0 lets the client replay
-	// unacknowledged commands from before the shift, keeping tickbase in sync.
-	// Do NOT manually increment m_nTickBase during shifts — the next frame's
-	// Prediction::Update will replay the shift commands via RunCommand.
-	if (!Shifting::bShifting || Shifting::nCurrentShiftTick == 0)
+	bool bRapidFireExit = false;
+	if (Shifting::bShifting && !Shifting::bShiftingWarp)
 	{
-		I::Prediction->Update(
-			I::ClientState->m_nDeltaTick,
-			I::ClientState->m_nDeltaTick > 0,
-			I::ClientState->last_command_ack,
-			I::ClientState->lastoutgoingcommand + I::ClientState->chokedcommands
-		);
+		bRapidFireExit = F::RapidFire->ShouldExitCreateMove(pCmd);
+		pCmd->random_seed = MD5_PseudoRandom(pCmd->command_number) & 0x7fffffff;
+
+		if (bRapidFireExit && !Shifting::bTickbaseFixRecorded && Shifting::nCurrentShiftTick == 0 && Shifting::nTotalShiftTicks > 0)
+		{
+			TickbaseFix::Add(pCmd, I::ClientState->lastoutgoingcommand, Shifting::nTotalShiftTicks);
+			Shifting::bTickbaseFixRecorded = true;
+		}
 	}
+
+	I::Prediction->Update(
+		I::ClientState->m_nDeltaTick,
+		I::ClientState->m_nDeltaTick > 0,
+		I::ClientState->last_command_ack,
+		bRapidFireExit ? pCmd->command_number : I::ClientState->lastoutgoingcommand + I::ClientState->chokedcommands
+	);
 
 	// Update tick tracking for doubletap high ping compensation
 	{
@@ -182,7 +224,7 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 	}
 
 	// RapidFire early exit
-	if (F::RapidFire->ShouldExitCreateMove(pCmd))
+	if (bRapidFireExit || F::RapidFire->ShouldExitCreateMove(pCmd))
 	{
 		auto pLocal = H::Entities->GetLocal();
 		auto pWeapon = H::Entities->GetWeapon();
@@ -312,6 +354,9 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 
 			if (bReload && bAmmo)
 				G::bReloading = true;
+
+			if (CanInterruptReload(pWeapon))
+				G::bCanPrimaryAttack = true;
 		}
 
 		G::Attacking = SDK::IsAttacking(pLocal, pWeapon, pCmd, false);
