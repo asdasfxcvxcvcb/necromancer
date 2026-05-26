@@ -247,11 +247,6 @@ MAKE_HOOK(INetChannel_SendNetMsg, Signatures::INetChannel_SendNetMsg.Get(), bool
 			CALL_ORIGINAL(pNet, reinterpret_cast<INetMessage&>(*pMsg), bForceReliable, bVoice);
 		}
 
-		const int nAllowedNewCommands = std::max(Shifting::nMaxUsrCmdProcessTicks - Shifting::nAvailableTicks, 0);
-		const int nCmdCount = pMsg->m_nNewCommands + pMsg->m_nBackupCommands - 3;
-		if (nCmdCount > nAllowedNewCommands)
-			Shifting::nDeficit = std::max(Shifting::nDeficit, nCmdCount - nAllowedNewCommands);
-
 		return true;
 	}
 	

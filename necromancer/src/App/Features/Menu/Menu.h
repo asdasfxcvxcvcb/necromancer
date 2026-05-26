@@ -90,6 +90,7 @@ private:
 	void HandleGroupBoxDrag();
 	EGroupBoxColumn GetColumnFromMouseX(int nContentX, int nContentW);
 	void ReorderGroupBoxesInColumn(const std::string& szTab, EGroupBoxColumn nColumn);
+	int CalculateGroupBoxInsertionIndex(const std::string& szTab, EGroupBoxColumn nColumn, int nContentY, int nMouseY, const std::string& szExcludeId);
 	std::string GetGroupBoxConfigKey(const std::string& szId);
 
 public:

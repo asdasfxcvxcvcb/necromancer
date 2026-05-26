@@ -5,11 +5,11 @@
 
 bool CLagRecords::IsSimulationTimeValid(float flCurSimTime, float flCmprSimTime)
 {
-	// Base limit (ping-based) + fake latency extension
-	// NOTE: Don't clamp fake latency here - the fake latency system works by manipulating
-	// sequence numbers, which is separate from the interp system. Amalgam doesn't clamp
-	// fake latency, only fake interp (which is sent to the server via cl_interp).
-	const float flMaxTime = std::min(GetServerAcceptedAgeRange() + m_flFakeLatency, m_flMaxUnlag);
+	// SEOwnedDE uses a flat 0.2f for record retention — keeps ~13 records per player.
+	// With fake latency, extend by fake_latency amount so backtrack records are retained.
+	const float flMaxTime = m_flFakeLatency > 0.0f
+		? std::min(m_flFakeLatency + 0.2f, m_flMaxUnlag)
+		: 0.2f;
 	return (flCurSimTime - flCmprSimTime) < flMaxTime;
 }
 
@@ -92,19 +92,20 @@ float CLagRecords::GetServerAcceptedAgeRange() const
 
 bool CLagRecords::IsRecordAgeValidForServer(float flRecordAge) const
 {
-	// Server validation: |fake_latency + lerp - clientAge| <= ageRange (see GetServerAcceptedAge for derivation)
-	// ageRange is dynamic based on real ping (see GetServerAcceptedAgeRange for tiers)
-	// Records too old OR too new will have their tick_count overridden by the server.
+	// Server validation: |correct - deltaTime| <= sv_maxunlag
+	// where correct = outgoing_latency + lerp, deltaTime = curtime - simTime
+	// This simplifies to: |outgoing_latency + lerp - clientAge| <= sv_maxunlag
+	// The server's actual window is sv_maxunlag (default 1.0s), NOT the 0.2s we previously used.
+	// Our old dynamic range (0.13-0.235s) was 4x more restrictive than the server,
+	// filtering out records the server would accept — causing missed shots.
 	const float flIdealAge = GetServerAcceptedAge();
-	const float flRange = GetServerAcceptedAgeRange();
 
-	// Also clamp by sv_maxunlag (1.0s max)
+	// Hard bounds: record must be non-negative and within sv_maxunlag
 	if (flRecordAge > m_flMaxUnlag || flRecordAge < 0.0f)
 		return false;
 
-	// Record must be within the server's acceptance window (both directions)
-	// Small buffer (0.05s) for timing imprecision
-	return fabsf(flRecordAge - flIdealAge) <= (flRange + 0.05f);
+	// Server's actual check: |idealAge - clientAge| <= sv_maxunlag
+	return fabsf(flRecordAge - flIdealAge) <= m_flMaxUnlag;
 }
 
 void CLagRecords::UpdateDatagram()

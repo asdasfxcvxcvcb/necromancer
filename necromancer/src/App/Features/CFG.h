@@ -46,6 +46,7 @@ namespace CFG
 	CFGVAR(Aimbot_Hitscan_Auto_Rev, false);
 	CFGVAR(Aimbot_Hitscan_Wait_For_Headshot, true);
 	CFGVAR(Aimbot_Hitscan_Wait_For_Charge, false);
+	CFGVAR(Aimbot_Hitscan_Smooth_When_Spec, false); // Force smooth aim when someone spectates you in first-person
 	CFGVAR(Aimbot_Hitscan_Minigun_TapFire, false);
 	CFGVAR(Aimbot_Hitscan_FakeLagFix, false); // Shoot on unchoke - when enemy sends update, their position is accurate
 

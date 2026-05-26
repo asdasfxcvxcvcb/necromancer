@@ -30,7 +30,7 @@ extern void ProcessTauntDelay();
 
 namespace TickbaseFix
 {
-	void Add(CUserCmd* pCmd, int nLastOutgoingCommand, int nTickbaseShift);
+	void Add(int nStartCommandNumber, int nTickbaseShift);
 }
 
 MAKE_SIGNATURE(ValidateUserCmd_, "client.dll", "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 20 48 8B F9 41 8B D8", 0, 0);
@@ -185,7 +185,11 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 
 		if (bRapidFireExit && !Shifting::bTickbaseFixRecorded && Shifting::nCurrentShiftTick == 0 && Shifting::nTotalShiftTicks > 0)
 		{
-			TickbaseFix::Add(pCmd, I::ClientState->lastoutgoingcommand, Shifting::nTotalShiftTicks);
+			// Record the tickbase fix for the FIRST command of the shift batch.
+			// The first shift command's command_number is the start of the batch.
+			// RunSimulation will apply AdjustPlayerTimeBase once on this command,
+			// then subsequent commands naturally increment tickbase by 1.
+			TickbaseFix::Add(pCmd->command_number, Shifting::nTotalShiftTicks);
 			Shifting::bTickbaseFixRecorded = true;
 		}
 	}
@@ -196,21 +200,6 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 		I::ClientState->last_command_ack,
 		bRapidFireExit ? pCmd->command_number : I::ClientState->lastoutgoingcommand + I::ClientState->chokedcommands
 	);
-
-	// Update tick tracking for doubletap high ping compensation
-	{
-		float flLatency = 0.0f;
-		if (const auto pNetChannel = I::EngineClient->GetNetChannelInfo())
-		{
-			if (!pNetChannel->IsLoopback())
-				flLatency = pNetChannel->GetAvgLatency(FLOW_OUTGOING);
-		}
-		Shifting::UpdateTickTracking(
-			I::ClientState->m_nDeltaTick,
-			I::ClientState->last_command_ack,
-			flLatency
-		);
-	}
 
 	F::AutoVaccinator->PreventReload(pCmd);
 

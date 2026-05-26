@@ -641,10 +641,10 @@ void CMiscVisuals::ShiftBar()
 	nDrawY += nRowHeight;
 
 	// === ROW 3: Choked info (right-aligned) ===
-	if (nChokedCommands > 0 || Shifting::nDeficit > 0)
+	if (nChokedCommands > 0)
 	{
 		H::Draw->String(font, nTextRightX, nDrawY, {200, 150, 255, 255}, POS_CENTERX,
-			std::format("USED: {} DROP: {}", nChokedCommands, Shifting::nDeficit).c_str());
+			std::format("CHOKED: {}", nChokedCommands).c_str());
 	}
 }
 

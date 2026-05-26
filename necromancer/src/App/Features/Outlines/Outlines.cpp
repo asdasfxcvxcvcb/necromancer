@@ -9,6 +9,11 @@
 
 #pragma warning (disable : 4244) //possible loss of data (int to float)
 
+namespace
+{
+	constexpr int MaxLagRecordOutlineEntriesPerPlayer = 6;
+}
+
 void COutlines::Initialize()
 {
 	// ==================================================================
@@ -54,10 +59,13 @@ void COutlines::Initialize()
 
 	if (!m_pRenderBuffer0 && m_pRtFullFrame)
 	{
+		const int nBufW = m_pRtFullFrame->GetActualWidth();
+		const int nBufH = m_pRtFullFrame->GetActualHeight();
+
 		m_pRenderBuffer0 = I::MaterialSystem->CreateNamedRenderTargetTextureEx(
 			"seo_outline_buffer0",
-			m_pRtFullFrame->GetActualWidth(),
-			m_pRtFullFrame->GetActualHeight(),
+			nBufW,
+			nBufH,
 			RT_SIZE_LITERAL,
 			IMAGE_FORMAT_RGB888,
 			MATERIAL_RT_DEPTH_SHARED,
@@ -71,10 +79,13 @@ void COutlines::Initialize()
 
 	if (!m_pRenderBuffer1 && m_pRtFullFrame)
 	{
+		const int nBufW = m_pRtFullFrame->GetActualWidth();
+		const int nBufH = m_pRtFullFrame->GetActualHeight();
+
 		m_pRenderBuffer1 = I::MaterialSystem->CreateNamedRenderTargetTextureEx(
 			"seo_outline_buffer1",
-			m_pRtFullFrame->GetActualWidth(),
-			m_pRtFullFrame->GetActualHeight(),
+			nBufW,
+			nBufH,
 			RT_SIZE_LITERAL,
 			IMAGE_FORMAT_RGB888,
 			MATERIAL_RT_DEPTH_SHARED,
@@ -318,13 +329,14 @@ void COutlines::RunModels()
 					const int nStyle = CFG::Materials_LagRecords_Style;
 					if (nStyle == 0)
 					{
-						for (int n = 1; n < nRecords; n++)
+						const int nRecordsToDraw = std::min(nRecords - 1, MaxLagRecordOutlineEntriesPerPlayer);
+						for (int n = 1; n <= nRecordsToDraw; n++)
 						{
 							const auto pRecord = F::LagRecords->GetRecord(pPlayer, n, true);
 							if (!pRecord || !F::LagRecords->DiffersFromCurrent(pRecord))
 								continue;
 
-							const float flRecordAlpha = Math::RemapValClamped(static_cast<float>(n), 1.0f, static_cast<float>(nRecords), flLagRecordAlpha, 0.01f);
+							const float flRecordAlpha = Math::RemapValClamped(static_cast<float>(n), 1.0f, static_cast<float>(nRecordsToDraw), flLagRecordAlpha, 0.01f);
 							m_vecOutlineLagRecords.emplace_back(OutlineLagRecord_t{
 								pPlayer,
 								const_cast<matrix3x4_t*>(pRecord->BoneMatrix),
@@ -560,6 +572,10 @@ void COutlines::Run()
 	if (w < 1 || h < 1 || w > 4096 || h > 2160)
 		return;
 
+	// Use render target actual size for glow/blur viewport
+	const int bw = m_pRenderBuffer0 ? m_pRenderBuffer0->GetActualWidth() : w;
+	const int bh = m_pRenderBuffer0 ? m_pRenderBuffer0->GetActualHeight() : h;
+
 	const auto pRC = I::MaterialSystem->GetRenderContext();
 
 	if (!pRC)
@@ -587,7 +603,7 @@ void COutlines::Run()
 	pRC->PushRenderTargetAndViewport();
 	{
 		pRC->SetRenderTarget(m_pRenderBuffer0);
-		pRC->Viewport(0, 0, w, h);
+		pRC->Viewport(0, 0, bw, bh);
 		pRC->ClearColor4ub(0, 0, 0, 0);
 		pRC->ClearBuffers(true, false, false);
 
@@ -624,11 +640,11 @@ void COutlines::Run()
 	{
 		pRC->PushRenderTargetAndViewport();
 		{
-			pRC->Viewport(0, 0, w, h);
+			pRC->Viewport(0, 0, bw, bh);
 			pRC->SetRenderTarget(m_pRenderBuffer1);
-			pRC->DrawScreenSpaceRectangle(m_pMatBlurX, 0, 0, w, h, 0.0f, 0.0f, w - 1, h - 1, w, h);
+			pRC->DrawScreenSpaceRectangle(m_pMatBlurX, 0, 0, bw, bh, 0.0f, 0.0f, bw - 1, bh - 1, bw, bh);
 			pRC->SetRenderTarget(m_pRenderBuffer0);
-			pRC->DrawScreenSpaceRectangle(m_pMatBlurY, 0, 0, w, h, 0.0f, 0.0f, w - 1, h - 1, w, h);
+			pRC->DrawScreenSpaceRectangle(m_pMatBlurY, 0, 0, bw, bh, 0.0f, 0.0f, bw - 1, bh - 1, bw, bh);
 		}
 		pRC->PopRenderTargetAndViewport();
 	}

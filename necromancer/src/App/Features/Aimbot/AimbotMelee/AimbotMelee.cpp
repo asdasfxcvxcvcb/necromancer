@@ -345,10 +345,6 @@ bool CAimbotMelee::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, MeleeT
 						if (flRecordAge > F::LagRecords->GetMaxUnlag())
 							continue;
 
-						const float flAgeDelta = fabsf(flRecordAge - flIdealAge);
-						if (!bFakeLatencyActive && flAgeDelta > flAgeTolerance + 0.05f)
-							continue;
-
 						if (n > 0)
 						{
 							const auto pPrevRecord = F::LagRecords->GetRecord(pPlayer, n - 1, true);
@@ -372,6 +368,7 @@ bool CAimbotMelee::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, MeleeT
 						if (CFG::Aimbot_Melee_Sort == 0 && flFOVTo > CFG::Aimbot_Melee_FOV)
 							continue;
 
+						const float flAgeDelta = fabsf(flRecordAge - flIdealAge);
 						validRecords.push_back({ pRecord, flAgeDelta, vPos, vAngleTo, flFOVTo, flDistTo });
 					}
 

@@ -63,14 +63,6 @@ MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 	const int nUserLimit = F::Ticks->GetOptimalRechargeLimit();
 	nMaxTicks = std::min(nMaxTicks, nUserLimit);
 
-	// Deficit Compensation — reduce available ticks when server drops commands
-	if (Shifting::nDeficit > 0)
-	{
-		Shifting::nDeficit--;
-		if (Shifting::nAvailableTicks > 0)
-			Shifting::nAvailableTicks--;
-	}
-
 	auto callOriginal = [&](bool bFinal)
 	{
 		G::UpdatePathStorage();
@@ -132,8 +124,6 @@ MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 				callOriginal(n == nTicks - 1);
 			}
 
-			Shifting::OnCommandsSent(nTicks);
-
 			Shifting::bShifting = false;
 			Shifting::nCurrentShiftTick = 0;
 			Shifting::nTotalShiftTicks = 0;
@@ -169,8 +159,6 @@ MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 				callOriginal(n == nTicks - 1);
 			}
 
-			Shifting::OnCommandsSent(nTicks);
-
 			Shifting::bShifting = false;
 			Shifting::nCurrentShiftTick = 0;
 			Shifting::nTotalShiftTicks = 0;
@@ -202,8 +190,6 @@ MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 				callOriginal(n == nTicks - 1);
 			}
 
-			Shifting::OnCommandsSent(nTicks);
-
 			Shifting::bShifting = false;
 			Shifting::bShiftingWarp = false;
 			return;
@@ -227,7 +213,6 @@ MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 						callOriginal(n == nTicksToSend - 1);
 						nTicksSent++;
 					}
-					Shifting::OnCommandsSent(nTicksSent);
 				}
 				else
 				{
@@ -237,7 +222,6 @@ MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 						Shifting::nAvailableTicks--;
 						callOriginal(n == nTicks - 1);
 					}
-					Shifting::OnCommandsSent(nTicks);
 				}
 
 				Shifting::bShifting = false;

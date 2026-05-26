@@ -2866,6 +2866,7 @@ void CMenu::MainWindow()
 				CheckBox("Auto Rev", CFG::Aimbot_Hitscan_Auto_Rev);
 				CheckBox("Wait For Headshot", CFG::Aimbot_Hitscan_Wait_For_Headshot);
 				CheckBox("Wait For Charge", CFG::Aimbot_Hitscan_Wait_For_Charge);
+				CheckBox("smooth when spec", CFG::Aimbot_Hitscan_Smooth_When_Spec);
 				CheckBox("Minigun Tapfire", CFG::Aimbot_Hitscan_Minigun_TapFire);
 				CheckBox("FakeLag Fix", CFG::Aimbot_Hitscan_FakeLagFix);
 
@@ -6511,6 +6512,40 @@ void CMenu::ReorderGroupBoxesInColumn(const std::string& szTab, EGroupBoxColumn 
 	}
 }
 
+int CMenu::CalculateGroupBoxInsertionIndex(const std::string& szTab, EGroupBoxColumn nColumn, int nContentY, int nMouseY, const std::string& szExcludeId)
+{
+	std::vector<DraggableGroupBox_t*> boxesInColumn;
+	for (auto& pair : m_mapGroupBoxes)
+	{
+		if (pair.first != szExcludeId &&
+			pair.second.m_szId.find(szTab + "_") == 0 &&
+			pair.second.m_nColumn == nColumn)
+		{
+			boxesInColumn.push_back(&pair.second);
+		}
+	}
+
+	std::sort(boxesInColumn.begin(), boxesInColumn.end(), [](DraggableGroupBox_t* a, DraggableGroupBox_t* b) {
+		return a->m_nOrderInColumn < b->m_nOrderInColumn;
+	});
+
+	int insertionIndex = 0;
+	int calcY = nContentY;
+	for (size_t i = 0; i < boxesInColumn.size(); i++)
+	{
+		int boxHeight = boxesInColumn[i]->m_nHeight > 0 ? boxesInColumn[i]->m_nHeight : 80;
+		int boxMidY = calcY + boxHeight / 2;
+		if (nMouseY > boxMidY)
+		{
+			insertionIndex = static_cast<int>(i) + 1;
+		}
+
+		calcY += boxHeight + CFG::Menu_Spacing_Y;
+	}
+
+	return insertionIndex;
+}
+
 void CMenu::HandleGroupBoxDrag()
 {
 	if (!m_bIsDraggingGroupBox)
@@ -6749,9 +6784,9 @@ void CMenu::HandleGroupBoxDrag()
 					targetColumn = oldColumn;
 			}
 			
-			// Assign order based on mouse Y position
+			// Assign order based on the same insertion logic used for rendering placeholders
 			int my = H::Input->GetMouseY();
-			int insertionIndex = 0;
+			int insertionIndex = CalculateGroupBoxInsertionIndex(szTab, targetColumn, m_nDragContentY, my, m_strDraggingGroupBox);
 			
 			// Collect all boxes in the target column (excluding the dragged one) and sort by order
 			std::vector<DraggableGroupBox_t*> boxesInColumn;
@@ -6769,30 +6804,6 @@ void CMenu::HandleGroupBoxDrag()
 			std::sort(boxesInColumn.begin(), boxesInColumn.end(), [](DraggableGroupBox_t* a, DraggableGroupBox_t* b) {
 				return a->m_nOrderInColumn < b->m_nOrderInColumn;
 			});
-			
-			// Calculate logical Y positions (where boxes would be without the dragged item)
-			// Use m_nDragContentY which is the consistent starting Y position from rendering
-			// This ensures the drop logic matches the visual indicator
-			int calcY = m_nDragContentY;
-			
-			// Find insertion index based on mouse Y against logical positions
-			// We compare against the BOTTOM of each box, not the middle
-			// This makes it easier to drop below an item
-			insertionIndex = 0;
-			for (size_t i = 0; i < boxesInColumn.size(); i++)
-			{
-				int boxHeight = boxesInColumn[i]->m_nHeight > 0 ? boxesInColumn[i]->m_nHeight : 80;
-				int boxBottomY = calcY + boxHeight;
-				
-				// If mouse is past the top half of this box, insert after it
-				int boxMidY = calcY + boxHeight / 2;
-				if (my > boxMidY)
-				{
-					insertionIndex = static_cast<int>(i) + 1;
-				}
-				
-				calcY += boxHeight + CFG::Menu_Spacing_Y;
-			}
 			
 			// Now rebuild the order for all boxes in the target column
 			// Insert the dragged box at the correct position
@@ -6942,52 +6953,13 @@ void CMenu::RenderDraggableGroupBoxes(const std::string& szTab, int nContentX, i
 	{
 		int my = H::Input->GetMouseY();
 		insertionCol = static_cast<int>(m_nHoveredDropColumn);
-		insertionOrder = 0;
+		insertionOrder = CalculateGroupBoxInsertionIndex(szTab, m_nHoveredDropColumn, nContentY, my, m_strDraggingGroupBox);
 		
 		// Get dragged box info
 		auto draggedIt = m_mapGroupBoxes.find(m_strDraggingGroupBox);
 		if (draggedIt != m_mapGroupBoxes.end())
 		{
 			draggedBoxHeight = draggedIt->second.m_nHeight > 0 ? draggedIt->second.m_nHeight : 80;
-		}
-		
-		// Collect boxes in target column (excluding dragged) and calculate their LOGICAL positions
-		// We need to calculate where each box WOULD be rendered if the dragged box wasn't there
-		std::vector<std::pair<int, int>> targetColumnBoxes; // order, calculated Y position
-		int calcY = nContentY;
-		
-		// Get boxes in target column sorted by order
-		std::vector<DraggableGroupBox_t*> sortedTargetBoxes;
-		for (auto* gb : tabBoxes)
-		{
-			if (gb->m_szId == m_strDraggingGroupBox)
-				continue;
-			if (static_cast<int>(gb->m_nColumn) == insertionCol)
-			{
-				sortedTargetBoxes.push_back(gb);
-			}
-		}
-		std::sort(sortedTargetBoxes.begin(), sortedTargetBoxes.end(), [](DraggableGroupBox_t* a, DraggableGroupBox_t* b) {
-			return a->m_nOrderInColumn < b->m_nOrderInColumn;
-		});
-		
-		// Calculate logical positions (where they would be without the dragged item)
-		for (auto* gb : sortedTargetBoxes)
-		{
-			int boxHeight = gb->m_nHeight > 0 ? gb->m_nHeight : 80;
-			int boxMidY = calcY + boxHeight / 2;
-			targetColumnBoxes.push_back({ gb->m_nOrderInColumn, boxMidY });
-			calcY += boxHeight + CFG::Menu_Spacing_Y;
-		}
-		
-		// Find insertion point based on mouse Y against logical positions
-		insertionOrder = 0;
-		for (size_t i = 0; i < targetColumnBoxes.size(); i++)
-		{
-			if (my > targetColumnBoxes[i].second)
-			{
-				insertionOrder = static_cast<int>(i) + 1;
-			}
 		}
 	}
 	

@@ -7,6 +7,11 @@
 #include "../FakeAngle/FakeAngle.h"
 #include "../Players/Players.h"
 
+namespace
+{
+	constexpr int MaxLagRecordsPerPlayerDraw = 6;
+}
+
 void SetModelStencilForOutlines(C_BaseEntity* pEntity)
 {
 	IMatRenderContext* pRenderContext = I::MaterialSystem->GetRenderContext();
@@ -445,15 +450,16 @@ void CMaterials::RenderLagRecords(C_TFPlayer* pPlayer, const DrawModelState_t& s
 
 	if (nStyle == 0)
 	{
-		// Draw all records with fading alpha
-		for (int n = 1; n < nRecords; n++)
+		const int nRecordsToDraw = std::min(nRecords - 1, MaxLagRecordsPerPlayerDraw);
+
+		for (int n = 1; n <= nRecordsToDraw; n++)
 		{
 			const auto pRecord = F::LagRecords->GetRecord(pPlayer, n, true);
 
 			if (!pRecord || !F::VisualUtils->IsOnScreenNoEntity(pLocal, pRecord->AbsOrigin) || !F::LagRecords->DiffersFromCurrent(pRecord))
 				continue;
 
-			I::RenderView->SetBlend(Math::RemapValClamped(static_cast<float>(n), 1.0f, static_cast<float>(nRecords), flAlpha, 0.01f) * flOriginalBlend);
+			I::RenderView->SetBlend(Math::RemapValClamped(static_cast<float>(n), 1.0f, static_cast<float>(nRecordsToDraw), flAlpha, 0.01f) * flOriginalBlend);
 
 			// Call DrawModelExecute directly with the record's bones — no SetupBones recalculation
 			m_fnDrawModelExecute(I::ModelRender, state, pInfo, const_cast<matrix3x4_t*>(pRecord->BoneMatrix));
