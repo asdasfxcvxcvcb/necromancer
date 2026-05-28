@@ -21,7 +21,7 @@ std::vector<Target_t> CAmalgamAimbotProjectile::GetTargets(C_TFPlayer* pLocal, C
 	std::vector<Target_t> vTargets;
 	const auto iSort = Vars::Aimbot::General::TargetSelection.Value;
 
-	const Vec3 vLocalPos = F::AmalgamTicks->GetShootPos();
+	const Vec3 vLocalPos = pLocal->GetShootPos();
 	const Vec3 vLocalAngles = I::EngineClient->GetViewAngles();
 	const float flMaxFOV = CFG::Aimbot_Projectile_FOV;
 
@@ -882,7 +882,7 @@ int CAmalgamAimbotProjectile::CanHit(Target_t& tTarget, CTFPlayer* pLocal, CTFWe
 	tTarget.m_vPos = tTarget.m_pEntity->m_vecOrigin();
 
 	m_tInfo = { pLocal, pWeapon };
-	m_tInfo.m_vLocalEye = SDK::GetPredictedShootPos(pLocal); // Predicted shoot pos accounting for airborne duck (CrouchWhileAirborne)
+	m_tInfo.m_vLocalEye = pLocal->GetShootPos();
 	
 	if (bIsPlayer)
 		m_tInfo.m_vTargetEye = tTarget.m_pEntity->As<CTFPlayer>()->GetViewOffset();
@@ -1569,7 +1569,7 @@ void CAmalgamAimbotProjectile::SetupInfo(C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 		return;
 	
 	m_tInfo = { pLocal, pWeapon };
-	m_tInfo.m_vLocalEye = SDK::GetPredictedShootPos(pLocal); // Predicted shoot pos accounting for airborne duck (CrouchWhileAirborne)
+	m_tInfo.m_vLocalEye = pLocal->GetShootPos();
 	m_tInfo.m_flLatency = F::Backtrack.GetReal() + TICKS_TO_TIME(F::Backtrack.GetAnticipatedChoke());
 
 	Vec3 vVelocity = F::ProjSim.GetVelocity();

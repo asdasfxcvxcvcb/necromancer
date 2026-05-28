@@ -811,8 +811,10 @@ void CAimbotWrangler::DrawVisualization(C_ObjectSentrygun* pSentry, const Wrangl
 
 void CAimbotWrangler::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
 {
-	// Wrangler uses hitscan active setting
-	if (!CFG::Aimbot_Hitscan_Active || !IsWrangler(pWeapon))
+	// Wrangler should run whenever global aimbot is active and weapon is wrangler.
+	// Tying it to hitscan-active silently disables wrangler when users only disable
+	// regular hitscan aimbot, which makes wrangler look broken.
+	if (!IsWrangler(pWeapon))
 		return;
 	
 	// Get local player's sentry

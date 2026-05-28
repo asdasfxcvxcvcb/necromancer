@@ -301,6 +301,8 @@ bool CAmalgamProjectileSimulation::GetInfo(C_TFPlayer* pPlayer, C_TFWeaponBase* 
 	bool bQuick = iFlags & ProjSimEnum::Quick;
 
 	const float flOldCurrentTime = I::GlobalVars->curtime;
+	// Server sets curtime = m_nTickBase * TICK_INTERVAL before processing the cmd,
+	// then increments m_nTickBase AFTER. So fire-tick curtime == m_nTickBase * interval.
 	I::GlobalVars->curtime = TICKS_TO_TIME(pPlayer->m_nTickBase());
 	bool bReturn = GetInfoMain(pPlayer, pWeapon, vAngles, tProjInfo, iFlags, flAutoCharge);
 	I::GlobalVars->curtime = flOldCurrentTime;

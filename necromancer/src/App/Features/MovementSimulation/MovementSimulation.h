@@ -45,8 +45,9 @@ struct MoveStorage
 	float m_flOldModelScale = 0.f;    // Backed up model scale for explicit restore
 	Vec3 m_vOldOrigin = {};           // Backed up origin for explicit restore
 	bool m_bHasBackup = false;        // Whether we have backup values to restore
-	float m_flBhopCadence = 0.f;        // Predicted time between jumps (seconds)
+	float m_flBhopCadence = 0.f;        // Measured ground contact time before jump (seconds)
 	int m_iBhopSimTicksInAir = 0;       // Ticks airborne in the sim (for jump timing)
+	int m_iBhopSimTicksOnGround = 0;    // Ticks on ground in the sim (for cadence-delayed jump)
 
 	float m_flSimTime = 0.f;
 	float m_flPredictedDelta = 0.f;

@@ -50,6 +50,25 @@ namespace
 		return IsOnGround(pPlayer) ? MoveMode::Ground : MoveMode::Air;
 	}
 
+	// Amalgam-inspired: models AirAccelerate diminishing returns.
+	// When (velocityXY × |yaw|) is high, air-strafing is friction-limited — scale it down.
+	// Only active during the upward arc (0 < Vz <= 250): at this speed the player just jumped
+	// and is in the typical strafe zone. Explosive launches (Vz > 250) and descent (Vz <= 0)
+	// are left at full yaw since AirAccelerate has different effective limits there.
+	float GetAirFrictionScale(float flVelocityXY, float flTurn, float flVelocityZ)
+	{
+		if (flVelocityZ <= 0.f || flVelocityZ > 250.f)
+			return 1.f;
+
+		static ConVar* sv_airaccelerate = U::ConVars.FindVar("sv_airaccelerate");
+		const float flAccel = std::max(sv_airaccelerate ? sv_airaccelerate->GetFloat() : 10.f, 1.f);
+		const float flMin = 50.f * flAccel;
+		const float flMax = 150.f * flAccel;
+		const float flInput = std::fabs(flVelocityXY * flTurn);
+
+		return Math::RemapValClamped(flInput, flMin, flMax, 1.f, 0.25f);
+	}
+
 	Vec3 DirectionFromVelocity(const Vec3& vVelocity)
 	{
 		// Ground movement must keep move-unit magnitude; a unit vector makes GameMovement under-drive the target.
@@ -496,17 +515,14 @@ bool CMovementSimulation::Initialize(C_TFPlayer* pPlayer, MoveStorage& tMoveStor
 		if (Vec3* pAverage = g_AmalgamEntitiesExt.GetAvgVelocity(pPlayer->entindex()); pAverage && !pAverage->IsZero())
 			pPlayer->m_vecVelocity() = *pAverage;
 
-		// SEOwned duck fix: remove FL_DUCKING (breaks origin Z), set m_bInDuckJump to prevent re-duck
-		if (pPlayer->m_fFlags() & FL_DUCKING)
+		// Duck fix: remove FL_DUCKING (breaks origin Z in ProcessMovement) — Amalgam approach
+		if (pPlayer->m_bDucked() = (pPlayer->m_bDucked() || (pPlayer->m_fFlags() & FL_DUCKING) != 0))
 		{
 			pPlayer->m_fFlags() &= ~FL_DUCKING;
-			// Only set ducked=true if actually ducked — stale FL_DUCKING alone isn't enough
-			if (!pPlayer->m_bDucked())
-				pPlayer->m_bDucked() = false;  // Explicit: not ducked, just had stale flag
-			pPlayer->m_bDucking() = false;
-			pPlayer->m_bInDuckJump() = true;  // Prevents re-duck during sim
 			pPlayer->m_flDucktime() = 0.f;
 			pPlayer->m_flDuckJumpTime() = 0.f;
+			pPlayer->m_bDucking() = false;
+			pPlayer->m_bInDuckJump() = false;
 		}
 
 		// Skip model scale modification — SetBounds already compresses collision hull
@@ -517,9 +533,9 @@ bool CMovementSimulation::Initialize(C_TFPlayer* pPlayer, MoveStorage& tMoveStor
 
 		pPlayer->m_vecBaseVelocity() = {};
 
-		// Zero Z velocity on ground (residual downward Z causes false falling)
+		// Step fix: clamp Z to <= 0 on ground — preserves upward velocity for jumps (Amalgam approach)
 		if (IsOnGround(pPlayer))
-			pPlayer->m_vecVelocity().z = 0.0f;
+			pPlayer->m_vecVelocity().z = std::min(pPlayer->m_vecVelocity().z, 0.f);
 		else
 			pPlayer->m_hGroundEntity() = nullptr;
 
@@ -539,6 +555,7 @@ bool CMovementSimulation::Initialize(C_TFPlayer* pPlayer, MoveStorage& tMoveStor
 	tMoveStorage.m_bBunnyHop = IsBunnyHopping(pPlayer, &flCadenceOut);
 	tMoveStorage.m_flBhopCadence = flCadenceOut;
 	tMoveStorage.m_iBhopSimTicksInAir = 0;
+	tMoveStorage.m_iBhopSimTicksOnGround = 0;
 
 	// Propagate evasion detection from newest record, and detect antiaim/strafing
 	{
@@ -684,106 +701,63 @@ void CMovementSimulation::SetupMoveData(MoveStorage& tMoveStorage, bool bStrafe)
 	}
 	else if (!tMoveData.m_vecVelocity.To2D().IsZero())
 	{
-		const Vec3 vVel2D = pPlayer->m_vecVelocity().To2D();
-		const float flVelYaw = Math::VectorAngles(vVel2D).y;
-		const bool bOnGround = IsOnGround(pPlayer);
-		const bool bIsAir = !bOnGround && GetMoveMode(pPlayer) != MoveMode::Swim;
-		const float flClassMaxSpeed = std::max(pPlayer->TeamFortress_CalculateMaxSpeed(), 100.f);
-
+		// View angles from velocity direction — always use velocity yaw (Amalgam approach).
+		// Shield charge is the one exception where eye angles actually matter for movement.
+		// Antiaim players have fake eye angles so we never trust them for direction.
 		if (pPlayer->InCond(TF_COND_SHIELD_CHARGE))
 			tMoveData.m_vecViewAngles = pPlayer->GetEyeAngles();
-		else if (tMoveStorage.m_bAntiAimDetected)
-		{
-			float flViewYaw = flVelYaw;
-			if (!vRecords.empty() && vRecords.size() >= 2)
-			{
-				Vec3 vOriginDelta = (vRecords[0].m_vOrigin - vRecords[1].m_vOrigin).To2D();
-				if (!vOriginDelta.IsZero())
-					flViewYaw = YawFromVector(vOriginDelta);
-			}
-			tMoveData.m_vecViewAngles = { 0.f, flViewYaw, 0.f };
-		}
-		else if (tMoveStorage.m_bStrafing)
-			tMoveData.m_vecViewAngles = { 0.f, pPlayer->GetEyeAngles().y, 0.f };
 		else
-			tMoveData.m_vecViewAngles = { 0.f, flVelYaw, 0.f };
+			tMoveData.m_vecViewAngles = { 0.f, Math::VectorAngles(tMoveData.m_vecVelocity).y, 0.f };
 
-		const bool bIsGroundStrafing = tMoveStorage.m_bStrafing && bOnGround && !bIsAir;
-		if (!vRecords.empty() && !bIsGroundStrafing)
+		// Forward/side from records direction (Amalgam pattern: direction in world space
+		// → DummyCmd → FixMovement rotates to view-relative space)
+		if (!vRecords.empty() && !vRecords.front().m_vDirection.IsZero())
 		{
-			Vec3 vDirection = vRecords.front().m_vDirection;
-
-			const float flCurSpeed2D = vVel2D.Length();
-			if (!vDirection.IsZero() && flCurSpeed2D > 50.f)
-			{
-				Vec3 vDir2D = { vDirection.x, vDirection.y, 0.f };
-				const float flDirLen = vDir2D.Length();
-				if (flDirLen > 0.f)
-				{
-					const float flDot = (vDir2D.x * vVel2D.x + vDir2D.y * vVel2D.y)
-						/ (flDirLen * flCurSpeed2D);
-					// Records direction disagrees with current velocity (>72° off).
-					// Fall through to velocity-based fallback by zeroing vDirection.
-					if (flDot < 0.3f)
-						vDirection = {};
-				}
-			}
-
-			// Air: rescale to MaxSpeed; Ground: use raw magnitude
-			if (!vDirection.IsZero())
-			{
-				if (bIsAir)
-				{
-					const float flDirLen = vDirection.Length2D();
-					if (flDirLen > 0.f && flDirLen < flClassMaxSpeed)
-					{
-						const float flScale = flClassMaxSpeed / flDirLen;
-							vDirection.x *= flScale;
-							vDirection.y *= flScale;
-					}
-				}
-				DecomposeWishDir(vDirection, tMoveData.m_vecViewAngles.y, tMoveData.m_flForwardMove, tMoveData.m_flSideMove);
-				tMoveData.m_flUpMove = vDirection.z;
-			}
-			else
-			{
-				// Records direction zero — derive from velocity
-				Vec3 vVelDir = pPlayer->m_vecVelocity().To2D();
-				if (!vVelDir.IsZero())
-				{
-					vVelDir.NormalizeInPlace();
-					// Air: MaxSpeed; Ground: actual speed
-					const float flWishMag = bIsAir ? flClassMaxSpeed : vVel2D.Length();
-					const Vec3 vWishDir = vVelDir * flWishMag;
-					DecomposeWishDir(vWishDir, tMoveData.m_vecViewAngles.y, tMoveData.m_flForwardMove, tMoveData.m_flSideMove);
-				}
-			}
+			const Vec3& vDir = vRecords.front().m_vDirection;
+			g_MoveSimCmd.forwardmove = vDir.x;
+			g_MoveSimCmd.sidemove   = -vDir.y;
+			g_MoveSimCmd.upmove     = vDir.z;
+			H::AimUtils->FixMovement(&g_MoveSimCmd, {}, tMoveData.m_vecViewAngles);
+			tMoveData.m_flForwardMove = g_MoveSimCmd.forwardmove;
+			tMoveData.m_flSideMove    = g_MoveSimCmd.sidemove;
+			tMoveData.m_flUpMove      = g_MoveSimCmd.upmove;
 		}
 		else
 		{
-			// No records or grounded strafing — derive from velocity
+			// No records — derive wish direction from current velocity at appropriate magnitude
+			const bool bIsAir = !IsOnGround(pPlayer) && pPlayer->m_nWaterLevel() < 2;
+			const float flClassMax = std::max(pPlayer->TeamFortress_CalculateMaxSpeed(), 100.f);
 			Vec3 vVelDir = pPlayer->m_vecVelocity().To2D();
 			if (!vVelDir.IsZero())
 			{
+				const float flSpeed = vVelDir.Length2D();
 				vVelDir.NormalizeInPlace();
-				// Air/ground-strafe: MaxSpeed; Ground non-strafe: actual speed
-				const float flWishMag = (bIsAir || bIsGroundStrafing) ? flClassMaxSpeed : vVel2D.Length();
-				const Vec3 vWishDir = vVelDir * flWishMag;
-				DecomposeWishDir(vWishDir, tMoveData.m_vecViewAngles.y, tMoveData.m_flForwardMove, tMoveData.m_flSideMove);
+				const float flWishMag = bIsAir ? flClassMax : flSpeed;
+				g_MoveSimCmd.forwardmove = vVelDir.x * flWishMag;
+				g_MoveSimCmd.sidemove   = -(vVelDir.y * flWishMag);
+				g_MoveSimCmd.upmove     = 0.f;
+				H::AimUtils->FixMovement(&g_MoveSimCmd, {}, tMoveData.m_vecViewAngles);
+				tMoveData.m_flForwardMove = g_MoveSimCmd.forwardmove;
+				tMoveData.m_flSideMove    = g_MoveSimCmd.sidemove;
 			}
 		}
 	}
-	// Velocity zero but have direction history — use last known direction
 	else if (!vRecords.empty() && !vRecords.front().m_vDirection.IsZero())
 	{
-		Vec3 vDirection = vRecords.front().m_vDirection;
-		
-		tMoveData.m_vecViewAngles = { 0.f, Math::VectorAngles(vDirection).y, 0.f };
-		DecomposeWishDir(vDirection, tMoveData.m_vecViewAngles.y, tMoveData.m_flForwardMove, tMoveData.m_flSideMove);
-		tMoveData.m_flUpMove = vDirection.z;
+		// Velocity zero but have direction history — use last known direction
+		const Vec3& vDir = vRecords.front().m_vDirection;
+		tMoveData.m_vecViewAngles = { 0.f, Math::VectorAngles(vDir).y, 0.f };
+		g_MoveSimCmd.forwardmove = vDir.x;
+		g_MoveSimCmd.sidemove   = -vDir.y;
+		g_MoveSimCmd.upmove     = vDir.z;
+		H::AimUtils->FixMovement(&g_MoveSimCmd, {}, tMoveData.m_vecViewAngles);
+		tMoveData.m_flForwardMove = g_MoveSimCmd.forwardmove;
+		tMoveData.m_flSideMove    = g_MoveSimCmd.sidemove;
+		tMoveData.m_flUpMove      = g_MoveSimCmd.upmove;
 	}
 
-	tMoveData.m_vecAngles = tMoveData.m_vecViewAngles;
+	// Set both angle fields — ProcessMovement reads m_vecOldAngles for delta calculations
+	tMoveData.m_vecAngles = tMoveData.m_vecOldAngles = tMoveData.m_vecViewAngles;
 	tMoveData.m_outStepHeight = 0.f;
 	tMoveData.m_vecConstraintCenter = pPlayer->m_vecConstraintCenter();
 	tMoveData.m_flConstraintRadius = pPlayer->m_flConstraintRadius();
@@ -800,96 +774,50 @@ void CMovementSimulation::SetupMoveData(MoveStorage& tMoveStorage, bool bStrafe)
 
 float CMovementSimulation::GetAverageYaw(C_TFPlayer* pPlayer, int iSamples)
 {
+	// OF-style: simple velocity-yaw delta averaging.
+	// Average the yaw change between consecutive velocity vectors — no fuzzy filters,
+	// no compression garbage removal, no direction-change caps. Fast and accurate.
 	if (!pPlayer || iSamples <= 0)
 		return 0.f;
 
 	auto& vRecords = m_mRecords[pPlayer->entindex()];
-	if (vRecords.size() < 3)
+	const int nMax = std::min(iSamples, static_cast<int>(vRecords.size()) - 1);
+	if (nMax < 4)
 		return 0.f;
 
-	const MoveMode iMode = vRecords.front().m_iMode;
-	const int iMaxSamples = std::min<int>(iSamples, static_cast<int>(vRecords.size()) - 1);
-	float flYawTotal = 0.f;
-	int iTickTotal = 0;
-	int iRealSamples = 0;
-	int iDirectionChanges = 0;
-	int iLastSign = 0;
+	float flTotal = 0.f;
+	int nSamples = 0;
 
-	// Ground: allow up to 8 direction changes (A/D oscillation averages to net yaw)
-	// Air: 3 max (air strafes are more sustained)
-	const int iMaxDirectionChanges = iMode == MoveMode::Ground ? 8 : 3;
-
-	// Ground: accumulate all samples, let average work (no break on large deltas or too-straight filter)
-
-	for (int i = 0; i < iMaxSamples; i++)
+	for (int i = 0; i < nMax; i++)
 	{
-		const auto& tCurrent = vRecords[i];
-		const auto& tPrevious = vRecords[i + 1];
-		if (tCurrent.m_iMode != iMode || tPrevious.m_iMode != iMode)
-			break;
+		Vec3 vDir1 = vRecords[i].m_vVelocity;     vDir1.z = 0.f;
+		Vec3 vDir2 = vRecords[i + 1].m_vVelocity; vDir2.z = 0.f;
 
-		if (tCurrent.m_bHitWall || tPrevious.m_bHitWall)
+		const float flLen1 = vDir1.Length2D();
+		const float flLen2 = vDir2.Length2D();
+
+		// Skip near-stationary frames — no meaningful yaw signal below 30 HU/s
+		if (flLen1 < 30.f || flLen2 < 30.f)
 			continue;
 
-		if (tCurrent.m_vDirection.IsZero() || tPrevious.m_vDirection.IsZero())
-			continue;
+		const float flYaw1 = RAD2DEG(atan2f(vDir1.y, vDir1.x));
+		const float flYaw2 = RAD2DEG(atan2f(vDir2.y, vDir2.x));
+		float flDelta = flYaw1 - flYaw2;
+		while (flDelta > 180.f)  flDelta -= 360.f;
+		while (flDelta < -180.f) flDelta += 360.f;
 
-		const float flTimeDelta = tCurrent.m_flSimTime - tPrevious.m_flSimTime;
-		const int iTicks = std::max(TIME_TO_TICKS(flTimeDelta), 1);
-
-		float flYaw = Math::NormalizeAngle(YawFromVector(tCurrent.m_vDirection) - YawFromVector(tPrevious.m_vDirection));
-
-		// Compression garbage cleaning: air only. Ground noise is same range as real micro-movements.
-		if (iMode == MoveMode::Air)
-		{
-			constexpr float COMPRESSION_GARBAGE = 1.507446f;
-			if (std::fabs(flYaw) < 5.f)
-			{
-				if (flYaw < 0.f)
-					flYaw += COMPRESSION_GARBAGE;
-				else if (flYaw > 0.f)
-					flYaw -= COMPRESSION_GARBAGE;
-
-				if (std::fabs(flYaw) < 0.3f)
-					flYaw = 0.f;
-			}
-		}
-
-		// Ground: don't break on large deltas (sharp turns are real). Air: keep 45° break.
-		if (iMode == MoveMode::Air && std::fabs(flYaw) > 45.f)
-			break;
-
-		const float flSpeed = std::max(tCurrent.m_vVelocity.Length2D(), 1.f);
-		const int iYawSign = sign(flYaw);
-
-		// Ground: count direction changes only, no too-straight filter. Air: keep both.
-		const bool bTooStraight = iMode == MoveMode::Air && std::fabs(flYaw) * flSpeed * iTicks < 15.f;
-		if ((iLastSign && iYawSign && iYawSign != iLastSign) || bTooStraight)
-		{
-			iDirectionChanges++;
-			if (iDirectionChanges > iMaxDirectionChanges)
-				break;
-		}
-
-		if (iYawSign)
-			iLastSign = iYawSign;
-
-		flYawTotal += flYaw;
-		iTickTotal += iTicks;
-		iRealSamples++;
+		flTotal += flDelta;
+		nSamples++;
 	}
 
-	const int iMinSamples = iMode == MoveMode::Ground ? 3 : 5;
-	if (iRealSamples < iMinSamples || iTickTotal <= 0)
+	if (nSamples < 4)
 		return 0.f;
 
-	const float flAverage = flYawTotal / static_cast<float>(iTickTotal);
-	// Ground threshold raised: 0.5°/tick minimum to filter out interpolation/prediction noise.
-	// Real ground strafes produce 1-5°/tick; noise is 0.01-0.3°/tick.
-	if (std::fabs(flAverage) < (iMode == MoveMode::Ground ? 0.5f : 0.12f))
+	const float flAvg = flTotal / static_cast<float>(nSamples);
+	if (std::fabs(flAvg) < 0.05f)
 		return 0.f;
 
-	return std::clamp(flAverage, -10.f, 10.f);
+	return std::clamp(flAvg, -10.f, 10.f);
 }
 
 void CMovementSimulation::StrafePrediction(MoveStorage& tMoveStorage, bool bHitchance)
@@ -905,140 +833,38 @@ void CMovementSimulation::StrafePrediction(MoveStorage& tMoveStorage, bool bHitc
 		return;
 	}
 
+	// Sample counts: ground 12 (faster converging), air 20 (more history for sustained strafes)
 	const MoveMode iMode = vRecords.front().m_iMode;
 	const int iSamples = iMode == MoveMode::Ground ? 12 : 20;
 	tMoveStorage.m_flAverageYaw = GetAverageYaw(pPlayer, iSamples);
 
-	// Fallback yaw estimation when GetAverageYaw returns too-small values.
-	// Air: origin curvature captures net trajectory; Ground: VelEyeDelta + cross-product for direction.
-
-	// Air curvature fallback: use origin curvature when 2x+ larger than averageYaw
-	{
-		const bool bAirborne = vRecords.front().m_iMode == MoveMode::Air;
-		const float flCurvatureAbs = std::fabs(tMoveStorage.m_flOriginCurvature);
-		const bool bExplosiveHighCurve = tMoveStorage.m_bExplosiveLaunch && flCurvatureAbs > 2.0f;
-		if (bAirborne && flCurvatureAbs > 0.4f
-			&& std::fabs(tMoveStorage.m_flAverageYaw) < flCurvatureAbs * 0.5f
-			&& !bExplosiveHighCurve)
-		{
-			// Scale by 0.7: AirAccelerate already contributes curve; full curvature would over-curve
-			tMoveStorage.m_flAverageYaw = tMoveStorage.m_flOriginCurvature * 0.7f;
-		}
-	}
-
-	// Air VelEyeDelta fallback: estimate yaw from VelEyeDelta when curvature hasn't built up yet
-	{
-		const bool bAirborne = vRecords.front().m_iMode == MoveMode::Air;
-		if (bAirborne
-			&& std::fabs(tMoveStorage.m_flAverageYaw) < 0.5f
-			&& tMoveStorage.m_flVelEyeDeltaAtInit > 10.f)
-		{
-			const Vec3 vVel2D = pPlayer->m_vecVelocity().To2D();
-			const float flVelLen = vVel2D.Length();
-			if (flVelLen > 50.f)
-			{
-				const float flEyeYaw = pPlayer->GetEyeAngles().y * DEG2RAD(1.f);
-				const float flEyeFwdX = cosf(flEyeYaw);
-				const float flEyeFwdY = sinf(flEyeYaw);
-				// Cross product: vel × eyeFwd gives strafe direction
-				const float flCross = vVel2D.x * flEyeFwdY - vVel2D.y * flEyeFwdX;
-				const float flDirection = flCross > 0.f ? -1.f : 1.f;
-
-				// Yaw magnitude from VelEyeDelta: 90°→2.0, 45°→1.0, 20°→0.5 deg/tick
-				const float flSpeedRatio = std::clamp(flVelLen / std::max(pPlayer->TeamFortress_CalculateMaxSpeed(), 100.f), 0.f, 1.f);
-				const float flVelEyeScale = std::clamp(tMoveStorage.m_flVelEyeDeltaAtInit / 90.f, 0.15f, 1.f);
-				float flMagnitude = flVelEyeScale * flSpeedRatio * 2.0f;
-
-				// Explosive launch: less predictable but still strafing
-				if (tMoveStorage.m_bExplosiveLaunch)
-					flMagnitude *= 0.6f;
-
-				const float flEstimatedYaw = flDirection * flMagnitude;
-				if (std::fabs(flEstimatedYaw) > std::fabs(tMoveStorage.m_flAverageYaw))
-					tMoveStorage.m_flAverageYaw = std::clamp(flEstimatedYaw, -10.f, 10.f);
-			}
-		}
-	}
-
-	// Grounded fallback: direction estimation for strafers with low averageYaw
-	if (vRecords.front().m_iMode == MoveMode::Ground)
-	{
-		const bool bNeedsFallback = std::fabs(tMoveStorage.m_flAverageYaw) < 0.5f
-			&& tMoveStorage.m_flVelEyeDeltaAtInit > 10.f;
-		const bool bNeedsBoost = std::fabs(tMoveStorage.m_flAverageYaw) > 0.1f
-			&& std::fabs(tMoveStorage.m_flAverageYaw) < std::fabs(tMoveStorage.m_flOriginCurvature) * 0.6f
-			&& std::fabs(tMoveStorage.m_flOriginCurvature) > 0.5f;
-
-		if (bNeedsFallback || bNeedsBoost)
-		{
-			const Vec3 vVel2D = pPlayer->m_vecVelocity().To2D();
-			const float flVelLen = vVel2D.Length();
-			if (flVelLen > 50.f)
-			{
-				const float flEyeYaw = pPlayer->GetEyeAngles().y * DEG2RAD(1.f);
-				const float flEyeFwdX = cosf(flEyeYaw);
-				const float flEyeFwdY = sinf(flEyeYaw);
-				const float flCross = vVel2D.x * flEyeFwdY - vVel2D.y * flEyeFwdX;
-				const float flSpeedRatio = std::clamp(flVelLen / pPlayer->TeamFortress_CalculateMaxSpeed(), 0.f, 1.f);
-				const bool bReversing = tMoveStorage.m_flVelEyeDeltaAtInit > 90.f;
-
-				if (bNeedsFallback)
-				{
-					// Prefer origin curvature (position-based), fall back to cross product
-					float flDirection = 0.f;
-					if (std::fabs(tMoveStorage.m_flOriginCurvature) > 0.5f)
-						flDirection = tMoveStorage.m_flOriginCurvature > 0.f ? 1.f : -1.f;
-					else if (!bReversing)
-						flDirection = flCross > 0.f ? -1.f : 1.f;
-
-					if (flDirection == 0.f)
-					{
-						// No reliable direction — leave averageYaw at 0
-					}
-					else
-					{
-						// Yaw magnitude: scale by VelEyeDelta and speed
-						const float flVelEyeScale = std::clamp(tMoveStorage.m_flVelEyeDeltaAtInit / 90.f, 0.2f, 1.f);
-						float flMagnitude = flVelEyeScale * flSpeedRatio * 3.0f;
-
-						// Reversing penalty: VelEyeDelta > 90°, direction uncertain
-						if (bReversing)
-							flMagnitude *= 0.5f;
-
-						const float flEstimatedYaw = flDirection * flMagnitude;
-						if (std::fabs(flEstimatedYaw) > 0.2f)
-							tMoveStorage.m_flAverageYaw = std::clamp(flEstimatedYaw, -10.f, 10.f);
-					}
-				}
-				else if (bNeedsBoost)
-				{
-					// Boost averageYaw toward curvature when velocity oscillation cancelled signal
-					const float flCurvSign = tMoveStorage.m_flOriginCurvature > 0.f ? 1.f : -1.f;
-					const float flBoosted = flCurvSign * std::fabs(tMoveStorage.m_flOriginCurvature) * 0.8f;
-					if (std::fabs(flBoosted) > std::fabs(tMoveStorage.m_flAverageYaw))
-						tMoveStorage.m_flAverageYaw = std::clamp(flBoosted, -10.f, 10.f);
-				}
-			}
-		}
-	}
+	// Suppress yaw only for explosive launches (rocket/sticky jump) — genuinely unpredictable trajectory.
+	// RigidGround and RecentReversal suppression removed: GetAverageYaw naturally returns ~0
+	// for straight walkers (constant velocity direction → near-zero yaw delta).
+	// Amalgam does not suppress based on movement state either.
+	if (tMoveStorage.m_bExplosiveLaunch)
+		tMoveStorage.m_flAverageYaw = 0.f;
 
 	if (!bHitchance)
 		return;
 
-	const Vec3 vStart = tMoveStorage.m_MoveData.m_vecAbsOrigin;
-	const Vec3 vVelocity = tMoveStorage.m_MoveData.m_vecVelocity;
-	CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
-	filter.pSkip = pPlayer;
-
-	trace_t trace = {};
-	SDK::TraceHull(vStart, vStart + vVelocity * TICK_INTERVAL, pPlayer->m_vecMins(), pPlayer->m_vecMaxs(), SolidMask(pPlayer), &filter, &trace);
-	if (trace.DidHit() && trace.plane.normal.z < 0.7f)
-		tMoveStorage.m_flAverageYaw = 0.f;
+	// NOTE: Amalgam does NOT zero averageYaw based on wall traces.
+	// The old wall-trace zeroing (TraceHull + plane.normal.z < 0.7f check) was causing
+	// airborne players near walls/corners to have their averageYaw zeroed, which then
+	// zeroed their movement input in RunTick, making them fall straight down instead
+	// of continuing their strafe arc. Removed — GetAverageYaw naturally handles this.
 }
 
 bool CMovementSimulation::IsBunnyHopping(C_TFPlayer* pPlayer, float* pCadenceOut)
 {
-	// Bhop detection: jump→land→jump pattern with <200ms ground contact
+	// Bhop detection from mode transitions + velocity filter.
+	//
+	// Key insight: a bhop jump has velocity.z in [200, 320] (TF2 jump impulse ~270).
+	// Explosive launches (rocket/sticky) have velocity.z >> 400.
+	// Edge falls have velocity.z < 100 at the ground→air transition.
+	//
+	// Records are newest-first. Takeoff = ground(i+1)→air(i).
+	// Landing = air(i+1)→ground(i). We need 1 confirmed short-contact cycle.
 	if (pCadenceOut)
 		*pCadenceOut = 0.f;
 
@@ -1049,112 +875,52 @@ bool CMovementSimulation::IsBunnyHopping(C_TFPlayer* pPlayer, float* pCadenceOut
 	if (vRecords.size() < 4)
 		return false;
 
-	// Must have meaningful speed — walking at 10 HU/s isn't bhopping
-	const float flSpeed = vRecords.front().m_vVelocity.Length2D();
-	if (flSpeed < 100.f)
-		return false;
+	constexpr float JumpVzMin = 200.f;   // Below this = edge fall, not a jump
+	constexpr float JumpVzMax = 400.f;   // Above this = explosive launch, not a bhop
+	constexpr float MaxGroundContact = 0.3f;
 
-	// Scan history for jump→land→jump cycles (ground contact < 200ms)
-	constexpr float MaxGroundContactTime = 0.200f;  // 200ms — about 13 ticks
-	constexpr int MaxHistory = 40;
-	const int iMax = std::min<int>(static_cast<int>(vRecords.size()) - 1, MaxHistory);
+	const int nMax = std::min<int>(66, static_cast<int>(vRecords.size()) - 1);
 
-	int iCycles = 0;                // Complete jump→land→jump cycles
-	float flCadenceTotal = 0.f;     // Sum of jump-to-jump times (for averaging)
-	int iCadenceSamples = 0;
-	float flLastTakeoffTime = 0.f;  // SimTime of the last takeoff we found
+	int nValidCycles = 0;
+	float flPendingTakeoffTime = -1.f;
+	float flPendingTakeoffVz = 0.f;
 
-	// State machine: track ground contact from most recent to oldest
-	int iState = 0;  // 0 = looking for land, 1 = on ground measuring, 2 = found takeoff
-	float flLandTime = 0.f;
-	float flTakeoffTime = 0.f;
-
-	for (int i = 0; i < iMax; i++)
+	for (int i = 0; i < nMax; i++)
 	{
-		const auto& tNew = vRecords[i];      // More recent
-		const auto& tOld = vRecords[i + 1];  // Older
-		const bool bNewGround = tNew.m_iMode == MoveMode::Ground;
-		const bool bOldGround = tOld.m_iMode == MoveMode::Ground;
+		const bool bNewerGround = (vRecords[i].m_iMode == MoveMode::Ground);
+		const bool bOlderGround = (vRecords[i + 1].m_iMode == MoveMode::Ground);
 
-		// Takeoff: was on ground, now in air
-		if (!bNewGround && bOldGround)
+		if (!bNewerGround && bOlderGround)
 		{
-			flTakeoffTime = tNew.m_flSimTime;
-
-			// If we were measuring ground contact time
-			if (iState == 1)
+			// Takeoff (ground→air): record time + velocity.z to filter out non-jump transitions
+			const float flVz = vRecords[i].m_vVelocity.z;
+			if (flVz >= JumpVzMin && flVz <= JumpVzMax)
 			{
-				const float flGroundTime = flLandTime - flTakeoffTime;
-				if (flGroundTime >= 0.f && flGroundTime < MaxGroundContactTime)
-				{
-					// Valid cycle: jump→land→jump with short ground contact
-					iCycles++;
-
-					// Cadence = time from this takeoff to the previous takeoff
-					if (flLastTakeoffTime > 0.f)
-					{
-						const float flJumpToJump = flLastTakeoffTime - flTakeoffTime;
-						if (flJumpToJump > 0.f && flJumpToJump < 2.0f)
-						{
-							flCadenceTotal += flJumpToJump;
-							iCadenceSamples++;
-						}
-					}
-				}
+				flPendingTakeoffTime = vRecords[i].m_flSimTime;
+				flPendingTakeoffVz = flVz;
 			}
-
-			flLastTakeoffTime = flTakeoffTime;
-			iState = 0;  // Back to looking for next landing
-		}
-		// Landing: was in air, now on ground
-		else if (bNewGround && !bOldGround)
-		{
-			flLandTime = tNew.m_flSimTime;
-			iState = 1;  // Start measuring ground contact duration
-		}
-		// Still on ground — check if ground contact exceeded max
-		else if (bNewGround && bOldGround && iState == 1)
-		{
-			const float flGroundSoFar = flLandTime - tOld.m_flSimTime;
-			if (flGroundSoFar >= MaxGroundContactTime)
+			else
 			{
-				// They stayed on ground too long — this isn't a bhop transition
-				iState = 0;
+				// Explosive launch or edge fall — not a bhop takeoff, reset
+				flPendingTakeoffTime = -1.f;
 			}
+		}
+		else if (bNewerGround && !bOlderGround && flPendingTakeoffTime >= 0.f)
+		{
+			// Landing that preceded the takeoff — short ground contact = bhop cycle
+			const float flGroundContact = flPendingTakeoffTime - vRecords[i].m_flSimTime;
+			if (flGroundContact >= 0.f && flGroundContact <= MaxGroundContact)
+			{
+				nValidCycles++;
+				if (pCadenceOut && nValidCycles == 1)
+					*pCadenceOut = flGroundContact;
+			}
+			flPendingTakeoffTime = -1.f;
 		}
 	}
 
-	// Need at least 1 complete cycle to confirm bhop
-	if (iCycles < 1)
-		return false;
-
-	// Speed must be maintained throughout — bhoppers keep momentum
-	const float flMaxSpeed = std::max(pPlayer->TeamFortress_CalculateMaxSpeed(), 230.f);
-	if (flSpeed < flMaxSpeed * 0.65f)
-		return false;
-
-	// Calculate predicted cadence: average observed jump-to-jump times, or estimate from physics
-	if (pCadenceOut)
-	{
-		if (iCadenceSamples > 0)
-		{
-			*pCadenceOut = flCadenceTotal / static_cast<float>(iCadenceSamples);
-		}
-		else
-		{
-			// Estimate from physics:
-			// jump_vel = sqrt(2 * g * 45)
-			// air_time = 2 * jump_vel / g
-			// cadence = air_time + ~2 ticks ground contact
-			static ConVar* sv_gravity = U::ConVars.FindVar("sv_gravity");
-			const float flGravity = sv_gravity ? sv_gravity->GetFloat() : 800.f;
-			const float flJumpVel = std::sqrtf(2.f * flGravity * 45.f);
-			const float flAirTime = 2.f * flJumpVel / flGravity;
-			*pCadenceOut = flAirTime + TICK_INTERVAL * 2.f;  // + ~2 tick ground contact
-		}
-	}
-
-	return true;
+	// 1 confirmed cycle is enough — auto-bhop is very consistent once detected
+	return nValidCycles >= 1;
 }
 
 int CMovementSimulation::GetChokedTicks(C_TFPlayer* pPlayer) const
@@ -1191,268 +957,95 @@ void CMovementSimulation::RunTick(MoveStorage& tMoveStorage, bool bPath, const R
 
 	auto& md = tMoveStorage.m_MoveData;
 
-	// Skip processing when velocity is negligible and on ground
-	if (md.m_vecVelocity.Length() < 15.0f && tMoveStorage.m_bDirectMove
-		&& !tMoveStorage.m_bStrafing && !tMoveStorage.m_bEvasiveFriction)
-		return;
+	// Ensure prediction state is set — ProcessMovement reads these
+	I::Prediction->m_bInPrediction = true;
+	I::Prediction->m_bFirstTimePredicted = false;
+	I::GlobalVars->frametime = I::Prediction->m_bEnginePaused ? 0.f : TICK_INTERVAL;
+	SetBounds(pPlayer);
 
-	// --- OF-style manual physics: no ProcessMovement call ---
-	// ProcessMovement was the #1 perf bottleneck (virtual call into game movement
-	// DLL per tick). At 5s sim time = 300 ticks × N enemies, this killed FPS.
-	// OF's approach: do physics manually — gravity, friction, air accel, collision.
-	// This is both faster AND more accurate for strafe prediction because we
-	// rotate velocity directly instead of hacking viewangles.
-
-	const bool bOnGround = tMoveStorage.m_bDirectMove;
-	const bool bAir = !bOnGround;
-
-	// --- Strafe: rotate velocity directly (OF-style) ---
-	const bool bSuppressYaw = (bOnGround && tMoveStorage.m_bRigidGround) || tMoveStorage.m_bRecentReversal;
-
-	if (tMoveStorage.m_flAverageYaw && !bSuppressYaw)
+	// Strafe: rotate view angle per tick so ProcessMovement's AirAccelerate/WalkMove
+	// computes the correct wish direction for the player's turning rate.
+	// Air: +90° correction ensures wishdir is perpendicular to velocity (max AirAccelerate efficiency).
+	// Ground: no correction needed — ProcessMovement handles walk acceleration directly.
+	float flCorrection = 0.f;
+	if (tMoveStorage.m_flAverageYaw)
 	{
-		if (bAir)
+		float flMult = 1.f;
+		if (!tMoveStorage.m_bDirectMove && !pPlayer->InCond(TF_COND_SHIELD_CHARGE))
 		{
-			// Air strafe: rotate velocity by averageYaw per tick
-			// This produces the characteristic Source air-strafe curve naturally
-			const float flYawRad = DEG2RAD(tMoveStorage.m_flAverageYaw);
-			const float flCos = cosf(flYawRad);
-			const float flSin = sinf(flYawRad);
-			const float flNewX = md.m_vecVelocity.x * flCos - md.m_vecVelocity.y * flSin;
-			const float flNewY = md.m_vecVelocity.x * flSin + md.m_vecVelocity.y * flCos;
-			md.m_vecVelocity.x = flNewX;
-			md.m_vecVelocity.y = flNewY;
-
-			// Air acceleration: apply wish direction force perpendicular to velocity
-			Vec3 vVel2D = md.m_vecVelocity.To2D();
-			const float flSpeed2D = vVel2D.Length2D();
-			if (flSpeed2D > 10.f)
-			{
-				vVel2D.NormalizeInPlace();
-				// Wish direction = perpendicular to velocity (strafe direction)
-				const float flSideSign = sign(tMoveStorage.m_flAverageYaw);
-				const float flPerpRad = DEG2RAD(flSideSign * 90.f);
-				Vec3 vWishDir = {
-					vVel2D.x * cosf(flPerpRad) - vVel2D.y * sinf(flPerpRad),
-					vVel2D.x * sinf(flPerpRad) + vVel2D.y * cosf(flPerpRad),
-					0.f
-				};
-
-				static ConVar* sv_airaccelerate = U::ConVars.FindVar("sv_airaccelerate");
-				const float flAirAccel = sv_airaccelerate ? sv_airaccelerate->GetFloat() : 10.f;
-				constexpr float flAirSpeedCap = 30.f;
-				const float flCurrentSpeed = md.m_vecVelocity.x * vWishDir.x + md.m_vecVelocity.y * vWishDir.y;
-				const float flAddSpeed = std::max(0.f, flAirSpeedCap - flCurrentSpeed);
-				float flAccelSpeed = flAirAccel * flAirSpeedCap * TICK_INTERVAL;
-				if (flAccelSpeed > flAddSpeed)
-					flAccelSpeed = flAddSpeed;
-				md.m_vecVelocity.x += flAccelSpeed * vWishDir.x;
-				md.m_vecVelocity.y += flAccelSpeed * vWishDir.y;
-			}
+			flCorrection = 90.f * sign(tMoveStorage.m_flAverageYaw);
+			if (CFG::Aimbot_Projectile_Friction_Flags & 2)  // RunReduce
+				flMult = GetAirFrictionScale(md.m_vecVelocity.Length2D(), tMoveStorage.m_flAverageYaw, md.m_vecVelocity.z + SDKUtils::GetGravity() * TICK_INTERVAL);
 		}
-		else
-		{
-			// Ground strafe: rotate velocity by yaw rate with friction decay
-			const float flFriction = GetFrictionScale(pPlayer);
-			const float flElapsedTicks = (CFG::Aimbot_Projectile_Max_Simulation_Time - tMoveStorage.m_flTimeToTarget) / TICK_INTERVAL;
-			const float flBurstDecay = std::exp(-flElapsedTicks * 0.7f);
-			constexpr float flBurstScale = 2.5f;
-			float flYawRate = tMoveStorage.m_flAverageYaw;
-			if (std::fabs(tMoveStorage.m_flOriginCurvature) > std::fabs(flYawRate))
-				flYawRate = tMoveStorage.m_flOriginCurvature;
-
-			const float flYawRad = DEG2RAD(flYawRate * flFriction * flBurstScale * flBurstDecay);
-			const float flCos = cosf(flYawRad);
-			const float flSin = sinf(flYawRad);
-			const float flNewX = md.m_vecVelocity.x * flCos - md.m_vecVelocity.y * flSin;
-			const float flNewY = md.m_vecVelocity.x * flSin + md.m_vecVelocity.y * flCos;
-			md.m_vecVelocity.x = flNewX;
-			md.m_vecVelocity.y = flNewY;
-		}
+		md.m_vecViewAngles.y += tMoveStorage.m_flAverageYaw * flMult + flCorrection;
+	}
+	else if (!tMoveStorage.m_bDirectMove && !tMoveStorage.m_bBunnyHop)
+	{
+		// Amalgam: when airborne and averageYaw=0, zero movement input.
+		// Without strafe prediction, stale forwardmove/sidemove would cause
+		// ProcessMovement to AirAccelerate in a random direction. Zeroing
+		// makes the sim apply only gravity, which is more accurate.
+		// EXCEPTION: bhoppers are actively air-strafing even when averageYaw=0
+		// (records might not have enough history yet). Zeroing their input would
+		// kill AirAccelerate speed gain, predicting them at walking speed instead
+		// of bhop speed. Keep their existing forwardmove/sidemove alive.
+		md.m_flForwardMove = 0.f;
+		md.m_flSideMove = 0.f;
 	}
 
-	// --- Gravity ---
-	if (bAir)
+	// Duck speed penalty (ProcessMovement expects this pre-applied)
+	const float flOldSpeed = md.m_flClientMaxSpeed;
+	if (pPlayer->m_bDucked() && IsOnGround(pPlayer) && pPlayer->m_nWaterLevel() < 2)
+		md.m_flClientMaxSpeed /= 3.f;
+
+	// Bhop: inject IN_JUMP after the measured ground contact cadence.
+	// Auto-bhop scripts often jump on the same tick they land (cadence ≈ 0),
+	// but some players have a slight delay (0.1-0.14s). We track ground ticks
+	// and only inject the jump after the measured cadence has elapsed.
+	if (tMoveStorage.m_bBunnyHop && IsOnGround(pPlayer) && !pPlayer->m_bDucked())
 	{
-		static ConVar* sv_gravity = U::ConVars.FindVar("sv_gravity");
-		const float flGravity = sv_gravity ? sv_gravity->GetFloat() : 800.f;
-		md.m_vecVelocity.z -= flGravity * TICK_INTERVAL;
-		if (md.m_vecVelocity.z < -3500.f)
-			md.m_vecVelocity.z = -3500.f;
+		tMoveStorage.m_iBhopSimTicksOnGround++;
+		const int nCadenceTicks = TIME_TO_TICKS(tMoveStorage.m_flBhopCadence);
+		if (tMoveStorage.m_iBhopSimTicksOnGround > nCadenceTicks)
+		{
+			md.m_nOldButtons = 0;
+			md.m_nButtons |= IN_JUMP;
+		}
 	}
 	else
 	{
-		// Ground: clamp Z velocity
-		if (md.m_vecVelocity.z > 100.f)
-			md.m_vecVelocity.z = 100.f;
-		if (md.m_vecVelocity.z < 0.f)
-			md.m_vecVelocity.z = 0.f;
-
-		// Ground friction (Source engine: Friction() in gamemovement.cpp)
-		{
-			const float flSpeed = md.m_vecVelocity.Length2D();
-			if (flSpeed < 0.1f)
-			{
-				md.m_vecVelocity.x = md.m_vecVelocity.y = 0.f;
-			}
-			else
-			{
-				static ConVar* sv_friction = U::ConVars.FindVar("sv_friction");
-				static ConVar* sv_stopspeed = U::ConVars.FindVar("sv_stopspeed");
-				const float flFriction = sv_friction ? sv_friction->GetFloat() : 4.f;
-				const float flStopSpeed = sv_stopspeed ? sv_stopspeed->GetFloat() : 100.f;
-				const float flSurfaceFriction = pPlayer->m_surfaceFriction();
-				const float flControl = std::max(flSpeed, flStopSpeed);
-				const float flDrop = flControl * flFriction * flSurfaceFriction * TICK_INTERVAL;
-				const float flNewSpeed = std::max(0.f, flSpeed - flDrop);
-				if (flSpeed > 0.f)
-				{
-					const float flScale = flNewSpeed / flSpeed;
-					md.m_vecVelocity.x *= flScale;
-					md.m_vecVelocity.y *= flScale;
-				}
-			}
-		}
-
-		// Ground acceleration (Source engine: WalkMove() after Friction())
-		// TF2's WalkMove applies sv_accelerate toward wish direction, which counteracts
-		// friction. Without this, friction alone decelerates players to zero.
-		// When wish speed is below friction threshold, TF2 increases accel to compensate.
-		{
-			const float flMaxSpeed = std::max(md.m_flMaxSpeed, 100.f);
-
-			// Build wish direction from current velocity direction (player is moving
-			// in their wish direction already — we just need to maintain speed)
-			Vec3 vVel2D = md.m_vecVelocity.To2D();
-			float flSpeed2D = vVel2D.Length2D();
-
-			if (flSpeed2D > 0.1f)
-			{
-				vVel2D.NormalizeInPlace();
-
-				static ConVar* sv_accelerate = U::ConVars.FindVar("sv_accelerate");
-				static ConVar* sv_friction = U::ConVars.FindVar("sv_friction");
-				const float flAccel = sv_accelerate ? sv_accelerate->GetFloat() : 10.f;
-				const float flFriction = sv_friction ? sv_friction->GetFloat() : 4.f;
-				const float flSurfaceFriction = pPlayer->m_surfaceFriction();
-
-				float flWishSpeed = flMaxSpeed;
-				float flAccelRate = flAccel;
-
-				// TF2 compensation: when wish speed is below friction threshold,
-				// increase acceleration so player can overcome friction
-				const float flWishSpeedThreshold = 100.f * flFriction * flSurfaceFriction / flAccel;
-				if (flWishSpeed > 0.f && flWishSpeed < flWishSpeedThreshold)
-				{
-					static ConVar* sv_stopspeed = U::ConVars.FindVar("sv_stopspeed");
-					const float flStopSpeed = sv_stopspeed ? sv_stopspeed->GetFloat() : 100.f;
-					const float flControl = std::max(flSpeed2D, flStopSpeed);
-					flAccelRate = (flControl * flFriction * flSurfaceFriction) / flWishSpeed + 1.f;
-				}
-
-				// Accelerate toward wish direction
-				const float flCurrentSpeed = md.m_vecVelocity.x * vVel2D.x + md.m_vecVelocity.y * vVel2D.y;
-				const float flAddSpeed = std::max(0.f, flWishSpeed - flCurrentSpeed);
-				float flAccelSpeed = flAccelRate * flWishSpeed * TICK_INTERVAL * flSurfaceFriction;
-				if (flAccelSpeed > flAddSpeed)
-					flAccelSpeed = flAddSpeed;
-
-				md.m_vecVelocity.x += flAccelSpeed * vVel2D.x;
-				md.m_vecVelocity.y += flAccelSpeed * vVel2D.y;
-			}
-		}
-
-		// Evasive friction: extra slowdown for rapidly-changing ground direction
-		if (tMoveStorage.m_bEvasiveFriction)
-		{
-			const float flSpeed = md.m_vecVelocity.Length2D();
-			if (flSpeed > 0.f)
-			{
-				static ConVar* sv_friction = U::ConVars.FindVar("sv_friction");
-				static ConVar* sv_stopspeed = U::ConVars.FindVar("sv_stopspeed");
-				const float flFriction = sv_friction ? sv_friction->GetFloat() : 4.f;
-				const float flStopSpeed = sv_stopspeed ? sv_stopspeed->GetFloat() : 100.f;
-				const float flSurfaceFriction = pPlayer->m_surfaceFriction();
-				const float flNewSpeed = std::max(0.f, flSpeed - std::max(flSpeed, flStopSpeed) * (flFriction * flSurfaceFriction * TICK_INTERVAL));
-				if (flSpeed > 0.f)
-				{
-					const float flScale = flNewSpeed / flSpeed;
-					md.m_vecVelocity.x *= flScale;
-					md.m_vecVelocity.y *= flScale;
-				}
-			}
-		}
-
-		// Bhop: predict jump on ground contact
-		if (tMoveStorage.m_bBunnyHop && !pPlayer->m_bDucked())
-		{
-			if (md.m_vecVelocity.z < 50.f && md.m_vecVelocity.z > -50.f)
-			{
-				md.m_vecVelocity.z = 270.f;
-				tMoveStorage.m_bDirectMove = false;
-				tMoveStorage.m_iBhopSimTicksInAir = 0;
-			}
-		}
-
-		// Clamp ground velocity to max speed
-		{
-			const float flMaxSpeed = md.m_flMaxSpeed;
-			const float flSpeedSqr = md.m_vecVelocity.Length2DSqr();
-			if (flSpeedSqr > flMaxSpeed * flMaxSpeed && flSpeedSqr > 0.f)
-			{
-				const float flSpeed = std::sqrt(flSpeedSqr);
-				const float flScale = flMaxSpeed / flSpeed;
-				md.m_vecVelocity.x *= flScale;
-				md.m_vecVelocity.y *= flScale;
-			}
-		}
+		// Airborne or ducked — reset ground counter
+		tMoveStorage.m_iBhopSimTicksOnGround = 0;
 	}
 
-	// --- Move: origin += velocity * dt ---
-	Vec3 vNewPos = md.m_vecAbsOrigin + md.m_vecVelocity * TICK_INTERVAL;
-
-	// --- Collision: hull trace ---
-	{
-		trace_t trace = {};
-		CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
-
-		const Vec3 vCompression(PlayerOriginCompression, PlayerOriginCompression, 0.f);
-		Vec3 vMins = pPlayer->m_vecMins() + vCompression;
-		Vec3 vMaxs = pPlayer->m_vecMaxs() - vCompression;
-
-		H::AimUtils->TraceHull(md.m_vecAbsOrigin, vNewPos, vMins, vMaxs, MASK_PLAYERSOLID, &filter, &trace);
-
-		if (trace.fraction < 1.0f)
-		{
-			vNewPos = trace.endpos;
-
-			if (trace.plane.normal.z > 0.7f)
-			{
-				// Hit ground
-				md.m_vecVelocity.z = 0.f;
-				tMoveStorage.m_bDirectMove = true;
-				vNewPos.z += 0.5f;
-			}
-			else
-			{
-				// Hit wall/ceiling — clip velocity along collision plane
-				tMoveStorage.m_bDirectMove = false;
-				const float flBackoff = md.m_vecVelocity.Dot(trace.plane.normal);
-				if (flBackoff < 0.f)
-					md.m_vecVelocity = md.m_vecVelocity - (trace.plane.normal * flBackoff);
-			}
-		}
-		else
-		{
-			// Clear path — not on ground
-			tMoveStorage.m_bDirectMove = false;
-		}
-	}
-
-	md.m_vecAbsOrigin = vNewPos;
-
+	// ProcessMovement: handles ALL physics — gravity, friction, air accel, walk accel,
+	// crouching, zooming, water, ladders, ramps, etc. This is the actual TF2 game code.
+	I::GameMovement->ProcessMovement(pPlayer, &md);
 	if (pCallback)
 		(*pCallback)(md);
+
+	md.m_flClientMaxSpeed = flOldSpeed;
+
+	const bool bLastDirectMove = tMoveStorage.m_bDirectMove;
+	tMoveStorage.m_bDirectMove = IsOnGround(pPlayer) || pPlayer->m_nWaterLevel() >= 2;
+
+	// Un-apply the air correction (cumulative averageYaw rotation is intentionally kept)
+	if (tMoveStorage.m_flAverageYaw)
+		md.m_vecViewAngles.y -= flCorrection;
+	else if (tMoveStorage.m_bDirectMove && !bLastDirectMove
+		&& !md.m_flForwardMove && !md.m_flSideMove
+		&& md.m_vecVelocity.Length2D() > md.m_flMaxSpeed * 0.015f)
+	{
+		// Player just landed with no explicit move input — re-derive forward/side from velocity
+		Vec3 vDir = md.m_vecVelocity.Normalized2D() * 450.f;
+		g_MoveSimCmd.forwardmove = vDir.x;
+		g_MoveSimCmd.sidemove = -vDir.y;
+		H::AimUtils->FixMovement(&g_MoveSimCmd, {}, md.m_vecViewAngles);
+		md.m_flForwardMove = g_MoveSimCmd.forwardmove;
+		md.m_flSideMove = g_MoveSimCmd.sidemove;
+	}
+
+	RestoreBounds(pPlayer);
 
 	tMoveStorage.m_flSimTime += TICK_INTERVAL;
 	tMoveStorage.m_flTimeToTarget = std::max(0.f, tMoveStorage.m_flTimeToTarget - TICK_INTERVAL);

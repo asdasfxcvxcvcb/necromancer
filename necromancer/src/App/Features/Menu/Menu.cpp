@@ -2959,27 +2959,7 @@ void CMenu::MainWindow()
 				}
 //				CheckBox("BBOX Multipoint", CFG::Aimbot_Projectile_BBOX_Multipoint);
 				
-				// Splashbot (Rockets Only) - Off = direct hits, Include/Prefer/Only = splash prediction
-				SelectSingle("Splashbot (Rockets)", CFG::Aimbot_Amalgam_Projectile_Splash,
-					{
-						{ "Off", 0 },
-						{ "Include", 1 },
-						{ "Prefer", 2 },
-						{ "Only", 3 }
-					});
-				
-				// Rocket Splash mode (only show when splashbot is not Off)
-				if (CFG::Aimbot_Amalgam_Projectile_Splash > 0)
-				{
-					SelectSingle("Rocket Splash", CFG::Aimbot_Amalgam_Projectile_RocketSplashMode,
-					{
-						{ "Regular", 0 },
-						{ "Special Light", 1 },
-						{ "Special Heavy", 2 }
-					});
-				}
-				
-				// Normal projectile splash (show for non-rocket weapons)
+				// Splash prediction for all projectile weapons including rockets
 				SelectSingle("Splash", CFG::Aimbot_Projectile_Rocket_Splash,
 					{
 						{ "Disabled", 0 },

@@ -4,7 +4,6 @@
 #include "AimbotMelee/AimbotMelee.h"
 #include "AimbotProjectile/AimbotProjectile.h"
 #include "AimbotWrangler/AimbotWrangler.h"
-#include "../amalgam_port/AimbotProjectile/AimbotProjectileAmalgam.h"
 #include "../RapidFire/RapidFire.h"
 
 #include "../CFG.h"
@@ -66,16 +65,6 @@ void CAimbot::RunMain(CUserCmd* pCmd)
 
 		case EWeaponType::PROJECTILE:
 		{
-			const int nWeaponID = pWeapon->GetWeaponID();
-			// Always use Amalgam projectile aimbot for rocket launchers
-			if (nWeaponID == TF_WEAPON_ROCKETLAUNCHER || 
-				nWeaponID == TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT || 
-				nWeaponID == TF_WEAPON_PARTICLE_CANNON)
-			{
-				F::AmalgamAimbotProjectile->Run(pLocal, pWeapon, pCmd);
-				break;
-			}
-			// Use normal projectile aimbot for all other projectile weapons
 			F::AimbotProjectile->Run(pCmd, pLocal, pWeapon);
 			break;
 		}

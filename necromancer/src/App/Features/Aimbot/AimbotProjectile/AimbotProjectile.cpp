@@ -9,6 +9,9 @@ namespace
 {
 	constexpr int MaxSplashPointCount = 400;
 	constexpr float SplashGoldenAngle = 2.39996323f; // PI * (3 - sqrt(5))
+	constexpr int StickySplashMinPoints = 20;
+	constexpr int StickySplashMaxPoints = 96;
+	constexpr int StickySplashCandidateBudget = 24;
 
 	int GetSplashPointCount()
 	{
@@ -23,6 +26,26 @@ namespace
 		const float sinA1 = sinf(a1);
 
 		return { sinA1 * cosf(a2), sinA1 * sinf(a2), cosf(a1) };
+	}
+
+	const std::vector<Vec3>& GetCachedSplashDirections(const int nPointCount)
+	{
+		static std::vector<Vec3> s_CachedDirections[MaxSplashPointCount + 1];
+		if (nPointCount <= 0 || nPointCount > MaxSplashPointCount)
+		{
+			static const std::vector<Vec3> s_Empty;
+			return s_Empty;
+		}
+
+		auto& directions = s_CachedDirections[nPointCount];
+		if (directions.empty())
+		{
+			directions.reserve(nPointCount);
+			for (int n = 0; n < nPointCount; n++)
+				directions.push_back(GetSplashDirection(n, nPointCount));
+		}
+
+		return directions;
 	}
 
 	Vec3 RotateSplashDirection(const Vec3& vDirection, float flSin, float flCos)
@@ -353,6 +376,28 @@ bool CAimbotProjectile::GetProjectileInfo(C_TFWeaponBase* pWeapon)
 		break;
 	}
 
+	case TF_WEAPON_ROCKETLAUNCHER:
+	case TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT:
+	{
+		// Amalgam: base speed is always 1100 for ALL rocket types.
+		// The Direct Hit's 1.8x speed comes from its "mult_projectile_speed" attribute,
+		// so AttribHookValue(1100, ...) correctly yields 1100*1.8=1980.
+		// Using 1980 as base would apply 1.8x AGAIN → 3564 (way too fast).
+		// Mannpower precision rune overrides to 3000.
+		const auto pLocal = H::Entities->GetLocal();
+		const float flBaseSpeed = (pLocal && pLocal->InCond(TF_COND_RUNE_PRECISION)) ? 3000.0f : 1100.0f;
+		m_CurProjInfo.Speed = SDKUtils::AttribHookValue(flBaseSpeed, "mult_projectile_speed", pWeapon);
+		m_CurProjInfo.GravityMod = 0.0f;
+		break;
+	}
+
+	case TF_WEAPON_PARTICLE_CANNON:
+	{
+		m_CurProjInfo.Speed = SDKUtils::AttribHookValue(1200.0f, "mult_projectile_speed", pWeapon);
+		m_CurProjInfo.GravityMod = 0.0f;
+		break;
+	}
+
 	default: break;
 	}
 
@@ -366,7 +411,12 @@ bool CAimbotProjectile::GetProjectileInfo(C_TFWeaponBase* pWeapon)
 		m_CurProjInfo.WeaponID == TF_WEAPON_FLAREGUN ||
 		m_CurProjInfo.WeaponID == TF_WEAPON_FLAREGUN_REVENGE ||
 		m_CurProjInfo.WeaponID == TF_WEAPON_SYRINGEGUN_MEDIC ||
-		m_CurProjInfo.WeaponID == TF_WEAPON_FLAME_BALL;
+		m_CurProjInfo.WeaponID == TF_WEAPON_FLAME_BALL ||
+		// Rockets need it too: without muzzle-relative time the projectile leads ~1.4 ticks
+		// too far (eye->target vs muzzle->target is ~24u/1100u/s) and lands ahead of the sim line.
+		m_CurProjInfo.WeaponID == TF_WEAPON_ROCKETLAUNCHER ||
+		m_CurProjInfo.WeaponID == TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT ||
+		m_CurProjInfo.WeaponID == TF_WEAPON_PARTICLE_CANNON;
 
 	UpdateArcCache(pWeapon);
 
@@ -554,7 +604,10 @@ bool CAimbotProjectile::CalcProjAngle(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapo
 			vOffset = { 23.5f, 8.0f, -3.0f };
 		else if (nWeaponID == TF_WEAPON_CROSSBOW || nWeaponID == TF_WEAPON_SHOTGUN_BUILDING_RESCUE)
 			vOffset = { 23.5f, 8.0f, -3.0f };
+		else if (nWeaponID == TF_WEAPON_PARTICLE_CANNON)
+			vOffset = { 23.5f, 8.0f, (pLocal->m_fFlags() & FL_DUCKING) ? 8.0f : -3.0f };
 		else
+			// Rocket / Direct Hit / flares: { 23.5, 12, ducking?8:-3 }
 			vOffset = { 23.5f, 12.0f, (pLocal->m_fFlags() & FL_DUCKING) ? 8.0f : -3.0f };
 
 		// Calculate actual projectile spawn position using first-pass angles
@@ -768,8 +821,27 @@ void CAimbotProjectile::OffsetPlayerPosition(C_TFWeaponBase* pWeapon, Vec3& vPos
 				break;
 			}
 
+			case TF_WEAPON_ROCKETLAUNCHER:
+			case TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT:
+			case TF_WEAPON_PARTICLE_CANNON:
+			{
+				// PrioritizeFeet: rockets splash at ground level, aim low when target is grounded
+				if (CFG::Aimbot_Amalgam_Projectile_Hitbox_PrioritizeFeet && bOnGround)
+				{
+					vPos.z += (flMaxZ * 0.1f);
+					m_LastAimPos = 0;
+				}
+				else
+				{
+					vPos.z += (flMaxZ * 0.5f);
+					m_LastAimPos = 1;
+				}
+				break;
+			}
+
 			default:
 			{
+				// All other weapons (flares, syringes, crossbows, etc.) — body aim only
 				vPos.z += (flMaxZ * 0.5f);
 				m_LastAimPos = 1;
 				break;
@@ -815,7 +887,7 @@ bool CAimbotProjectile::CanArcReach(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 	CTraceFilterWorldCustom filter{};
 	filter.m_pTarget = pTarget;
 
-	// Determine hull size once before the loop
+	// Determine hull size once before the loop (Amalgam-accurate projectile hulls)
 	Vec3 mins{ -6.0f, -6.0f, -6.0f };
 	Vec3 maxs{ 6.0f, 6.0f, 6.0f };
 	switch (info.m_type)
@@ -827,9 +899,17 @@ bool CAimbotProjectile::CanArcReach(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 		mins = { -8.0f, -8.0f, -8.0f };
 		maxs = { 8.0f, 8.0f, 20.0f };
 		break;
+	// Rockets / cow mangler energy ball have NO collision hull in TF2 — point trace.
+	// The corner is caught by the path itself (per-tick trace along the converged direction),
+	// NOT by an inflated hull. The old 6u default was a band-aid for the wrong-path bug.
+	case TF_PROJECTILE_ROCKET:
+	case TF_PROJECTILE_ENERGY_BALL:
+		mins = { 0.0f, 0.0f, 0.0f };
+		maxs = { 0.0f, 0.0f, 0.0f };
+		break;
 	case TF_PROJECTILE_FLARE:
-		mins = { -8.0f, -8.0f, -8.0f };
-		maxs = { 8.0f, 8.0f, 8.0f };
+		mins = { 0.0f, 0.0f, 0.0f };
+		maxs = { 0.0f, 0.0f, 0.0f };
 		break;
 	default:
 		break;
@@ -841,6 +921,9 @@ bool CAimbotProjectile::CanArcReach(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 	const float flSimMultiplier = (vAngleTo.x < -45.0f) ? 1.5f : 1.2f;
 	const int nMaxTicks = TIME_TO_TICKS(flTargetTime * flSimMultiplier);
 
+	// Pre-compute once — avoids recomputing the same value inside the hot loop.
+	const float flTargetDist2D = (vTo - info.m_pos).Length2D();
+
 	for (auto n = 0; n < nMaxTicks; n++)
 	{
 		auto pre{ F::ProjectileSim->GetOrigin() };
@@ -848,6 +931,15 @@ bool CAimbotProjectile::CanArcReach(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 		F::ProjectileSim->RunTick();
 
 		auto post{ F::ProjectileSim->GetOrigin() };
+
+		// Early-exit: projectile passed the target's XY range AND has descended to
+		// the target's altitude — the arc is clear of geometry for the entire path.
+		// The Z check is critical for lob arcs: without it, the exit fires while the
+		// projectile is still rising (passed target XY but not yet at target height),
+		// which would skip the descending phase where floor/ceiling hits are detected.
+		if ((post - info.m_pos).Length2D() > flTargetDist2D + 30.0f
+			&& post.z <= vTo.z + 30.0f)
+			return true;
 
 		trace_t trace{};
 
@@ -861,9 +953,7 @@ bool CAimbotProjectile::CanArcReach(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 		if (trace.DidHit())
 		{
 			const Vec3 vShooterToHit = trace.endpos - info.m_pos;
-			const Vec3 vShooterToTarget = vTo - info.m_pos;
 			const float flHitDist2D = vShooterToHit.Length2D();
-			const float flTargetDist2D = vShooterToTarget.Length2D();
 			const float flHitToTarget2D = (trace.endpos - vTo).Length2D();
 
 			// If we hit something past the target in XY, we're good
@@ -935,16 +1025,19 @@ bool CAimbotProjectile::CanSee(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, cons
 	default: break;
 	}
 
-	if (m_CurProjInfo.GravityMod != 0.f)
-	{
-		return CanArcReach(pLocal, pWeapon, vFrom, vTo, target.AngleTo, flTargetTime, target.Entity);
-	}
-
 	if (m_CurProjInfo.Flamethrower)
 	{
 		return H::AimUtils->TraceFlames(target.Entity, vLocalPos, vTo);
 	}
-	return H::AimUtils->TraceProjectile(target.Entity, vLocalPos, vTo);
+
+	// ALL projectiles (arc AND straight-line rockets) validate via CanArcReach, which
+	// traces per-tick along the ACTUAL simulated path. For rockets that path follows the
+	// converged info.m_ang (GetProjectileFireSetup aims the rocket from the muzzle toward
+	// where eye-forward hits, exactly like the real TF2 rocket) — so the validation line is
+	// identical to the drawn sim line and the real trajectory. A straight muzzle->target
+	// trace would check a DIFFERENT line and miss corners the real rocket flies through.
+	// Roll (neckbreaker) shifts the muzzle inside GetInfo, so different rolls test different paths.
+	return CanArcReach(pLocal, pWeapon, vFrom, vTo, target.AngleTo, flTargetTime, target.Entity);
 }
 
 bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, const CUserCmd* pCmd, ProjTarget_t& target)
@@ -1032,6 +1125,11 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 			case TF_WEAPON_FLAREGUN_REVENGE:
 				flBaseRadius = 110.0f;
 				break;
+			case TF_WEAPON_ROCKETLAUNCHER:
+			case TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT:
+			case TF_WEAPON_PARTICLE_CANNON:
+				flBaseRadius = 146.0f;
+				break;
 			default:
 				break;
 			}
@@ -1055,8 +1153,11 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 				const float flRotation = static_cast<float>(I::GlobalVars->tickcount % 360) * DEG2RAD(1.0f);
 				const float flSinRotation = sinf(flRotation);
 				const float flCosRotation = cosf(flRotation);
-				// Sticky launcher lob/high arc: halve splash points — arc is less precise, fewer points suffice
-				const int nSplashPointCount = bIsSticky ? std::max(GetSplashPointCount() / 2, 50) : GetSplashPointCount();
+				// Sticky splash is expensive: cap points and checked candidates to avoid frame spikes.
+				const int nSplashPointCount = bIsSticky
+					? std::clamp(GetSplashPointCount() / 2, StickySplashMinPoints, StickySplashMaxPoints)
+					: GetSplashPointCount();
+				const auto& splashDirections = GetCachedSplashDirections(nSplashPointCount);
 
 				// Stack array instead of heap vector — avoids allocation per call
 				Vec3 potential[MaxSplashPointCount];
@@ -1066,7 +1167,7 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 
 				for (int n = 0; n < nSplashPointCount; n++)
 				{
-					const Vec3 point = center + RotateSplashDirection(GetSplashDirection(n, nSplashPointCount), flSinRotation, flCosRotation).Scale(radius);
+					const Vec3 point = center + RotateSplashDirection(splashDirections[n], flSinRotation, flCosRotation).Scale(radius);
 
 					trace_t trace{};
 					H::AimUtils->Trace(center, point, MASK_SOLID, &filter, &trace);
@@ -1089,7 +1190,8 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 				const Vec3 hull_min = { -8.0f, -8.0f, -8.0f };
 				const Vec3 hull_max = { 8.0f,  8.0f,  8.0f };
 
-				for (int i = 0; i < nPotentialCount; i++)
+				const int nCandidateCount = bIsSticky ? std::min(nPotentialCount, StickySplashCandidateBudget) : nPotentialCount;
+				for (int i = 0; i < nCandidateCount; i++)
 				{
 					const Vec3& point = potential[i];
 
@@ -1117,7 +1219,7 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 
 					if (grateTrace.fraction < 1.0f)
 					{
-						if (m_CurProjInfo.GravityMod > 0.0f && !CanArcReach(pLocal, pWeapon, vLocalPos, point, target.AngleTo, target.TimeToTarget, target.Entity))
+						if (!CanArcReach(pLocal, pWeapon, vLocalPos, point, target.AngleTo, target.TimeToTarget, target.Entity))
 							continue;
 
 						return true;
@@ -1126,7 +1228,7 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 					if (trace.fraction < 1.0f)
 						continue;
 
-					if (m_CurProjInfo.GravityMod > 0.0f && !CanArcReach(pLocal, pWeapon, vLocalPos, point, target.AngleTo, target.TimeToTarget, target.Entity))
+					if (!CanArcReach(pLocal, pWeapon, vLocalPos, point, target.AngleTo, target.TimeToTarget, target.Entity))
 						continue;
 
 					return true;
@@ -1170,9 +1272,12 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 				}
 			}
 
-			if ((nTargetTick == nTick || nTargetTick == nTick - 1)
-				|| (bStationary && nTargetTick <= nTick)
-				|| (bReversal && nTargetTick >= nTick - 2 && nTargetTick <= nTick + 2))
+			// Off-by-1 correction: RunTick is called BEFORE vTarget is read, so at nTick=N
+			// the position is after N+1 RunTick calls. We want the position that is exactly
+			// nTargetTick RunTick calls ahead, which happens when nTick = nTargetTick - 1.
+			if ((nTargetTick == nTick + 1 || nTargetTick == nTick)
+				|| (bStationary && nTargetTick <= nTick + 1)
+				|| (bReversal && nTargetTick >= nTick - 1 && nTargetTick <= nTick + 3))
 			{
 				if (CFG::Aimbot_Projectile_Rocket_Splash == 2 && runSplash(vTarget))
 				{
@@ -1186,6 +1291,26 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 					F::MovementSimulation->Restore();
 
 					return true;
+				}
+
+				// Neckbreaker: try roll angles when main shot is blocked (silent aim only).
+				// For non-rocket arc weapons, CanSee recomputes the spawn offset using
+				// the full angle (pitch+yaw+roll) via GetProjectileFireSetup, so different
+				// roll values can produce slightly different spawn positions that clear geometry.
+				if (CFG::Aimbot_Projectile_Neckbreaker && CFG::Aimbot_Projectile_Aim_Type == 1)
+				{
+					const int iStep = std::max(CFG::Aimbot_Projectile_NeckbreakerStep, 15);
+					for (int iRoll = iStep; iRoll < 360; iRoll += iStep)
+					{
+						ProjTarget_t rollTarget = target;
+						rollTarget.AngleTo.z = static_cast<float>(iRoll);
+						if (CanSee(pLocal, pWeapon, vLocalPos, vTarget, rollTarget, flTimeToTarget))
+						{
+							target.AngleTo.z = static_cast<float>(iRoll);
+							F::MovementSimulation->Restore();
+							return true;
+						}
+					}
 				}
 
 				if (CFG::Aimbot_Projectile_BBOX_Multipoint && nWeaponID != TF_WEAPON_COMPOUND_BOW)
@@ -1223,11 +1348,67 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 
 					return true;
 				}
+
+				// Stationary target: its world position never changes, so the same angle
+				// will be computed for every remaining tick. If all checks (splash, CanSee,
+				// multipoint) failed once, they will fail on every subsequent tick too.
+				// Break immediately instead of burning N*CanArcReach calls for nothing.
+				if (bStationary)
+					break;
 			}
 
 		}
 
 		F::MovementSimulation->Restore();
+
+		// Midpoint Aim: for grounded rocket targets, aim at the ground below the midpoint of the
+		// target's predicted path for a splash shot that catches players moving between positions.
+		if (CFG::Aimbot_Projectile_Midpoint_Aim && bOnGround && m_TargetPath.size() > 2 &&
+			(nWeaponID == TF_WEAPON_ROCKETLAUNCHER || nWeaponID == TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT || nWeaponID == TF_WEAPON_PARTICLE_CANNON))
+		{
+			const float flMaxDist = CFG::Aimbot_Projectile_Midpoint_Max_Distance * 16.0f;
+			float flTotal = 0.f;
+			for (size_t n = 1; n < m_TargetPath.size(); n++)
+				flTotal += m_TargetPath[n].DistTo(m_TargetPath[n - 1]);
+
+			if (flTotal > 8.0f && flTotal <= flMaxDist)
+			{
+				float flHalf = flTotal * 0.5f, flAcc = 0.f;
+				int nMidTick = 0;
+				for (size_t n = 1; n < m_TargetPath.size(); n++)
+				{
+					flAcc += m_TargetPath[n].DistTo(m_TargetPath[n - 1]);
+					if (flAcc >= flHalf) { nMidTick = static_cast<int>(n); break; }
+				}
+
+				if (nMidTick > 0 && nMidTick < static_cast<int>(m_TargetPath.size()))
+				{
+					const Vec3 vMidOrigin = m_TargetPath[nMidTick];
+					trace_t groundTrace{};
+					CTraceFilterWorldCustom groundFilter{};
+					H::AimUtils->TraceHull(vMidOrigin, vMidOrigin - Vec3(0, 0, 256.f),
+						{ -8.f, -8.f, -8.f }, { 8.f, 8.f, 8.f }, MASK_SOLID, &groundFilter, &groundTrace);
+
+					if (groundTrace.DidHit() && !(groundTrace.surface.flags & SURF_SKY) && groundTrace.plane.normal.z > 0.7f)
+					{
+						const Vec3 vGround = groundTrace.endpos + Vec3(0, 0, 1.f);
+						Vec3 vMidAngle{};
+						float flMidTime = 0.f;
+						trace_t midTrace{};
+						CTraceFilterWorldCustom midFilter{};
+						H::AimUtils->TraceHull(vLocalPos, vGround,
+							{ -6.f, -6.f, -6.f }, { 6.f, 6.f, 6.f }, MASK_SOLID, &midFilter, &midTrace);
+						if (CalcProjAngle(pLocal, pWeapon, vLocalPos, vGround, vMidAngle, flMidTime) &&
+							midTrace.fraction >= 0.99f)
+						{
+							target.AngleTo = vMidAngle;
+							target.TimeToTarget = flMidTime;
+							return true;
+						}
+					}
+				}
+			}
+		}
 
 		// Lob angle fallback — only try AFTER the full simulation loop failed to find a low arc solution.
 		// This ensures low arc is always preferred. Lob is a last resort for targets behind cover.
@@ -1314,6 +1495,11 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 			case TF_WEAPON_FLAREGUN_REVENGE:
 				flBaseRadius = 110.0f;
 				break;
+			case TF_WEAPON_ROCKETLAUNCHER:
+			case TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT:
+			case TF_WEAPON_PARTICLE_CANNON:
+				flBaseRadius = 146.0f;
+				break;
 			default:
 				break;
 			}
@@ -1335,8 +1521,11 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 				const float flRotation = static_cast<float>(I::GlobalVars->tickcount % 360) * DEG2RAD(1.0f);
 				const float flSinRotation = sinf(flRotation);
 				const float flCosRotation = cosf(flRotation);
-				// Sticky launcher lob/high arc: halve splash points — arc is less precise, fewer points suffice
-				const int nSplashPointCount = bIsSticky ? std::max(GetSplashPointCount() / 2, 50) : GetSplashPointCount();
+				// Sticky splash is expensive: cap points and checked candidates to avoid frame spikes.
+				const int nSplashPointCount = bIsSticky
+					? std::clamp(GetSplashPointCount() / 2, StickySplashMinPoints, StickySplashMaxPoints)
+					: GetSplashPointCount();
+				const auto& splashDirections = GetCachedSplashDirections(nSplashPointCount);
 
 				Vec3 potential[MaxSplashPointCount];
 				int nPotentialCount = 0;
@@ -1345,7 +1534,7 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 
 				for (int n = 0; n < nSplashPointCount; n++)
 				{
-					const Vec3 point = center + RotateSplashDirection(GetSplashDirection(n, nSplashPointCount), flSinRotation, flCosRotation).Scale(radius);
+					const Vec3 point = center + RotateSplashDirection(splashDirections[n], flSinRotation, flCosRotation).Scale(radius);
 
 					trace_t trace{};
 					H::AimUtils->Trace(center, point, MASK_SOLID, &filter, &trace);
@@ -1365,7 +1554,8 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 				const Vec3 hull_min = { -8.0f, -8.0f, -8.0f };
 				const Vec3 hull_max = { 8.0f,  8.0f,  8.0f };
 
-				for (int i = 0; i < nPotentialCount; i++)
+				const int nCandidateCount = bIsSticky ? std::min(nPotentialCount, StickySplashCandidateBudget) : nPotentialCount;
+				for (int i = 0; i < nCandidateCount; i++)
 				{
 					const Vec3& point = potential[i];
 					if (!CalcProjAngle(pLocal, pWeapon, vLocalPos, point, target.AngleTo, target.TimeToTarget))
@@ -1394,7 +1584,7 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 
 					if (grateTrace.fraction < 1.0f)
 					{
-						if (m_CurProjInfo.GravityMod > 0.0f && !CanArcReach(pLocal, pWeapon, vLocalPos, point, target.AngleTo, target.TimeToTarget, target.Entity))
+						if (!CanArcReach(pLocal, pWeapon, vLocalPos, point, target.AngleTo, target.TimeToTarget, target.Entity))
 							continue;
 
 						return true;
@@ -1405,7 +1595,7 @@ bool CAimbotProjectile::SolveTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon,
 						continue;
 					}
 
-					if (m_CurProjInfo.GravityMod > 0.0f && !CanArcReach(pLocal, pWeapon, vLocalPos, point, target.AngleTo, target.TimeToTarget, target.Entity))
+					if (!CanArcReach(pLocal, pWeapon, vLocalPos, point, target.AngleTo, target.TimeToTarget, target.Entity))
 						continue;
 
 					return true;
@@ -1624,6 +1814,10 @@ void CAimbotProjectile::Aim(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* 
 	}
 
 	Math::ClampAngles(vAngleTo);
+
+	// Neckbreaker: preserve the roll component set during target solving
+	if (CFG::Aimbot_Projectile_Neckbreaker && vAngles.z != 0.f)
+		vAngleTo.z = vAngles.z;
 
 	switch (CFG::Aimbot_Projectile_Aim_Type)
 	{

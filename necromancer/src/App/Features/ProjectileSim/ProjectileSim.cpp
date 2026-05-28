@@ -5,7 +5,8 @@ static IPhysicsEnvironment* env{};
 static IPhysicsObject* obj{};
 
 // Cached env state to avoid redundant vphysics calls that log to dev console
-static Vector s_vLastGravity = { 0, 0, 0 };
+// Sentinel: FLT_MAX forces SetGravity on the very first Init call (any gravity, including 0 for rockets)
+static Vector s_vLastGravity = { FLT_MAX, FLT_MAX, FLT_MAX };
 static float s_flLastAirDensity = -1.0f;
 static float s_flLastMaxVel = -1.0f;
 static float s_flLastMaxAngVel = -1.0f;
@@ -124,6 +125,32 @@ bool CProjectileSim::GetInfo(C_TFPlayer* player, C_TFWeaponBase* weapon, const V
 		SDKUtils::GetProjectileFireSetupRebuilt(player, { 16.0f, 6.0f, -8.0f }, angles, pos, ang, false, vPredictedShootPos);
 
 		out = { TF_PROJECTILE_SYRINGE, pos, ang, 1000.0f, 0.3f, true };
+
+		return true;
+	}
+
+	case TF_WEAPON_ROCKETLAUNCHER:
+	case TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT:
+	{
+		// Amalgam offset: { 23.5, centerfire?0:12, ducking?8:-3 } — Y is 12 not 8
+		const int centerfire = static_cast<int>(SDKUtils::AttribHookValue(0.0f, "centerfire_projectile", weapon));
+		SDKUtils::GetProjectileFireSetupRebuilt(player, { 23.5f, centerfire == 1 ? 0.0f : 12.0f, ducking ? 8.0f : -3.0f }, angles, pos, ang, false, vPredictedShootPos);
+
+		// Base speed is always 1100 for ALL rocket types (Amalgam).
+		// Direct Hit's 1.8x comes from its mult_projectile_speed attribute.
+		// Precision rune overrides to 3000.
+		const float flBaseSpeed = player->InCond(TF_COND_RUNE_PRECISION) ? 3000.0f : 1100.0f;
+		out = { TF_PROJECTILE_ROCKET, pos, ang, SDKUtils::AttribHookValue(flBaseSpeed, "mult_projectile_speed", weapon), 0.0f, true };
+
+		return true;
+	}
+
+	case TF_WEAPON_PARTICLE_CANNON:
+	{
+		// Amalgam offset: { 23.5, 8, ducking?8:-3 } — Y is 8 for cow mangler
+		SDKUtils::GetProjectileFireSetupRebuilt(player, { 23.5f, 8.0f, ducking ? 8.0f : -3.0f }, angles, pos, ang, false, vPredictedShootPos);
+
+		out = { TF_PROJECTILE_ENERGY_BALL, pos, ang, SDKUtils::AttribHookValue(1200.0f, "mult_projectile_speed", weapon), 0.0f, true };
 
 		return true;
 	}
