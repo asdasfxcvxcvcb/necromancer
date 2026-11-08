@@ -2,6 +2,7 @@
 
 #include "../../../SDK/SDK.h"
 #include "MenuAnimations.h"
+#include <chrono>
 #include <unordered_map>
 
 // Draggable GroupBox system
@@ -20,6 +21,12 @@ struct DraggableGroupBox_t
 	int m_nRenderY;               // Last rendered Y position
 	EGroupBoxSize m_eSize;        // Size category for column placement rules
 	std::function<void()> m_fnRenderContent; // Function to render the content
+};
+
+struct MenuToast_t
+{
+	std::string m_strText;
+	std::chrono::steady_clock::time_point m_tpBorn;
 };
 
 class CMenu
@@ -58,12 +65,19 @@ private:
 	bool m_bShowDropZones = false;
 	float m_flDropZoneAlpha = 0.0f;
 	std::map<std::string, float> m_mapGroupBoxDragAlpha; // For smooth drag animation
-	int m_nDragContentY = 0;  // Content Y position for drop calculations
+	int m_nDragContentY = 0;
+	int m_nDragContentH = 0;
 
 	//std::string m_strConfigPath = {};
 
 	std::unique_ptr<Color_t[]> m_pGradient = nullptr;
 	unsigned int m_nColorPickerTextureId = 0;
+
+	std::vector<MenuToast_t> m_vecToasts;
+
+	enum class EConfirmAction { NONE = 0, UNLOCK_ACHIEVEMENTS = 1, LOCK_ACHIEVEMENTS = 2, AUTH_LOGIN = 3, AUTH_REGISTER = 4 };
+	EConfirmAction m_eConfirmAction = EConfirmAction::NONE;
+	std::string m_strAchievementStatus;
 
 private:
 	void Drag(int &x, int &y, int w, int h, int offset_y);
@@ -76,7 +90,7 @@ private:
 	bool InputKey(const char *szLabel, int &nKeyOut);
 	bool Button(const char *szLabel, bool bActive = false, int nCustomWidth = 0);
 	bool playerListButton(const wchar_t *label, int nCustomWidth, Color_t clr, bool center_txt);
-	bool InputText(const char *szLabel, const char *szLabel2, std::string &strOutput);
+	bool InputText(const char *szLabel, const char *szLabel2, std::string &strOutput, int nMaxLen = 128);
 	bool SelectSingle(const char *szLabel, int &nVar, const std::vector<std::pair<const char *, int>> &vecSelects);
 	bool SelectMulti(const char *szLabel, std::vector<std::pair<const char *, bool &>> &vecSelects);
 	bool ColorPicker(const char *szLabel, Color_t &colVar);
@@ -109,9 +123,14 @@ private:
 	void MainWindow();
 	void Snow();
 	void Indicators();
+	void HandleAchievementConfirmInput();
+	void DrawAchievementConfirm();
 
 public:
 	void Run();
+	void DrawNetNotifications();
+	void AddToast(const std::string &strText);
+	void DrawToasts();
 	CMenu();
 
 private:

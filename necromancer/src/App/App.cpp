@@ -9,7 +9,11 @@
 #include "Features/Paint/Paint.h"
 #include "Features/Menu/Menu.h"
 #include "Features/Players/Players.h"
+#include "Features/Misc/IgnoreVAC/IgnoreVAC.h"
+#include "Features/Misc/Soundpad/Soundpad.h"
 #include "Features/Weather/Weather.h"
+#include "Features/Models/Models.h"
+#include "Features/NecroNet/NecroNet.h"
 #include "CheaterDatabase/CheaterDatabase.h"
 #include "../Utils/CrashHandler/CrashHandler.h"
 
@@ -102,20 +106,7 @@ void CApp::Start()
 		}
 	}
 
-	// Initialize Steam interfaces for avatar support
-	if (I::SteamClient)
-	{
-		const HSteamPipe hPipe = I::SteamClient->CreateSteamPipe();
-		if (hPipe)
-		{
-			const HSteamUser hUser = I::SteamClient->ConnectToGlobalUser(hPipe);
-			if (hUser)
-			{
-				I::SteamFriends = I::SteamClient->GetISteamFriends(hUser, hPipe, STEAMFRIENDS_INTERFACE_VERSION);
-				I::SteamUtils = I::SteamClient->GetISteamUtils(hPipe, STEAMUTILS_INTERFACE_VERSION);
-			}
-		}
-	}
+	RefreshSteamSession();
 
 	// Initialize SteamNetworkingUtils for region selector
 	if (Signatures::Get_SteamNetworkingUtils.Get())
@@ -140,9 +131,14 @@ void CApp::Start()
 
 	F::Players->Parse();
 	F::Players->ImportLegacyPlayers(); // Auto-import players.json from old seonwdde folder
+	F::Players->ParseStats(); // Pre-load stats at injection so the first kill doesn't parse megabytes mid-game
 
 	// Initialize cheater database worker thread
 	InitCheaterDatabase();
+
+	F::NecroNet->Init();
+
+	F::Models->Init();
 
 	// Capture user's original game settings
 	// This sets the CFG values to match the user's current game settings
@@ -185,7 +181,11 @@ void CApp::Start()
 		msgColor = { 28, 179, 210, 255 };
 	}
 
-	I::CVar->ConsoleColorPrintf(msgColor, "[Necromancer] loaded and bloated! haha just kidding, anyways this cheat was made by blizzman, enjoy!\n");
+	I::CVar->ConsoleColorPrintf(msgColor, "[Necromancer] loaded and bloated! haha just kidding, anyways this cheat was made by blizzman and G-man, enjoy!\n");
+	// Build stamp: the console line to compare against the source you compiled.
+	// If this timestamp doesn't match your latest build, the injected DLL is a
+	// stale copy (e.g. an old file in the injection folder), not the new build.
+	I::CVar->ConsoleColorPrintf(msgColor, "[Necromancer] build: %s %s\n", __DATE__, __TIME__);
 }
 
 void CApp::Loop()
@@ -204,8 +204,20 @@ void CApp::Shutdown()
 {
 	if (!bUnload)
 	{
+		U::HookManager->FreeAllHooks();
+
+		Hooks::WINAPI_WndProc::Release();
+
+		Sleep(150);
+
 		// Shutdown cheater database worker thread
 		ShutdownCheaterDatabase();
+
+		F::Players->ShutdownStatsWriter();
+
+		F::NecroNet->Shutdown();
+
+		F::Soundpad->Shutdown();
 
 		// Disable weather before unloading
 		CFG::Visuals_Weather = 0;
@@ -232,9 +244,7 @@ void CApp::Shutdown()
 		CFG::Perf_Extreme_Minimal_Render = false;
 		CFG::Perf_Extreme_FPS_Limit = 0;
 
-		U::HookManager->FreeAllHooks();
-
-		Hooks::WINAPI_WndProc::Release();
+		U::HookManager->DestroyAllHooks();
 
 		Sleep(250);
 

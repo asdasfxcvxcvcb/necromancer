@@ -290,6 +290,18 @@ public:
 		return *reinterpret_cast<float *>(reinterpret_cast<std::uintptr_t>(this) + nOffset);
 	}
 
+	void *&m_pCritBoostSoundLoop()
+	{
+		static int nOffset = NetVars::GetNetVar("CTFPlayer", "m_flSpyTranqBuffDuration") + 12;
+		return *reinterpret_cast<void **>(reinterpret_cast<std::uintptr_t>(this) + nOffset);
+	}
+
+	void *m_SharedPtr()
+	{
+		static int nOffset = NetVars::GetNetVar("CTFPlayer", "m_Shared");
+		return reinterpret_cast<void *>(reinterpret_cast<std::uintptr_t>(this) + nOffset);
+	}
+
 	bool IsInvisible()
 	{
 		if (this->InCond(TF_COND_BURNING)

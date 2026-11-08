@@ -919,12 +919,13 @@ bool CAutoAirblast::FindAimbotTarget(C_TFPlayer* pLocal, C_BaseProjectile* pProj
 			// Try to hit the ground directly at their feet
 			// Only for grounded or bunnyhopping players
 			// ================================================================
-			if (flSplashRadius > 0.0f)
+			// Priorities 2 and 3 solve the identical intercept (same arguments)
+			// and each solve is a full movement simulation per target per tick,
+			// so solve it once here and let priority 3 reuse the result
+			const bool bSolvedIntercept = SolveIntercept(pLocal, pPlayer, vProjectilePos, flRocketSpeed, flSplashRadius, false,
+				vAimAngles, vInterceptPos, flTravelTime, vPlayerPath);
+			if (flSplashRadius > 0.0f && bSolvedIntercept)
 			{
-				// Get predicted position first
-				if (SolveIntercept(pLocal, pPlayer, vProjectilePos, flRocketSpeed, flSplashRadius, false,
-					vAimAngles, vInterceptPos, flTravelTime, vPlayerPath))
-				{
 					// Calculate feet position (ground level at predicted position)
 					Vec3 vFeetPos = vInterceptPos;
 					vFeetPos.z = vPlayerPath.empty() ? pPlayer->GetAbsOrigin().z : vPlayerPath.back().z;
@@ -965,15 +966,13 @@ bool CAutoAirblast::FindAimbotTarget(C_TFPlayer* pLocal, C_BaseProjectile* pProj
 							}
 						}
 					}
-				}
 			}
 
 			// ================================================================
 			// PRIORITY 3: DIRECT HIT (body center)
 			// Last resort - try to hit them directly
 			// ================================================================
-			if (SolveIntercept(pLocal, pPlayer, vProjectilePos, flRocketSpeed, flSplashRadius, false,
-				vAimAngles, vInterceptPos, flTravelTime, vPlayerPath))
+			if (bSolvedIntercept)
 			{
 				// Check if there's a clear path to the target
 				if (!HasClearPath(vProjectilePos, vInterceptPos, pPlayer))
@@ -1441,7 +1440,7 @@ static void DrawAirblastVisualization(C_TFPlayer* pLocal, const Vec3& vAimAngles
 	if (!pLocal)
 		return;
 
-	constexpr float flDrawDuration = 2.0f; // 2 seconds so paths stay visible
+	constexpr float flDrawDuration = 0.1f; // short lifetime like AimbotWrangler - 2s let the debug overlay accumulate thousands of live primitives per target per tick
 
 	// Draw movement prediction path
 	if (CFG::Visuals_Draw_Movement_Path_Style > 0 && !vPlayerPath.empty())
@@ -1528,7 +1527,8 @@ static void DrawAirblastVisualization(C_TFPlayer* pLocal, const Vec3& vAimAngles
 
 void CAutoAirblast::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd)
 {
-	if (!CFG::Triggerbot_AutoAirblast_Active)
+	// Mirrors AutoBackstab: "Always On" runs it without the triggerbot keybind
+	if (!CFG::Triggerbot_AutoAirblast_Always_On && !CFG::Triggerbot_AutoAirblast_Active)
 		return;
 
 	if (!G::bCanSecondaryAttack || (pWeapon->GetWeaponID() != TF_WEAPON_FLAMETHROWER && pWeapon->GetWeaponID() != TF_WEAPON_FLAME_BALL)
@@ -1540,6 +1540,7 @@ void CAutoAirblast::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* p
 		return;
 
 	pCmd->buttons |= IN_ATTACK2;
+	m_flLastReflect = I::EngineClient->Time();
 
 	// Rage airblast mode
 	if (CFG::Triggerbot_AutoAirblast_Mode == 1)

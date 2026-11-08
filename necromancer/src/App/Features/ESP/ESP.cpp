@@ -293,6 +293,7 @@ void CESP::Run()
 		const bool bIgnoreTagged = CFG::ESP_Players_Ignore_Tagged;
 		const bool bIgnoreTaggedTeammates = CFG::ESP_Players_Ignore_Tagged_Teammates;
 		const bool bShowTeammateMedics = CFG::ESP_Players_Show_Teammate_Medics;
+		const bool bFriendTeammates = CFG::ESP_Players_Friend_Teammates;
 
 		for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PLAYERS_ALL))
 		{
@@ -314,48 +315,61 @@ void CESP::Run()
 			// OPTIMIZATION: Get player priority info ONCE per player instead of 4+ times
 			PlayerPriority playerPriority = {};
 			bool bHasPriorityInfo = false;
-			bool bIsTagged = false;
-			bool bIsFriend = false;
+				bool bIsTagged = false;
+				bool bIsIgnoredTag = false;
+				bool bIsFriend = false;
 
-			if (!bIsLocal)
-			{
-				// Early invisibility check before expensive operations
-				if (bIgnoreInvisible && pPlayer->m_flInvisibility() >= 1.0f)
-					continue;
-
-				bIsFriend = pPlayer->IsPlayerOnSteamFriendsList();
-
-				if (bIgnoreFriends && bIsFriend)
-					continue;
-
-				// Get player info ONCE and reuse throughout
-				bHasPriorityInfo = F::Players->GetInfo(nPlayerIndex, playerPriority);
-				if (bHasPriorityInfo && !bIgnoreTagged)
-					bIsTagged = playerPriority.Cheater || playerPriority.RetardLegit || playerPriority.Ignored || playerPriority.Targeted || playerPriority.Streamer || playerPriority.Nigger;
-
-				// Check if this is a tagged teammate that should be ignored
-				const int nPlayerTeam = pPlayer->m_iTeamNum();
-				const bool bIsTeammate = nPlayerTeam == nLocalTeam;
-				
-				if (bIsTagged && bIsTeammate && bIgnoreTaggedTeammates)
+				if (!bIsLocal)
 				{
-					// Exception: show teammate medics if that option is enabled
-					if (!bShowTeammateMedics || pPlayer->m_iClass() != TF_CLASS_MEDIC)
+					// Early invisibility check before expensive operations
+					if (bIgnoreInvisible && pPlayer->m_flInvisibility() >= 1.0f)
 						continue;
-				}
 
-				if (!bIsFriend && !bIsTagged)
-				{
-					if (bIgnoreTeammates && bIsTeammate)
+					bIsFriend = pPlayer->IsPlayerOnSteamFriendsList();
+
+					if (bIgnoreFriends && bIsFriend)
+						continue;
+
+					// Get player info ONCE and reuse throughout
+					bHasPriorityInfo = F::Players->GetInfo(nPlayerIndex, playerPriority);
+					if (bHasPriorityInfo)
 					{
+						bIsIgnoredTag = playerPriority.Ignored;
+						if (!bIgnoreTagged || bFriendTeammates)
+							bIsTagged = playerPriority.Cheater || playerPriority.RetardLegit || playerPriority.Ignored || playerPriority.Targeted || playerPriority.Streamer || playerPriority.Nigger;
+					}
+
+					// Check if this is a tagged teammate that should be ignored
+					const int nPlayerTeam = pPlayer->m_iTeamNum();
+					const bool bIsTeammate = nPlayerTeam == nLocalTeam;
+
+					if (bFriendTeammates && bIsTeammate)
+					{
+						if (!bIsFriend && !bIsIgnoredTag)
+						{
+							if (!bShowTeammateMedics || pPlayer->m_iClass() != TF_CLASS_MEDIC)
+								continue;
+						}
+					}
+					else if (bIsTagged && !bIsIgnoredTag && bIsTeammate && bIgnoreTaggedTeammates)
+					{
+						// Exception: show teammate medics if that option is enabled
 						if (!bShowTeammateMedics || pPlayer->m_iClass() != TF_CLASS_MEDIC)
 							continue;
 					}
 
-					if (bIgnoreEnemies && !bIsTeammate)
-						continue;
+					if (!bIsFriend && !bIsTagged)
+					{
+						if (bIgnoreTeammates && bIsTeammate)
+						{
+							if (!bShowTeammateMedics || pPlayer->m_iClass() != TF_CLASS_MEDIC)
+								continue;
+						}
+
+						if (bIgnoreEnemies && !bIsTeammate)
+							continue;
+					}
 				}
-			}
 
 			int x = 0, y = 0, w = 0, h = 0;
 
@@ -383,16 +397,16 @@ void CESP::Run()
 						Vec2(flDrawX + 10.0f, flDrawY - 10.0f)
 					};
 
-					Math::RotateTriangle(vPoints, vAngle.y);
+						Math::RotateTriangle(vPoints, vAngle.y);
 
-					H::Draw->FilledTriangle(vPoints, F::VisualUtils->GetEntityColor(pLocal, pPlayer));
+						H::Draw->FilledTriangle(vPoints, F::VisualUtils->GetEntityColor(pLocal, pPlayer, bIsFriend, bHasPriorityInfo, playerPriority));
 				}
 
 				continue;
 			}
 
 			// OPTIMIZATION: Cache colors and values ONCE per player
-			auto entColor = F::VisualUtils->GetEntityColor(pLocal, pPlayer);
+			auto entColor = F::VisualUtils->GetEntityColor(pLocal, pPlayer, bIsFriend, bHasPriorityInfo, playerPriority);
 			auto textColor = CFG::ESP_Text_Color == 0 ? entColor : CFG::Color_ESP_Text;
 
 			// Determine name/weapon color ONCE using cached priority info

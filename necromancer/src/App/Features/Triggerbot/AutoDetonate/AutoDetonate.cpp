@@ -1,6 +1,7 @@
 #include "AutoDetonate.h"
 
 #include "../../CFG.h"
+#include "../../amalgam_port/AmalgamCompat.h"
 #include <algorithm>
 
 // Update or create tracking entry for enemy-sticky pair
@@ -67,6 +68,67 @@ bool CAutoDetonate::ShouldDetonateImmediate(C_BaseEntity* pEnemy, const Vec3& vS
 	return vStickyPos.DistToSqr(vEnemyPos) < flDangerZoneRadiusSqr;
 }
 
+// Sticky blast radius: full splash once touched, the ramped airdet radius while
+// airborne (the server only grants full radius after tf_grenadelauncher_livetime
+// plus the ramp), scaled by the launcher's explosion radius attribute
+float CAutoDetonate::GetEffectiveRadius(C_TFGrenadePipebombProjectile* pSticky, C_TFPlayer* pLocal)
+{
+	float flRadius = 146.0f;
+
+	auto pLauncher = pSticky->m_hOriginalLauncher().Get();
+	auto pWeapon = pLauncher && pLauncher->As<C_TFWeaponBase>() ? pLauncher->As<C_TFWeaponBase>() : H::Entities->GetWeapon();
+	if (pWeapon)
+		flRadius = SDKUtils::AttribHookValue(flRadius, "mult_explosion_radius", pWeapon);
+
+	if (!pSticky->m_bTouched())
+	{
+		static auto tf_grenadelauncher_livetime = I::CVar->FindVar("tf_grenadelauncher_livetime");
+		static auto tf_sticky_radius_ramp_time = I::CVar->FindVar("tf_sticky_radius_ramp_time");
+		static auto tf_sticky_airdet_radius = I::CVar->FindVar("tf_sticky_airdet_radius");
+		const float flLiveTime = tf_grenadelauncher_livetime ? tf_grenadelauncher_livetime->GetFloat() : 5.0f;
+		const float flRampTime = tf_sticky_radius_ramp_time ? tf_sticky_radius_ramp_time->GetFloat() : 0.5f;
+		const float flAirdetRadius = tf_sticky_airdet_radius ? tf_sticky_airdet_radius->GetFloat() : 0.3f;
+		flRadius *= Math::RemapVal(I::GlobalVars->curtime - pSticky->m_flCreationTime(), flLiveTime, flLiveTime + flRampTime, flAirdetRadius, 1.0f);
+	}
+
+	return flRadius;
+}
+
+// Closest point of the entity's collision to the sticky, at its current position
+static Vec3 NearestToSticky(C_BaseEntity* pEntity, const Vec3& vStickyPos)
+{
+	Vec3 vNearest = pEntity->GetCenter();
+	if (auto pCollideable = pEntity->GetCollideable())
+		reinterpret_cast<CCollisionProperty*>(pCollideable)->CalcNearestPoint(vStickyPos, &vNearest);
+	return vNearest;
+}
+
+// The entity is caught both now and where latency puts it when the det command
+// lands - Amalgam detonates only when the target is in range on both clocks
+bool CAutoDetonate::EntityCaught(C_BaseEntity* pEntity, const Vec3& vStickyPos, float flRadius, float flLatency)
+{
+	const float flRadiusSqr = flRadius * flRadius;
+	if (vStickyPos.DistToSqr(NearestToSticky(pEntity, vStickyPos)) >= flRadiusSqr)
+		return false;
+
+	if (flLatency <= 0.0f)
+		return true;
+
+	const Vec3 vMins = pEntity->m_vecMins(), vMaxs = pEntity->m_vecMaxs();
+	const Vec3 vPredOrigin = pEntity->GetAbsOrigin() + pEntity->GetAbsVelocity() * flLatency;
+	const Vec3 vClosest = { std::clamp(vStickyPos.x, vPredOrigin.x + vMins.x, vPredOrigin.x + vMaxs.x),
+		std::clamp(vStickyPos.y, vPredOrigin.y + vMins.y, vPredOrigin.y + vMaxs.y),
+		std::clamp(vStickyPos.z, vPredOrigin.z + vMins.z, vPredOrigin.z + vMaxs.z) };
+	return vStickyPos.DistToSqr(vClosest) < flRadiusSqr;
+}
+
+// Self-damage guard: skip the det if we would be caught by the same blast on
+// both the current and the latency-forward clock
+bool CAutoDetonate::SelfCaught(C_TFPlayer* pLocal, const Vec3& vStickyPos, float flRadius, float flLatency)
+{
+	return EntityCaught(pLocal, vStickyPos, flRadius, flLatency);
+}
+
 void CAutoDetonate::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd)
 {
 	if (pLocal->m_iClass() != TF_CLASS_DEMOMAN)
@@ -96,11 +158,12 @@ void CAutoDetonate::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* p
 			continue;
 
 		// Cache sticky position, index, and radius — used multiple times below
-		// TF2 stickybomb splash radius is 146 units (same as pipes/rockets)
+		// Radius follows the server: full splash when touched, ramped airdet while airborne
 		const Vec3 vStickyPos = pSticky->GetCenter();
 		const int nStickyIndex = pSticky->entindex();
-		const float flRadius = 146.0f;
+		const float flRadius = GetEffectiveRadius(pSticky, pLocal);
 		const float flRadiusSqr = flRadius * flRadius;
+		const float flLatency = SDKUtils::GetRealLatency();
 
 		// Auto detonate players
 		if (CFG::Triggerbot_AutoDetonate_Target_Players)
@@ -126,7 +189,8 @@ void CAutoDetonate::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* p
 
 				// Fast squared distance check (avoids sqrt)
 				const Vec3 vPlayerPos = pPlayer->GetCenter();
-				if (vStickyPos.DistToSqr(vPlayerPos) < flRadiusSqr)
+				if (EntityCaught(pPlayer, vStickyPos, flRadius, flLatency)
+					&& !(CFG::Triggerbot_AutoDetonate_Prevent_Self && SelfCaught(pLocal, vStickyPos, flRadius, flLatency)))
 				{
 					if (H::AimUtils->TraceEntityAutoDet(pPlayer, vStickyPos, vPlayerPos))
 					{
@@ -194,6 +258,7 @@ void CAutoDetonate::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* p
 							}
 
 							pCmd->buttons |= IN_ATTACK2;
+							m_flLastDetonate = I::EngineClient->Time();
 
 							// 4.5: Clear tracking data on detonation
 							if (CFG::Triggerbot_AutoDetonate_Timer_Enabled)
@@ -302,6 +367,7 @@ void CAutoDetonate::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* p
 							}
 
 							pCmd->buttons |= IN_ATTACK2;
+							m_flLastDetonate = I::EngineClient->Time();
 
 							// 4.5: Clear tracking data on detonation
 							if (CFG::Triggerbot_AutoDetonate_Timer_Enabled)

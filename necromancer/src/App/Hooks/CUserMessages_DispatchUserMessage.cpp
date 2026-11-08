@@ -3,17 +3,21 @@
 #include "../Features/CFG.h"
 #include "../Features/SeedPred/SeedPred.h"
 #include "../Features/ChatESP/ChatESP.h"
+#include "../Features/AutoVote/AutoVote.h"
+#include "../Features/AutoUberPop/AutoUberPop.h"
 
 MAKE_SIGNATURE(CUserMessages_DispatchUserMessage, "client.dll", "40 56 48 83 EC ? 49 8B F0", 0x0);
 
 // User message types
 enum EUserMessageType
 {
+	UM_VoiceSubtitle = 1,
 	UM_SayText2 = 4,
 	UM_TextMsg = 5,
 	UM_Shake = 10,
 	UM_Fade = 11,
-	UM_VGUIMenu = 12
+	UM_VGUIMenu = 12,
+	UM_VoteStart = 46
 };
 
 MAKE_HOOK(CUserMessages_DispatchUserMessage, Signatures::CUserMessages_DispatchUserMessage.Get(), bool, __fastcall,
@@ -46,10 +50,24 @@ MAKE_HOOK(CUserMessages_DispatchUserMessage, Signatures::CUserMessages_DispatchU
 		return true;
 	}
 
+	// Auto F1/F2 - automatic voting on the VoteStart user message
+	if (msg_type == UM_VoteStart)
+	{
+		F::AutoVote->UserMessage(msg_data);
+	}
+
+	// AutoUber - track "Medic!" voice menu calls for the ActivateOnVoice pop
+	if (msg_type == UM_VoiceSubtitle)
+	{
+		F::AutoUberPop->UserMessage(msg_data);
+	}
+
 	// Chat ESP - capture SayText2 messages
 	if (msg_type == UM_SayText2 && CFG::Visuals_ChatESP_Active)
 	{
-		int nStartBit = msg_data.GetNumBitsRead();
+		const int nStartBit = msg_data.GetNumBitsRead();
+
+		msg_data.SetAssertOnOverflow(false);
 
 		int iPlayerIndex = msg_data.ReadByte();
 		msg_data.ReadByte(); // bWantsToChat
@@ -66,14 +84,14 @@ MAKE_HOOK(CUserMessages_DispatchUserMessage, Signatures::CUserMessages_DispatchU
 		char szMessage[256];
 		msg_data.ReadString(szMessage, sizeof(szMessage));
 
+		const bool bOverflow = msg_data.IsOverflowed();
+		msg_data.Seek(nStartBit);
+
 		// Pass to ChatESP
-		if (iPlayerIndex > 0 && szMessage[0] != '\0')
+		if (!bOverflow && iPlayerIndex > 0 && szMessage[0] != '\0')
 		{
 			F::ChatESP->OnChatMessage(iPlayerIndex, szMessage);
 		}
-
-		// Reset read position so the original handler can process it
-		msg_data.Seek(nStartBit);
 	}
 
 	return CALL_ORIGINAL(ecx, msg_type, msg_data);

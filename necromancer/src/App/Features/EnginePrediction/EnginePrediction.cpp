@@ -1,6 +1,7 @@
 #include "EnginePrediction.h"
 
 #include "../CFG.h"
+#include "../Misc/Misc.h"
 #include "../amalgam_port/AmalgamCompat.h"
 
 // Account for interp and origin compression when simulating local player
@@ -137,11 +138,12 @@ void CEnginePrediction::Start(C_TFPlayer* pLocal, CUserCmd* pCmd)
 	Simulate(pLocal, pCmd);
 	
 	// Edge jump
-	if (H::Input->IsDown(CFG::Misc_Edge_Jump_Key))
+	if (CFG::Misc_EdgeJump || H::Input->IsDown(CFG::Misc_Edge_Jump_Key))
 	{
-		if ((flags & FL_ONGROUND) && !(pLocal->m_fFlags() & FL_ONGROUND))
+		if ((flags & FL_ONGROUND) && !(pLocal->m_fFlags() & FL_ONGROUND) && !(pCmd->buttons & IN_JUMP))
 		{
 			pCmd->buttons |= IN_JUMP;
+			F::Misc->m_flLastEdgeJump = I::EngineClient->Time();
 		}
 	}
 }

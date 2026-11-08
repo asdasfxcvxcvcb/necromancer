@@ -29,6 +29,13 @@ public:
     void Shutdown();
 
     static CrashContext_t s_Context;  // Updated by hooks/features each frame
+
+    // Increment this around a __try/__except-guarded region (decrement after,
+    // including in the __except path) so the vectored handler skips reporting
+    // faults the local __except is meant to swallow silently - otherwise every
+    // swallowed fault would still pop a crash dialog and write a minidump.
+    // Must be used from functions with no unwinding objects (C2712).
+    static inline thread_local int s_iSuppressDepth = 0;
 };
 
 MAKE_SINGLETON_SCOPED(CCrashHandler, CrashHandler, F);

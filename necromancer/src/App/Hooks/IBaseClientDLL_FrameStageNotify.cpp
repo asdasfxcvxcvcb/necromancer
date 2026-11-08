@@ -8,7 +8,9 @@
 #include "../Features/Crits/Crits.h"
 #include "../Features/Weather/Weather.h"
 #include "../Features/amalgam_port/AmalgamCompat.h"
+#include "../Features/amalgam_port/MoveSim/MoveSimAmalgam.h"
 #include "../Features/NavBot/NavBot.h"
+#include "../Features/Misc/SkinChanger/SkinChanger.h"
 #include "../../Utils/CrashHandler/CrashHandler.h"
 
 // SEH-safe entity validation — on high-player-count servers (40+), entity slots can be
@@ -212,24 +214,30 @@ MAKE_HOOK(IBaseClientDLL_FrameStageNotify, Memory::GetVFunc(I::BaseClientDLL, 35
 
 	// Crash context: track which hook is running
 	F::CrashHandler->s_Context.m_pszLastHook = "FrameStageNotify";
+	// Reset feature tags per hook entry (see CreateMove - stale tags misattributed
+	// a CreateMove crash to LagRecords::UpdateRecords in a prior crash report)
+	F::CrashHandler->s_Context.m_pszLastFeature = "none";
+	F::CrashHandler->s_Context.m_pszLastSubFeature = "none";
+	F::CrashHandler->s_Context.m_nEntityIndex = -1;
 	F::CrashHandler->s_Context.m_bLevelTransition = G::bLevelTransition;
 
 	// Check if we're in game for entity-related operations
 	const bool bInGame = I::EngineClient && I::EngineClient->IsInGame();
 	F::CrashHandler->s_Context.m_bInGame = bInGame;
 
-	// Track map name for crash context
+	// Track map name for crash context - this runs for every frame stage
+	// (~7x per frame), so compare in place instead of building a heap
+	// std::string per stage just to detect map changes
 	if (bInGame && I::EngineClient)
 	{
-		static std::string s_szLastMap;
+		static char s_szLastMap[MAX_PATH] = {};
 		const char* pszMap = I::EngineClient->GetLevelName();
 		if (pszMap && *pszMap)
 		{
-			std::string szMap(pszMap);
-			if (szMap != s_szLastMap)
+			if (strcmp(pszMap, s_szLastMap) != 0)
 			{
-				s_szLastMap = szMap;
-				strncpy_s(F::CrashHandler->s_Context.m_szMapName, szMap.c_str(), _TRUNCATE);
+				strncpy_s(s_szLastMap, pszMap, _TRUNCATE);
+				strncpy_s(F::CrashHandler->s_Context.m_szMapName, pszMap, _TRUNCATE);
 			}
 		}
 	}
@@ -270,6 +278,7 @@ MAKE_HOOK(IBaseClientDLL_FrameStageNotify, Memory::GetVFunc(I::BaseClientDLL, 35
 				
 			H::Entities->UpdateCache();
 			F::CritHack->Store(); // Store player health for crit damage tracking
+			F::SkinChanger->FrameStageNotify();
 
 			const auto pLocal = H::Entities->GetLocal();
 			if (!pLocal)
@@ -393,15 +402,19 @@ MAKE_HOOK(IBaseClientDLL_FrameStageNotify, Memory::GetVFunc(I::BaseClientDLL, 35
 					G::mapVelFixRecords[n] = { pPlayer->m_vecOrigin(), pPlayer->m_fFlags(), pPlayer->m_flSimulationTime(), true };
 			}
 
-			F::CrashHandler->s_Context.m_pszLastFeature = "LagRecords";
-			F::CrashHandler->s_Context.m_pszLastSubFeature = "UpdateDatagram";
-			F::LagRecords->UpdateDatagram();
+	{
+		F::CrashHandler->s_Context.m_pszLastFeature = "LagRecords";
+		F::CrashHandler->s_Context.m_pszLastSubFeature = "UpdateDatagram";
+		F::LagRecords->UpdateDatagram();
 
-			F::CrashHandler->s_Context.m_pszLastSubFeature = "UpdateRecords";
-			F::LagRecords->UpdateRecords();
-			if (!CFG::Perf_Extreme_Skip_MovementSimulation)
-				F::MovementSimulation->Store(); // Store movement records for strafe prediction
-
+		F::CrashHandler->s_Context.m_pszLastSubFeature = "UpdateRecords";
+		F::LagRecords->UpdateRecords();
+		if (!CFG::Perf_Extreme_Skip_MovementSimulation)
+		{
+			F::MovementSimulation->Store();
+			F::MoveSim->Store();
+		}
+	}
 
 			break;
 		}
@@ -409,6 +422,9 @@ MAKE_HOOK(IBaseClientDLL_FrameStageNotify, Memory::GetVFunc(I::BaseClientDLL, 35
 		case FRAME_RENDER_START:
 		{
 			H::Input->Update();
+
+			// SkinChanger - Apply weapon skins (client-side only)
+			F::SkinChanger->FrameStageNotify();
 
 			// EXTREME: Skip all visual updates: world modulation, sway, detail props, weather.
 			if (!CFG::Perf_Extreme_Skip_All_Visuals)

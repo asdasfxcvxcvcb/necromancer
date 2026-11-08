@@ -9,7 +9,9 @@ enum class EFonts
 	CritIndicator, // Dynamic font for crit indicator text mode
 	ChatESP_Large,   // ChatESP fonts at different sizes for distance scaling
 	ChatESP_Medium,
-	ChatESP_Small
+	ChatESP_Small,
+	StatusAnnounce,
+	NecroNet
 };
 
 class CFont

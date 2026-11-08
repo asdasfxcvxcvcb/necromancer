@@ -7,6 +7,7 @@
 #include "../../SDK.h"
 #include "../../../App/Features/CFG.h"
 #include <cstdint>
+#include <set>
 
 #pragma warning (disable : 6385)
 
@@ -102,7 +103,7 @@ void CDraw::String(const CFont &font, int x, int y, Color_t clr, short pos, cons
 	wchar_t wstr[1024] = { '\0' };
 
 	va_start(va_alist, str);
-	vsprintf_s(cbuffer, str, va_alist);
+	vsnprintf_s(cbuffer, sizeof(cbuffer), _TRUNCATE, str, va_alist);
 	va_end(va_alist);
 	wsprintfW(wstr, L"%hs", cbuffer);
 
@@ -132,7 +133,7 @@ void CDraw::String(const CFont &font, int x, int y, Color_t clr, short pos, cons
 	wchar_t wstr[1024] = { '\0' };
 
 	va_start(va_alist, str);
-	vswprintf_s(wstr, str, va_alist);
+	_vsnwprintf_s(wstr, sizeof(wstr) / sizeof(wchar_t), _TRUNCATE, str, va_alist);
 	va_end(va_alist);
 
 	if (pos)
@@ -187,10 +188,8 @@ void CDraw::OutlinedCircle(int x, int y, int radius, int segments, Color_t clr)
 
 void CDraw::FilledCircle(int x, int y, int radius, int segments, Color_t clr)
 {
-	// Pre-calculate step and use local array for small segment counts
 	const float step = static_cast<float>(PI) * 2.0f / segments;
-	
-	// Use stack allocation for typical segment counts (avoid heap allocation)
+
 	if (segments <= 100)
 	{
 		Vertex_t vertices[100];
@@ -201,7 +200,6 @@ void CDraw::FilledCircle(int x, int y, int radius, int segments, Color_t clr)
 	}
 	else
 	{
-		// Fallback for large segment counts
 		thread_local std::vector<Vertex_t> vertices;
 		vertices.clear();
 		vertices.reserve(segments);
@@ -321,26 +319,29 @@ void CDraw::Avatar(int x, int y, int w, int h, uint32_t nFriendID)
 	if (!I::SteamFriends || !I::SteamUtils)
 		return;
 
-	// Convert friendsID to Steam64 ID
 	const uint64_t nID = static_cast<uint64_t>(nFriendID) + 0x0110000100000000ULL;
 
-	// Check if avatar is already cached
 	auto it = m_mapAvatars.find(nID);
 	if (it != m_mapAvatars.end())
 	{
-		// Avatar already cached, just draw it
 		I::MatSystemSurface->DrawSetColor(255, 255, 255, 255);
 		I::MatSystemSurface->DrawSetTexture(it->second);
 		I::MatSystemSurface->DrawTexturedRect(x, y, x + w, y + h);
 		return;
 	}
 
-	// Fetch avatar from Steam and cache it
 	CSteamID steamID(nID);
 	const int nAvatar = I::SteamFriends->GetMediumFriendAvatar(steamID);
-	
+
 	if (nAvatar <= 0)
+	{
+		static std::set<uint64_t> setRequested;
+		if (setRequested.size() > 4096)
+			setRequested.clear();
+		if (setRequested.insert(nID).second)
+			I::SteamFriends->RequestUserInformation(steamID, false);
 		return;
+	}
 
 	uint32 nWidth = 0, nHeight = 0;
 	if (!I::SteamUtils->GetImageSize(nAvatar, &nWidth, &nHeight))
@@ -363,7 +364,6 @@ void CDraw::Avatar(int x, int y, int w, int h, uint32_t nFriendID)
 			I::MatSystemSurface->DrawSetTextureRGBAEx(nTextureID, pData, nWidth, nHeight, IMAGE_FORMAT_RGBA8888);
 			m_mapAvatars[nID] = nTextureID;
 
-			// Draw the avatar
 			I::MatSystemSurface->DrawSetColor(255, 255, 255, 255);
 			I::MatSystemSurface->DrawSetTexture(nTextureID);
 			I::MatSystemSurface->DrawTexturedRect(x, y, x + w, y + h);
@@ -373,16 +373,11 @@ void CDraw::Avatar(int x, int y, int w, int h, uint32_t nFriendID)
 	free(pData);
 }
 
-// ============================================
-// Amalgam-style 3D rendering functions
-// ============================================
-
 void CDraw::RenderLine(const Vec3& vStart, const Vec3& vEnd, Color_t tColor, bool bZBuffer)
 {
 	if (!tColor.a)
 		return;
 
-	// Use RenderUtils for proper 3D line rendering (like Amalgam)
 	RenderUtils::RenderLine(vStart, vEnd, tColor, bZBuffer);
 }
 
@@ -393,7 +388,6 @@ void CDraw::RenderPath(const std::vector<Vec3>& vPath, Color_t tColor, bool bZBu
 
 	for (size_t i = 1; i < vPath.size(); i++)
 	{
-		// For timed paths with negative time (tick-based), skip points beyond the limit
 		if (flTime < 0.f && vPath.size() - i > static_cast<size_t>(-flTime))
 			continue;
 
@@ -476,20 +470,17 @@ void CDraw::RenderBox(const Vec3& vOrigin, const Vec3& vMins, const Vec3& vMaxs,
 
 void CDraw::DrawStoredPaths()
 {
-	// Clean screenshot - don't draw simulation paths
 	if (CFG::Misc_Clean_Screenshot && I::EngineClient->IsTakingScreenshot())
 		return;
 
-	// Draw all stored paths
 	for (const auto& tPath : G::PathStorage)
 	{
 		if (tPath.m_flTime >= 0.f && tPath.m_flTime < I::GlobalVars->curtime)
 			continue;
 
-		RenderPath(tPath.m_vPath, tPath.m_tColor, tPath.m_bZBuffer, tPath.m_iStyle, tPath.m_flTime);
+			RenderPath(tPath.m_vPath, tPath.m_tColor, tPath.m_bZBuffer, tPath.m_iStyle, tPath.m_flTime);
 	}
 
-	// Draw all stored lines
 	for (const auto& tLine : G::LineStorage)
 	{
 		if (tLine.m_flTime < I::GlobalVars->curtime)
@@ -498,7 +489,6 @@ void CDraw::DrawStoredPaths()
 		RenderLine(tLine.m_vStart, tLine.m_vEnd, tLine.m_tColor, tLine.m_bZBuffer);
 	}
 
-	// Draw all stored boxes
 	for (const auto& tBox : G::BoxStorage)
 	{
 		if (tBox.m_flTime < I::GlobalVars->curtime)

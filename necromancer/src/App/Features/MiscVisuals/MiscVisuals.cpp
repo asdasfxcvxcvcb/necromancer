@@ -17,15 +17,59 @@
 void CMiscVisuals::InitializeBloom()
 {
 	if (m_bBloomInitialized)
-		return;
+	{
+		if (m_pRtFullFrame && m_pRenderBuffer0 && m_pRenderBuffer1)
+		{
+			const int nFullW = m_pRtFullFrame->GetActualWidth();
+			const int nFullH = m_pRtFullFrame->GetActualHeight();
+			if (m_pRenderBuffer0->GetActualWidth() != nFullW || m_pRenderBuffer0->GetActualHeight() != nFullH
+				|| m_pRenderBuffer1->GetActualWidth() != nFullW || m_pRenderBuffer1->GetActualHeight() != nFullH)
+			{
+				CleanUpBloom();
+			}
+			else if ((m_pMatGlowColor && m_pMatGlowColor->IsErrorMaterial())
+				|| (m_pMatHaloAddToScreen && m_pMatHaloAddToScreen->IsErrorMaterial())
+				|| (m_pMatBlurX && m_pMatBlurX->IsErrorMaterial())
+				|| (m_pMatBlurY && m_pMatBlurY->IsErrorMaterial())
+				|| (m_pRenderBuffer0 && m_pRenderBuffer0->IsError())
+				|| (m_pRenderBuffer1 && m_pRenderBuffer1->IsError()))
+			{
+				CleanUpBloom();
+			}
+			else
+			{
+				static float flNextVarRefresh = 0.0f;
+				const float flRealTime = I::GlobalVars->realtime;
+				if (flRealTime >= flNextVarRefresh)
+				{
+					flNextVarRefresh = flRealTime + 2.0f;
+					if (m_pMatBlurY)
+						m_pBloomAmount = m_pMatBlurY->FindVar("$bloomamount", nullptr);
+				}
+				return;
+			}
+		}
+		else
+		{
+			CleanUpBloom();
+		}
+	}
 
 	if (!m_pMatGlowColor)
+	{
 		m_pMatGlowColor = I::MaterialSystem->FindMaterial("dev/glow_color", TEXTURE_GROUP_OTHER);
+		if (m_pMatGlowColor && m_pMatGlowColor->IsErrorMaterial())
+			m_pMatGlowColor = nullptr;
+	}
 
 	if (!m_pRtFullFrame)
+	{
 		m_pRtFullFrame = I::MaterialSystem->FindTexture("_rt_FullFrameFB", TEXTURE_GROUP_RENDER_TARGET);
+		if (m_pRtFullFrame && m_pRtFullFrame->IsError())
+			m_pRtFullFrame = nullptr;
+	}
 
-	if (!m_pRenderBuffer0)
+	if (!m_pRenderBuffer0 && m_pRtFullFrame)
 	{
 		m_pRenderBuffer0 = I::MaterialSystem->CreateNamedRenderTargetTextureEx(
 			"seo_fov_buffer0",
@@ -41,7 +85,7 @@ void CMiscVisuals::InitializeBloom()
 			m_pRenderBuffer0->IncrementReferenceCount();
 	}
 
-	if (!m_pRenderBuffer1)
+	if (!m_pRenderBuffer1 && m_pRtFullFrame)
 	{
 		m_pRenderBuffer1 = I::MaterialSystem->CreateNamedRenderTargetTextureEx(
 			"seo_fov_buffer1",
@@ -63,6 +107,8 @@ void CMiscVisuals::InitializeBloom()
 		kv->SetString("$basetexture", "seo_fov_buffer0");
 		kv->SetString("$additive", "1");
 		m_pMatHaloAddToScreen = I::MaterialSystem->CreateMaterial("seo_fov_material", kv);
+		if (m_pMatHaloAddToScreen && m_pMatHaloAddToScreen->IsErrorMaterial())
+			m_pMatHaloAddToScreen = nullptr;
 	}
 
 	if (!m_pMatBlurX)
@@ -70,6 +116,8 @@ void CMiscVisuals::InitializeBloom()
 		const auto kv = new KeyValues("BlurFilterX");
 		kv->SetString("$basetexture", "seo_fov_buffer0");
 		m_pMatBlurX = I::MaterialSystem->CreateMaterial("seo_fov_material_blurx", kv);
+		if (m_pMatBlurX && m_pMatBlurX->IsErrorMaterial())
+			m_pMatBlurX = nullptr;
 	}
 
 	if (!m_pMatBlurY)
@@ -77,11 +125,14 @@ void CMiscVisuals::InitializeBloom()
 		const auto kv = new KeyValues("BlurFilterY");
 		kv->SetString("$basetexture", "seo_fov_buffer1");
 		m_pMatBlurY = I::MaterialSystem->CreateMaterial("seo_fov_material_blury", kv);
+		if (m_pMatBlurY && m_pMatBlurY->IsErrorMaterial())
+			m_pMatBlurY = nullptr;
+
 		if (m_pMatBlurY)
 			m_pBloomAmount = m_pMatBlurY->FindVar("$bloomamount", nullptr);
 	}
 
-	m_bBloomInitialized = true;
+	m_bBloomInitialized = m_pMatGlowColor && m_pRenderBuffer0 && m_pRenderBuffer1 && m_pMatBlurX && m_pMatBlurY && m_pMatHaloAddToScreen;
 }
 
 void CMiscVisuals::CleanUpBloom()
@@ -91,20 +142,6 @@ void CMiscVisuals::CleanUpBloom()
 		m_pMatHaloAddToScreen->DecrementReferenceCount();
 		m_pMatHaloAddToScreen->DeleteIfUnreferenced();
 		m_pMatHaloAddToScreen = nullptr;
-	}
-
-	if (m_pRenderBuffer0)
-	{
-		m_pRenderBuffer0->DecrementReferenceCount();
-		m_pRenderBuffer0->DeleteIfUnreferenced();
-		m_pRenderBuffer0 = nullptr;
-	}
-
-	if (m_pRenderBuffer1)
-	{
-		m_pRenderBuffer1->DecrementReferenceCount();
-		m_pRenderBuffer1->DeleteIfUnreferenced();
-		m_pRenderBuffer1 = nullptr;
 	}
 
 	if (m_pMatBlurX)
@@ -119,6 +156,22 @@ void CMiscVisuals::CleanUpBloom()
 		m_pMatBlurY->DecrementReferenceCount();
 		m_pMatBlurY->DeleteIfUnreferenced();
 		m_pMatBlurY = nullptr;
+	}
+
+	m_pBloomAmount = nullptr;
+
+	if (m_pRenderBuffer0)
+	{
+		m_pRenderBuffer0->DecrementReferenceCount();
+		m_pRenderBuffer0->DeleteIfUnreferenced();
+		m_pRenderBuffer0 = nullptr;
+	}
+
+	if (m_pRenderBuffer1)
+	{
+		m_pRenderBuffer1->DecrementReferenceCount();
+		m_pRenderBuffer1->DeleteIfUnreferenced();
+		m_pRenderBuffer1 = nullptr;
 	}
 
 	m_bBloomInitialized = false;
@@ -141,12 +194,15 @@ void CMiscVisuals::AimbotFOVCircle()
 		return;
 
 	if (!CFG::Visuals_Aimbot_FOV_Circle
-		|| I::EngineVGui->IsGameUIVisible()
-		|| I::Input->CAM_IsThirdPerson())
+		|| I::EngineVGui->IsGameUIVisible())
 		return;
 
 	const auto pLocal = H::Entities->GetLocal();
 	if (!pLocal || pLocal->deadflag())
+		return;
+
+	if (CFG::Visuals_Aimbot_FOV_Circle_Hide_Thirdperson
+		&& I::Input->CAM_IsThirdPerson())
 		return;
 
 	const auto flAimFOV = G::flAimbotFOV;
@@ -455,8 +511,7 @@ void CMiscVisuals::ShiftBar()
 		nMaxTicksBudget = std::min(nMaxTicksBudget, 8);
 
 	int nChokedCommands = I::ClientState->chokedcommands;
-	int nProcessableTicks = F::Ticks->GetProcessableTicks();
-	int nServerBudget = Shifting::GetServerProcessBudget();
+	int nProcessableTicks = std::clamp(Shifting::nAvailableTicks, 0, nMaxTicksBudget);
 
 	bool bCanDT = F::RapidFire->CanDoubleTapNow(pLocal, pWeapon);
 	bool bShifting = Shifting::bShifting || Shifting::bShiftingWarp;
@@ -477,7 +532,7 @@ void CMiscVisuals::ShiftBar()
 	H::Draw->OutlinedRect(nBarX, nBarY, nActualBarWidth, nBarHeight, clrOutline);
 
 	// Calculate fill ratios (no interpolation - instant)
-	float flDTRatio = static_cast<float>(nProcessableTicks) / static_cast<float>((std::max)(nServerBudget, 1));
+	float flDTRatio = std::clamp(static_cast<float>(nProcessableTicks) / static_cast<float>((std::max)(nMaxTicksBudget, 1)), 0.0f, 1.0f);
 	float flChokeRatio = static_cast<float>(nChokedCommands) / static_cast<float>(nMaxTicksBudget);
 
 	int nInnerWidth = nActualBarWidth - 2;
@@ -579,7 +634,7 @@ void CMiscVisuals::ShiftBar()
 
 	// Draw choked ticks as a secondary color overlay
 	int nChokeWidth = static_cast<int>(flChokeRatio * nInnerWidth);
-	if (nChokeWidth > 0)
+	if (nChokeWidth > 0 && !bRecharging && !bShifting)
 	{
 		const Color_t chokeColor = CFG::Color_FakeLag;
 		int nChokeStartX = nFillX + nFillWidth;
@@ -626,7 +681,7 @@ void CMiscVisuals::ShiftBar()
 	// === ROW 2: TICKS label (left) and STATUS (right) ===
 	// Left: TICKS: X/MAX
 	H::Draw->String(font, nLeftX, nDrawY, clrText, POS_DEFAULT,
-		std::format("TICKS: {}/{}", nProcessableTicks, nServerBudget).c_str());
+		std::format("TICKS: {}/{}", nProcessableTicks, nMaxTicksBudget).c_str());
 
 	// Right: Status
 	if (bShifting)
@@ -641,7 +696,7 @@ void CMiscVisuals::ShiftBar()
 	nDrawY += nRowHeight;
 
 	// === ROW 3: Choked info (right-aligned) ===
-	if (nChokedCommands > 0)
+	if (nChokedCommands > 0 && !bRecharging && !bShifting)
 	{
 		H::Draw->String(font, nTextRightX, nDrawY, {200, 150, 255, 255}, POS_CENTERX,
 			std::format("CHOKED: {}", nChokedCommands).c_str());

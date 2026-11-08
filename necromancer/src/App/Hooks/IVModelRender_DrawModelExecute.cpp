@@ -26,6 +26,9 @@ MAKE_HOOK(IVModelRender_DrawModelExecute, Memory::GetVFunc(I::ModelRender, 19), 
 	if (!F::Materials->m_fnDrawModelExecute)
 		F::Materials->SetDrawModelExecuteFn(Hook.Original<IVModelRender::DrawModelExecuteFn>());
 
+	if (CFG::Visuals_Sheen_Active)
+		F::Materials->ValidateSheen();
+
 	if (!F::SpyCamera->IsRendering())
 	{
 		const auto pClientEntity = I::ClientEntityList->GetClientEntity(pInfo.entity_index);
@@ -191,28 +194,24 @@ MAKE_HOOK(IVModelRender_DrawModelExecute, Memory::GetVFunc(I::ModelRender, 19), 
 	if (!F::Outlines->m_fnDrawModelExecute && F::Materials->m_fnDrawModelExecute)
 		F::Outlines->SetDrawModelExecuteFn(F::Materials->m_fnDrawModelExecute);
 
-	// Amalgam-style lag record rendering:
-	// When Materials is rendering an enemy player, after the real model is drawn,
-	// render lag records by calling DrawModelExecute directly with each record's BoneMatrix.
-	// This avoids DrawModel's internal SetupBones recalculation that causes tearing.
-	if (F::Materials->IsRendering() && pInfo.entity_index > 0)
 	{
-		const auto pRenderedEntity = I::ClientEntityList->GetClientEntity(pInfo.entity_index);
-		if (pRenderedEntity)
+		if (F::Materials->IsRendering() && pInfo.entity_index > 0)
 		{
-			auto pNet = pRenderedEntity->GetClientNetworkable();
-			if (pNet && pNet->GetClientClass() && pNet->GetClientClass()->m_ClassID == static_cast<int>(ETFClassIds::CTFPlayer))
+			const auto pRenderedEntity = I::ClientEntityList->GetClientEntity(pInfo.entity_index);
+			if (pRenderedEntity)
 			{
-				// Draw the real model first
-				CALL_ORIGINAL(ecx, state, pInfo, pCustomBoneToWorld);
-
-				// Now render lag records for this player
-				const auto pPlayer = pRenderedEntity->As<C_TFPlayer>();
-				if (pPlayer && F::Materials->ShouldRenderLagRecords(pPlayer))
+				auto pNet = pRenderedEntity->GetClientNetworkable();
+				if (pNet && pNet->GetClientClass() && pNet->GetClientClass()->m_ClassID == static_cast<int>(ETFClassIds::CTFPlayer))
 				{
-					F::Materials->RenderLagRecords(pPlayer, state, pInfo);
+					CALL_ORIGINAL(ecx, state, pInfo, pCustomBoneToWorld);
+
+					const auto pPlayer = pRenderedEntity->As<C_TFPlayer>();
+					if (pPlayer && F::Materials->ShouldRenderLagRecords(pPlayer))
+					{
+						F::Materials->RenderLagRecords(pPlayer, state, pInfo);
+					}
+					return;
 				}
-				return;
 			}
 		}
 	}
@@ -240,6 +239,8 @@ MAKE_HOOK(IVModelRender_DrawModelExecute, Memory::GetVFunc(I::ModelRender, 19), 
 	if (CFG::Visuals_Sheen_Active
 		&& (CFG::Visuals_Sheen_Friend || CFG::Visuals_Sheen_Teammates || CFG::Visuals_Sheen_Enemy)
 		&& !(CFG::Misc_Clean_Screenshot && I::EngineClient->IsTakingScreenshot())
+		&& !F::Materials->IsRendering()
+		&& !F::Outlines->IsRendering()
 		&& F::Materials->m_pSheen
 		&& pInfo.entity_index > 0
 		&& pInfo.entity_index <= I::ClientEntityList->GetMaxEntities())
@@ -314,6 +315,9 @@ MAKE_HOOK(CBaseAnimating_DrawModel, Signatures::CBaseAnimating_DrawModel.Get(), 
 	void *ecx, int flags)
 {
 	const bool clean_ss = CFG::Misc_Clean_Screenshot && I::EngineClient->IsTakingScreenshot();
+
+	if (CFG::Visuals_Sheen_Active)
+		F::Materials->ValidateSheen();
 
 	if (CFG::Materials_ViewModel_Active
 		&& !clean_ss

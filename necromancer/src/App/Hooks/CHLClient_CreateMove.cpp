@@ -22,10 +22,12 @@
 #include "../Features/Misc/AntiCheatCompat/AntiCheatCompat.h"
 #include "../Features/amalgam_port/AmalgamCompat.h"
 #include "../Features/amalgam_port/Ticks/Ticks.h"
+#include "../Features/AutoUberPop/AutoUberPop.h"
+#include "../Features/AntiBackstab/AntiBackstab.h"
 #include "../Features/Players/Players.h"
+#include "../Features/MoveSimDebug/MoveSimDebug.h"
 #include "../../Utils/CrashHandler/CrashHandler.h"
 
-// Taunt delay processing - defined in IVEngineClient013_ClientCmd.cpp
 extern void ProcessTauntDelay();
 
 namespace TickbaseFix
@@ -39,16 +41,10 @@ MAKE_HOOK(ValidateUserCmd, Signatures::ValidateUserCmd_.Get(), void, __fastcall,
 	return;
 }
 
-// Local animations - Amalgam style
-// This updates the local player's animation state based on the cmd angles
-// The fake model uses separate bones set up in SetupFakeModel
 static inline void LocalAnimations(C_TFPlayer* pLocal, CUserCmd* pCmd, bool bSendPacket)
 {
 	static std::vector<Vec3> vAngles = {};
-	
-	// Push the current cmd angles (after anti-aim modified them)
-	// On choked ticks: these are REAL angles
-	// On send tick: these are FAKE angles
+
 	vAngles.push_back(pCmd->viewangles);
 
 	auto pAnimState = pLocal->GetAnimState();
@@ -72,21 +68,17 @@ static inline void LocalAnimations(C_TFPlayer* pLocal, CUserCmd* pCmd, bool bSen
 		I::GlobalVars->curtime = flOldCurtime;
 		vAngles.clear();
 
-		// Setup fake model bones AFTER animation update (like Amalgam)
 		F::FakeAngle->SetupFakeModel(pLocal);
 	}
 }
 
-// Anti-aim packet check (like Amalgam's AntiAimCheck in PacketManip)
-// Only choke for anti-aim if we're not attacking
 static inline bool AntiAimCheck(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd)
 {
-	// Regular anti-aim check
 	bool bAntiAim = F::FakeAngle->YawOn()
 		&& F::FakeAngle->ShouldRun(pLocal, pWeapon, pCmd)
 		&& !Shifting::bRecharging
 		&& I::ClientState->chokedcommands < F::FakeAngle->AntiAimTicks();
-	
+
 	return bAntiAim;
 }
 
@@ -124,20 +116,42 @@ static inline bool CanInterruptReload(C_TFWeaponBase* pWeapon)
 	return H::AimUtils->GetWeaponType(pWeapon) == EWeaponType::HITSCAN && pWeapon->GetSlot() != WEAPON_SLOT_MELEE;
 }
 
-MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool, __fastcall,
-	CClientModeShared* ecx, float flInputSampleTime, CUserCmd* pCmd)
+enum class CMFlow
 {
-	// Safety check for level transitions - just call original
-	if (G::bLevelTransition)
-		return CALL_ORIGINAL(ecx, flInputSampleTime, pCmd);
+	CONTINUE,
+	CALL_ORIGINAL_EXIT,
+	RETURN_FALSE_EXIT,
+	SKIP_TO_S10
+};
 
-	// Crash context: track which hook is running
+struct CMContext
+{
+	bool& bSendPacket;
+	C_TFPlayer* pLocal;
+	C_TFWeaponBase* pWeapon;
+	Vec3 vOldAngles;
+	float flOldSide;
+	float flOldForward;
+};
+
+static CMFlow SectionEntryGuard(CClientModeShared* ecx, float flInputSampleTime, CUserCmd* pCmd)
+{
+	if (G::bLevelTransition)
+		return CMFlow::CALL_ORIGINAL_EXIT;
+
+	return CMFlow::CONTINUE;
+}
+
+static CMFlow SectionPerTickReset(CClientModeShared* ecx, float flInputSampleTime, CUserCmd* pCmd)
+{
 	F::CrashHandler->s_Context.m_pszLastHook = "CreateMove";
+	F::CrashHandler->s_Context.m_pszLastFeature = "none";
+	F::CrashHandler->s_Context.m_pszLastSubFeature = "none";
+	F::CrashHandler->s_Context.m_nEntityIndex = -1;
 	F::CrashHandler->s_Context.m_bLevelTransition = G::bLevelTransition;
 	if (pCmd)
 		F::CrashHandler->s_Context.m_nCommandNumber = pCmd->command_number;
 
-	// Reset per-frame state
 	G::bSilentAngles = false;
 	G::bPSilentAngles = false;
 	G::bFiring = false;
@@ -147,19 +161,22 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 	G::LastUserCmd = G::CurrentUserCmd ? G::CurrentUserCmd : pCmd;
 	G::CurrentUserCmd = pCmd;
 	G::OriginalCmd = *pCmd;
-	
-	// Check for deferred player stats save (prevents freeze on kills)
+
 	F::Players->CheckDeferredSave();
-	
-	// Store TRUE original angles before ANY modification
-	// This is used for view restoration and should NEVER be modified by anti-cheat
+
 	G::vTrueOriginalAngles = pCmd->viewangles;
 	G::bHasTrueOriginalAngles = true;
 
 	if (!pCmd || !pCmd->command_number)
-		return CALL_ORIGINAL(ecx, flInputSampleTime, pCmd);
+		return CMFlow::CALL_ORIGINAL_EXIT;
 
-	// Block player movement when freecam is active
+	return CMFlow::CONTINUE;
+}
+
+static CMFlow SectionCacheAndInput(CClientModeShared* ecx, float flInputSampleTime, CUserCmd* pCmd, bool& bRapidFireExit)
+{
+	H::Entities->ValidateGroups();
+
 	if (F::MiscVisuals->IsFreecamActive())
 	{
 		pCmd->forwardmove = 0.0f;
@@ -168,16 +185,9 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 		pCmd->buttons &= ~(IN_FORWARD | IN_BACK | IN_MOVELEFT | IN_MOVERIGHT | IN_JUMP | IN_DUCK);
 	}
 
-	// ============================================
-	// TAUNT DELAY HANDLING - Process pending taunt with tick delay
-	// ============================================
 	ProcessTauntDelay();
 
-	CUserCmd* pBufferCmd = I::Input->GetUserCmd(pCmd->command_number);
-	if (!pBufferCmd)
-		pBufferCmd = pCmd;
-
-	bool bRapidFireExit = false;
+	bRapidFireExit = false;
 	if (Shifting::bShifting && !Shifting::bShiftingWarp)
 	{
 		bRapidFireExit = F::RapidFire->ShouldExitCreateMove(pCmd);
@@ -185,10 +195,6 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 
 		if (bRapidFireExit && !Shifting::bTickbaseFixRecorded && Shifting::nCurrentShiftTick == 0 && Shifting::nTotalShiftTicks > 0)
 		{
-			// Record the tickbase fix for the FIRST command of the shift batch.
-			// The first shift command's command_number is the start of the batch.
-			// RunSimulation will apply AdjustPlayerTimeBase once on this command,
-			// then subsequent commands naturally increment tickbase by 1.
 			TickbaseFix::Add(pCmd->command_number, Shifting::nTotalShiftTicks);
 			Shifting::bTickbaseFixRecorded = true;
 		}
@@ -203,7 +209,6 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 
 	F::AutoVaccinator->PreventReload(pCmd);
 
-	// Run AutoVaccinator early if Always On
 	if (CFG::Triggerbot_AutoVaccinator_Always_On)
 	{
 		auto pLocalVacc = H::Entities->GetLocal();
@@ -212,7 +217,11 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 			F::AutoVaccinator->Run(pLocalVacc, pWeaponVacc, pCmd);
 	}
 
-	// RapidFire early exit
+	return CMFlow::CONTINUE;
+}
+
+static CMFlow SectionShiftShortCircuit(CClientModeShared* ecx, float flInputSampleTime, CUserCmd* pCmd, bool bRapidFireExit)
+{
 	if (bRapidFireExit || F::RapidFire->ShouldExitCreateMove(pCmd))
 	{
 		auto pLocal = H::Entities->GetLocal();
@@ -223,7 +232,7 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 			F::CritHack->Run(pLocal, pWeapon, pCmd);
 		}
 
-		return F::RapidFire->GetShiftSilentAngles() ? false : CALL_ORIGINAL(ecx, flInputSampleTime, pCmd);
+		return F::RapidFire->GetShiftSilentAngles() ? CMFlow::RETURN_FALSE_EXIT : CMFlow::CALL_ORIGINAL_EXIT;
 	}
 
 	if (Shifting::bRecharging)
@@ -234,64 +243,57 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 			pCmd->buttons &= ~IN_ATTACK;
 		if (pCmd->buttons & IN_ATTACK2)
 			pCmd->buttons &= ~IN_ATTACK2;
-		return CALL_ORIGINAL(ecx, flInputSampleTime, pCmd);
+		return CMFlow::CALL_ORIGINAL_EXIT;
 	}
 
-	// Cache original angles/movement for pSilent restoration
-	const Vec3 vOldAngles = pCmd->viewangles;
-	const float flOldSide = pCmd->sidemove;
-	const float flOldForward = pCmd->forwardmove;
+	return CMFlow::CONTINUE;
+}
 
-	// Use Networking's bSendPacket instead of the stack hack
-	// The rebuilt CL_Move reads this to decide whether to send or choke
-	bool& bSendPacket = F::Networking->bSendPacket;
-	bSendPacket = true;
+static CMFlow SectionWeaponSnapshot(CClientModeShared* ecx, float flInputSampleTime, CUserCmd* pCmd, CMContext& ctx)
+{
+	ctx.vOldAngles = pCmd->viewangles;
+	ctx.flOldSide = pCmd->sidemove;
+	ctx.flOldForward = pCmd->forwardmove;
 
-	auto pLocal = H::Entities->GetLocal();
-	auto pWeapon = H::Entities->GetWeapon();
+	ctx.bSendPacket = true;
 
-	// Early check: Temporarily disable Legit AA when engineer tries to pick up a building
-	// This must run BEFORE anti-aim so the pickup works on the first try
+	ctx.pLocal = H::Entities->GetLocal();
+	ctx.pWeapon = H::Entities->GetWeapon();
+
 	{
 		static bool bDisabledForBuildingPickup = false;
 
-		if (pLocal && pLocal->m_iClass() == TF_CLASS_ENGINEER)
+		if (ctx.pLocal && ctx.pLocal->m_iClass() == TF_CLASS_ENGINEER)
 		{
-			// Check if we're currently carrying a building
-			const bool bCarryingBuilding = pLocal->m_bCarryingObject();
+			const bool bCarryingBuilding = ctx.pLocal->m_bCarryingObject();
 
-			// Re-enable Legit AA once we've picked up the building
 			if (bDisabledForBuildingPickup && bCarryingBuilding)
 			{
 				CFG::Exploits_LegitAA_Enabled = true;
 				bDisabledForBuildingPickup = false;
 			}
 
-			// Disable Legit AA when trying to pick up a building (attack2 while looking at own building)
 			if (CFG::Exploits_LegitAA_Enabled && !bCarryingBuilding && (pCmd->buttons & IN_ATTACK2))
 			{
-				// Trace to see if we're looking at our own building
-				Vec3 vStart = pLocal->GetShootPos();
+				Vec3 vStart = ctx.pLocal->GetShootPos();
 				Vec3 vForward;
 				Math::AngleVectors(pCmd->viewangles, &vForward);
-				Vec3 vEnd = vStart + vForward * 150.0f; // Building pickup range is ~150 units
+				Vec3 vEnd = vStart + vForward * 150.0f;
 
 				CGameTrace trace;
 				CTraceFilterHitscan filter;
-				filter.m_pIgnore = pLocal;
+				filter.m_pIgnore = ctx.pLocal;
 				SDK::Trace(vStart, vEnd, MASK_SOLID, &filter, &trace);
 
 				if (trace.m_pEnt)
 				{
 					const auto nClassId = trace.m_pEnt->GetClassId();
-					// Check if it's a building (sentry, dispenser, teleporter)
 					if (nClassId == ETFClassIds::CObjectSentrygun ||
 						nClassId == ETFClassIds::CObjectDispenser ||
 						nClassId == ETFClassIds::CObjectTeleporter)
 					{
 						auto pBuilding = trace.m_pEnt->As<C_BaseObject>();
-						// Check if it's our building
-						if (pBuilding && pBuilding->m_hBuilder() == pLocal)
+						if (pBuilding && pBuilding->m_hBuilder() == ctx.pLocal)
 						{
 							CFG::Exploits_LegitAA_Enabled = false;
 							bDisabledForBuildingPickup = true;
@@ -302,38 +304,32 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 		}
 		else
 		{
-			// Not engineer anymore, reset state
 			bDisabledForBuildingPickup = false;
 		}
 	}
 
-	// Reset state
-	G::bFiring = false;
 	G::bCanPrimaryAttack = false;
 	G::bCanSecondaryAttack = false;
 	G::bReloading = false;
 
-	if (pLocal && pWeapon && H::Entities->IsEntityValid(pWeapon))
+	if (ctx.pLocal && ctx.pWeapon && H::Entities->IsEntityValid(ctx.pWeapon))
 	{
-		G::bCanHeadshot = pWeapon->CanHeadShot(pLocal);
+		G::bCanHeadshot = ctx.pWeapon->CanHeadShot(ctx.pLocal);
 
-		G::bCanPrimaryAttack = pWeapon->CanPrimaryAttack(pLocal);
-		G::bCanSecondaryAttack = pWeapon->CanSecondaryAttack(pLocal);
+		G::bCanPrimaryAttack = ctx.pWeapon->CanPrimaryAttack(ctx.pLocal);
+		G::bCanSecondaryAttack = ctx.pWeapon->CanSecondaryAttack(ctx.pLocal);
 
-		// Minigun special handling - only can attack when spun up
-		if (pWeapon->GetWeaponID() == TF_WEAPON_MINIGUN)
+		if (ctx.pWeapon->GetWeaponID() == TF_WEAPON_MINIGUN)
 		{
-			int iState = pWeapon->As<C_TFMinigun>()->m_iWeaponState();
-			// Only allow attack when in FIRING or SPINNING state with ammo
-			if (iState == AC_STATE_IDLE || iState == AC_STATE_STARTFIRING || !pWeapon->HasPrimaryAmmoForShot())
+			int iState = ctx.pWeapon->As<C_TFMinigun>()->m_iWeaponState();
+			if (iState == AC_STATE_IDLE || iState == AC_STATE_STARTFIRING || !ctx.pWeapon->HasPrimaryAmmoForShot())
 				G::bCanPrimaryAttack = false;
 		}
 
-		// Non-melee weapon reload state
-		if (pWeapon->GetSlot() != WEAPON_SLOT_MELEE)
+		if (ctx.pWeapon->GetSlot() != WEAPON_SLOT_MELEE)
 		{
-			bool bAmmo = pWeapon->HasPrimaryAmmoForShot();
-			bool bReload = pWeapon->IsInReload();
+			bool bAmmo = ctx.pWeapon->HasPrimaryAmmoForShot();
+			bool bReload = ctx.pWeapon->IsInReload();
 
 			if (!bAmmo)
 			{
@@ -344,36 +340,30 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 			if (bReload && bAmmo)
 				G::bReloading = true;
 
-			if (CanInterruptReload(pWeapon))
+			if (CanInterruptReload(ctx.pWeapon))
 				G::bCanPrimaryAttack = true;
 		}
 
-		G::Attacking = SDK::IsAttacking(pLocal, pWeapon, pCmd, false);
+		G::Attacking = SDK::IsAttacking(ctx.pLocal, ctx.pWeapon, pCmd, false);
 	}
 	else
 	{
 		G::bCanHeadshot = false;
 	}
 
-	// Track ticks since can fire
-	// For weapons that reload singly OR can interrupt reload (like SMG), we track ticks even during reload if we have ammo
-	// because pressing attack will interrupt the reload and allow firing
 	{
 		static bool bOldCanFire = G::bCanPrimaryAttack;
-		
-		// Check if we can fire during reload
+
 		bool bCanFireDuringReload = false;
-		if (pWeapon && G::bReloading && pWeapon->m_iClip1() > 0)
+		if (ctx.pWeapon && G::bReloading && ctx.pWeapon->m_iClip1() > 0)
 		{
-			// Single-reload weapons (shotguns, etc.)
-			if (pWeapon->m_bReloadsSingly())
+			if (ctx.pWeapon->m_bReloadsSingly())
 			{
 				bCanFireDuringReload = true;
 			}
-			// SMG and other weapons that can interrupt reload
 			else
 			{
-				const int nWeaponID = pWeapon->GetWeaponID();
+				const int nWeaponID = ctx.pWeapon->GetWeaponID();
 				if (nWeaponID == TF_WEAPON_SMG || nWeaponID == TF_WEAPON_CHARGED_SMG ||
 					nWeaponID == TF_WEAPON_PISTOL || nWeaponID == TF_WEAPON_PISTOL_SCOUT ||
 					nWeaponID == TF_WEAPON_MINIGUN)
@@ -382,10 +372,9 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 				}
 			}
 		}
-		
-		// Effective "can fire" state includes reload interrupt capability
+
 		bool bEffectiveCanFire = G::bCanPrimaryAttack || bCanFireDuringReload;
-		
+
 		if (bEffectiveCanFire != bOldCanFire)
 		{
 			G::nTicksSinceCanFire = 0;
@@ -400,13 +389,16 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 		}
 	}
 
-	if (!pLocal)
-		return CALL_ORIGINAL(ecx, flInputSampleTime, pCmd);
+	if (!ctx.pLocal)
+		return CMFlow::CALL_ORIGINAL_EXIT;
 
-	// ============================================
-	// AMALGAM ORDER: Misc features first
-	// ============================================
+	return CMFlow::CONTINUE;
+}
+
+static CMFlow SectionMovementFeatures(CClientModeShared* ecx, float flInputSampleTime, CUserCmd* pCmd, CMContext& ctx)
+{
 	F::Misc->Bunnyhop(pCmd);
+	F::Misc->AutoJumpbug(ctx.pLocal, pCmd);
 	F::Misc->AutoStrafer(pCmd);
 	F::Misc->FastStop(pCmd);
 	F::Misc->FastAccelerate(pCmd);
@@ -414,7 +406,7 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 	F::Misc->VoiceCommandSpam();
 	F::Misc->AutoRocketJump(pCmd);
 	F::Misc->AutoFaN(pCmd);
-	F::Misc->AutoUber(pCmd);
+	F::AutoUberPop->Run(pCmd);
 	F::Misc->AutoDisguise(pCmd);
 	F::Misc->MovementLock(pCmd);
 	F::Misc->MvmInstaRespawn();
@@ -422,90 +414,101 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 	if (CFG::Misc_Auto_FastClassSwitch)
 		F::Misc->FastClassSwitch();
 
-	// Nav Bot - auto-reset nav engine on map change and run bot logic
 	if (CFG::NavBot_Enabled)
 	{
 		if (!G_NavEngine.IsReady())
 			G_NavEngine.Reset();
-		g_NavBot.Run(pLocal, pCmd);
+		g_NavBot.Run(ctx.pLocal, pCmd);
 
-		// Re-fetch pLocal after NavBot - AutoJoinTeam/AutoJoinClass may send
-		// ClientCmd_Unrestricted commands that change player state (team/class),
-		// which can invalidate the cached pLocal pointer
-		pLocal = H::Entities->GetLocal();
-		pWeapon = H::Entities->GetWeapon();
+		ctx.pLocal = H::Entities->GetLocal();
+		ctx.pWeapon = H::Entities->GetWeapon();
 	}
 	else if (g_NavBot.IsActive())
 	{
 		g_NavBot.Stop();
 	}
 
-	// Projectile Dodge
-	if (pLocal)
-		F::ProjectileDodge->Run(pLocal, pCmd);
+	if (ctx.pLocal)
+		F::ProjectileDodge->Run(ctx.pLocal, pCmd);
 
-	// ============================================
-	// AMALGAM ORDER: Engine Prediction Start
-	// ============================================
-	if (!pLocal)
+	return CMFlow::CONTINUE;
+}
+
+static CMFlow SectionPredictionEntry(CClientModeShared* ecx, float flInputSampleTime, CUserCmd* pCmd, CMContext& ctx)
+{
+	if (!ctx.pLocal)
 	{
-		// No valid local player — skip all prediction-dependent features
 		F::EnginePrediction->Start(nullptr, pCmd);
 		F::EnginePrediction->End(nullptr, pCmd);
-		// Jump to after prediction block
-		goto AfterPrediction;
+		return CMFlow::SKIP_TO_S10;
 	}
 
-	F::EnginePrediction->Start(pLocal, pCmd);
+	F::EnginePrediction->Start(ctx.pLocal, pCmd);
+
+	return CMFlow::CONTINUE;
+}
+
+static CMFlow SectionCombatInPrediction(CClientModeShared* ecx, float flInputSampleTime, CUserCmd* pCmd, CMContext& ctx)
+{
+	if (CFG::Misc_Choke_On_Bhop && CFG::Misc_Bunnyhop)
 	{
-		// Choke on bhop
-		if (CFG::Misc_Choke_On_Bhop && CFG::Misc_Bunnyhop)
-		{
-			if ((pLocal->m_fFlags() & FL_ONGROUND) && !(F::EnginePrediction->flags & FL_ONGROUND))
-				bSendPacket = false;
-		}
+		if ((ctx.pLocal->m_fFlags() & FL_ONGROUND) && !(F::EnginePrediction->flags & FL_ONGROUND))
+			ctx.bSendPacket = false;
+	}
 
-		F::Misc->CrouchWhileAirborne(pCmd);
-		
-		// IMPORTANT: Save shoot position AFTER prediction starts but BEFORE aimbot
-		// This ensures projectile aimbot uses the correct predicted eye position
-		F::AmalgamTicks->SaveShootPos(pLocal);
-		
+	F::Misc->CrouchWhileAirborne(pCmd);
+
+	F::AmalgamTicks->SaveShootPos(ctx.pLocal);
+
+	{
 		F::Misc->AutoMedigun(pCmd);
-		F::FakeLagFix->Update();  // Update choke tracking before aimbot uses it
+	}
+	F::FakeLagFix->Update();
 
-		F::CrashHandler->s_Context.m_pszLastFeature = "Aimbot";
+	F::CrashHandler->s_Context.m_pszLastFeature = "Aimbot";
+	{
 		F::Aimbot->Run(pCmd);
+	}
 
-		if (!pLocal || !pWeapon
-			|| !H::Entities->SafeIsEntityValid(pLocal, I::EngineClient->GetLocalPlayer())
-			|| !H::Entities->IsEntityValid(pWeapon))
-		{
-			// Entity destroyed during aimbot — skip remaining features
-			F::EnginePrediction->End(nullptr, pCmd);
-			goto AfterPrediction;
-		}
+	if (!ctx.pLocal || !ctx.pWeapon
+		|| !H::Entities->SafeIsEntityValid(ctx.pLocal, I::EngineClient->GetLocalPlayer())
+		|| !H::Entities->IsEntityValid(ctx.pWeapon))
+	{
+		F::EnginePrediction->End(nullptr, pCmd);
+		return CMFlow::SKIP_TO_S10;
+	}
 
-		// IMPORTANT: Update G::Attacking AFTER aimbot runs
-		// Aimbot may have added IN_ATTACK, so we need to re-check
-		// This is how Amalgam does it - G::Attacking = SDK::IsAttacking(pLocal, pWeapon, pCmd, true)
-		G::Attacking = SDK::IsAttacking(pLocal, pWeapon, pCmd, true);
+	G::Attacking = SDK::IsAttacking(ctx.pLocal, ctx.pWeapon, pCmd, true);
 
-		// PDA exploit AFTER aimbot - needs to see IN_ATTACK set by aimbot
-		F::Misc->PDAExploit(pCmd);
+	F::Misc->PDAExploit(pCmd);
 
-		// CritHack after aimbot - pass pCmd directly so it sees the aimbot's changes
-		F::CritHack->Run(pLocal, pWeapon, pCmd);
+	{
+		F::CritHack->Run(ctx.pLocal, ctx.pWeapon, pCmd);
+	}
 
-		F::CrashHandler->s_Context.m_pszLastFeature = "Triggerbot";
+	{
+		F::CrashHandler->s_Context.m_pszLastFeature = "CritEffects";
+		F::CritHack->RunEffects(ctx.pLocal);
+	}
+
+	F::CrashHandler->s_Context.m_pszLastFeature = "Triggerbot";
+	{
 		F::Triggerbot->Run(pCmd);
 	}
-	// NOTE: EnginePrediction.End is called AFTER anti-aim (like Amalgam)
 
-	F::Misc->AutoCallMedic();
-	F::SeedPred->AdjustAngles(pCmd);
+	return CMFlow::CONTINUE;
+}
 
-	// Track target same ticks
+static CMFlow SectionPostAimCorrections(CClientModeShared* ecx, float flInputSampleTime, CUserCmd* pCmd, CMContext& ctx)
+{
+	{
+		F::Misc->AutoCallMedic();
+	}
+
+	{
+		F::SeedPred->AdjustAngles(pCmd);
+	}
+
 	{
 		static int nOldTargetIndex = G::nTargetIndexEarly;
 		if (G::nTargetIndexEarly != nOldTargetIndex)
@@ -521,10 +524,9 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 			G::nTicksTargetSame = 0;
 	}
 
-	// Taunt Slide
-	if (CFG::Misc_Taunt_Slide && pLocal)
+	if (CFG::Misc_Taunt_Slide && ctx.pLocal)
 	{
-		if (pLocal->InCond(TF_COND_TAUNTING) && pLocal->m_bAllowMoveDuringTaunt())
+		if (ctx.pLocal->InCond(TF_COND_TAUNTING) && ctx.pLocal->m_bAllowMoveDuringTaunt())
 		{
 			static float flYaw = pCmd->viewangles.y;
 
@@ -550,15 +552,14 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 		}
 	}
 
-	// Warp exploit
-	if (CFG::Exploits_Warp_Exploit && CFG::Exploits_Warp_Mode == 1 && Shifting::bShiftingWarp && pLocal)
+	if (CFG::Exploits_Warp_Exploit && CFG::Exploits_Warp_Mode == 1 && Shifting::bShiftingWarp && ctx.pLocal)
 	{
 		if (CFG::Exploits_Warp_Exploit == 1)
 		{
 			if (Shifting::nAvailableTicks <= (MAX_COMMANDS - 1))
 			{
 				Vec3 vAngle = {};
-				Math::VectorAngles(pLocal->m_vecVelocity(), vAngle);
+				Math::VectorAngles(ctx.pLocal->m_vecVelocity(), vAngle);
 				pCmd->viewangles.x = 90.0f;
 				pCmd->viewangles.y = vAngle.y;
 				G::bSilentAngles = true;
@@ -571,7 +572,7 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 			if (Shifting::nAvailableTicks <= 1)
 			{
 				Vec3 vAngle = {};
-				Math::VectorAngles(pLocal->m_vecVelocity(), vAngle);
+				Math::VectorAngles(ctx.pLocal->m_vecVelocity(), vAngle);
 				pCmd->viewangles.x = 90.0f;
 				pCmd->viewangles.y = vAngle.y;
 				G::bSilentAngles = true;
@@ -580,117 +581,170 @@ MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool,
 		}
 	}
 
-	// ============================================
-	// AMALGAM ORDER: PacketManip (FakeLag + AntiAim packet check)
-	// ============================================
-	bSendPacket = true;
-	F::FakeLag->Run(pLocal, pWeapon, pCmd, &bSendPacket);
-	F::FakeLag->UpdateDrawChams(); // Update fake model visibility based on actual fakelag state
+	return CMFlow::CONTINUE;
+}
 
-	// Anti-aim choking - ShouldRun already checks G::Attacking == 1
-	if (AntiAimCheck(pLocal, pWeapon, pCmd))
-		bSendPacket = false;
-
-	// ============================================
-	// AMALGAM ORDER: AntiAim.Run
-	// ============================================
-	F::FakeAngle->Run(pCmd, pLocal, pWeapon, bSendPacket, vOldAngles);
-
-	// ============================================
-	// AMALGAM ORDER: EnginePrediction.End (AFTER anti-aim)
-	// ============================================
-	F::EnginePrediction->End(pLocal, pCmd);
-
-AfterPrediction:
-
-	// ============================================
-	// AMALGAM ORDER: AntiCheatCompatibility
-	// ============================================
-	F::AntiCheatCompat->ProcessCommand(pCmd, &bSendPacket);
-
-	// If anti-cheat modified angles, we need to restore view to original
-	// The modified angles are sent to server, but player should see original view
-	if (F::AntiCheatCompat->DidModifyAngles())
+static CMFlow SectionPacketAndAntiAim(CClientModeShared* ecx, float flInputSampleTime, CUserCmd* pCmd, CMContext& ctx)
+{
+	ctx.bSendPacket = true;
 	{
-		G::bSilentAngles = true;  // Force silent angle restoration
+		F::FakeLag->Run(ctx.pLocal, ctx.pWeapon, pCmd, &ctx.bSendPacket);
+		F::FakeLag->UpdateDrawChams();
 	}
 
-	// pSilent
+	{
+		if (AntiAimCheck(ctx.pLocal, ctx.pWeapon, pCmd))
+			ctx.bSendPacket = false;
+	}
+
+	{
+		F::FakeAngle->Run(pCmd, ctx.pLocal, ctx.pWeapon, ctx.bSendPacket, ctx.vOldAngles);
+	}
+
+	F::EnginePrediction->End(ctx.pLocal, pCmd);
+
+	return CMFlow::CONTINUE;
+}
+
+static CMFlow SectionMaskingAndExploits(CClientModeShared* ecx, float flInputSampleTime, CUserCmd* pCmd, CMContext& ctx)
+{
+	{
+		F::AntiCheatCompat->ProcessCommand(pCmd, &ctx.bSendPacket);
+
+		if (F::AntiCheatCompat->DidModifyAngles())
+		{
+			G::bSilentAngles = true;
+		}
+	}
+
 	{
 		static bool bWasSet = false;
 
 		if (G::bPSilentAngles)
 		{
-			bSendPacket = false;
+			ctx.bSendPacket = false;
 			bWasSet = true;
 		}
 		else
 		{
 			if (bWasSet)
 			{
-				bSendPacket = true;
-				pCmd->viewangles = vOldAngles;
-				pCmd->sidemove = flOldSide;
-				pCmd->forwardmove = flOldForward;
+				ctx.bSendPacket = true;
+				if (!G::bSilentAngles)
+				{
+					pCmd->viewangles = ctx.vOldAngles;
+					pCmd->sidemove = ctx.flOldSide;
+					pCmd->forwardmove = ctx.flOldForward;
+				}
 				bWasSet = false;
 			}
 		}
 	}
 
-	if (I::ClientState->chokedcommands > 22)
-		bSendPacket = true;
+		{
+			if (I::ClientState->chokedcommands > 22 || I::ClientState->chokedcommands > 0 && (Shifting::bRapidFireWantShift || Shifting::bStickyDTWantShift))
+				ctx.bSendPacket = true;
 
-	F::RapidFire->RunFastSticky(pCmd, &bSendPacket);
-	F::RapidFire->Run(pCmd, &bSendPacket);
+		F::RapidFire->RunFastSticky(pCmd, &ctx.bSendPacket);
+		F::RapidFire->Run(pCmd, &ctx.bSendPacket);
+	}
 
-	// Store bones when packet is sent (for fakelag visualization)
-	if (bSendPacket)
-		F::FakeAngle->StoreSentBones(pLocal);
+	return CMFlow::CONTINUE;
+}
 
-	// ============================================
-	// AMALGAM ORDER: LocalAnimations (at the very end)
-	// ============================================
-	LocalAnimations(pLocal, pCmd, bSendPacket);
+static CMFlow SectionFinalize(CClientModeShared* ecx, float flInputSampleTime, CUserCmd* pCmd, CMContext& ctx)
+{
+	{
+		if (ctx.bSendPacket)
+			F::FakeAngle->StoreSentBones(ctx.pLocal);
+	}
 
-	G::bChoking = !bSendPacket;
+	{
+		LocalAnimations(ctx.pLocal, pCmd, ctx.bSendPacket);
+	}
+
 	G::nOldButtons = pCmd->buttons;
 	G::vUserCmdAngles = pCmd->viewangles;
 
-
-	// Silent aim handling
 	if (G::bSilentAngles || G::bPSilentAngles)
 	{
-		// Use TRUE original angles for view restoration
-		// This ensures anti-cheat lerping doesn't affect what the player sees
 		Vec3 vRestoreAngles;
 		if (G::bUseSmoothAimAngles)
 		{
-			// Smooth aimbot is active - use smooth angles
 			vRestoreAngles = G::vSmoothAimAngles;
 		}
 		else if (G::bHasTrueOriginalAngles)
 		{
-			// Use the TRUE original angles (before any modification)
 			vRestoreAngles = G::vTrueOriginalAngles;
 		}
 		else
 		{
-			// Fallback to vOldAngles (shouldn't happen)
-			vRestoreAngles = vOldAngles;
+			vRestoreAngles = ctx.vOldAngles;
 		}
-		
+
 		I::EngineClient->SetViewAngles(vRestoreAngles);
 		I::Prediction->SetLocalViewAngles(vRestoreAngles);
-		
-		// Reset flags for next tick
+
 		G::bUseSmoothAimAngles = false;
 		G::bHasTrueOriginalAngles = false;
-		return false;
+		return CMFlow::RETURN_FALSE_EXIT;
 	}
-	
-	// Reset flags for next tick
+
 	G::bUseSmoothAimAngles = false;
 	G::bHasTrueOriginalAngles = false;
+
+	return CMFlow::CALL_ORIGINAL_EXIT;
+}
+
+MAKE_HOOK(CHLClient_Createmove, Memory::GetVFunc(I::ClientModeShared, 21), bool, __fastcall,
+	CClientModeShared* ecx, float flInputSampleTime, CUserCmd* pCmd)
+{
+	if (SectionEntryGuard(ecx, flInputSampleTime, pCmd) != CMFlow::CONTINUE)
+		return CALL_ORIGINAL(ecx, flInputSampleTime, pCmd);
+
+	if (SectionPerTickReset(ecx, flInputSampleTime, pCmd) != CMFlow::CONTINUE)
+		return CALL_ORIGINAL(ecx, flInputSampleTime, pCmd);
+
+	bool bRapidFireExit = false;
+	if (SectionCacheAndInput(ecx, flInputSampleTime, pCmd, bRapidFireExit) != CMFlow::CONTINUE)
+		return CALL_ORIGINAL(ecx, flInputSampleTime, pCmd);
+
+	const CMFlow eShift = SectionShiftShortCircuit(ecx, flInputSampleTime, pCmd, bRapidFireExit);
+	if (eShift == CMFlow::RETURN_FALSE_EXIT)
+		return false;
+	if (eShift != CMFlow::CONTINUE)
+		return CALL_ORIGINAL(ecx, flInputSampleTime, pCmd);
+
+	CMContext ctx { F::Networking->bSendPacket, nullptr, nullptr, {}, 0.0f, 0.0f };
+
+	if (SectionWeaponSnapshot(ecx, flInputSampleTime, pCmd, ctx) != CMFlow::CONTINUE)
+		return CALL_ORIGINAL(ecx, flInputSampleTime, pCmd);
+
+	if (SectionMovementFeatures(ecx, flInputSampleTime, pCmd, ctx) != CMFlow::CONTINUE)
+		return CALL_ORIGINAL(ecx, flInputSampleTime, pCmd);
+
+	CMFlow eFlow = SectionPredictionEntry(ecx, flInputSampleTime, pCmd, ctx);
+	if (eFlow == CMFlow::CONTINUE)
+		eFlow = SectionCombatInPrediction(ecx, flInputSampleTime, pCmd, ctx);
+	if (eFlow == CMFlow::CONTINUE)
+		eFlow = SectionPostAimCorrections(ecx, flInputSampleTime, pCmd, ctx);
+	if (eFlow == CMFlow::CONTINUE)
+		eFlow = SectionPacketAndAntiAim(ecx, flInputSampleTime, pCmd, ctx);
+
+	if (eFlow == CMFlow::CALL_ORIGINAL_EXIT)
+		return CALL_ORIGINAL(ecx, flInputSampleTime, pCmd);
+	if (eFlow == CMFlow::RETURN_FALSE_EXIT)
+		return false;
+
+	{
+		F::CrashHandler->s_Context.m_pszLastFeature = "MoveSimDebug";
+		F::MoveSimDebug->Run(pCmd);
+	}
+
+	SectionMaskingAndExploits(ecx, flInputSampleTime, pCmd, ctx);
+
+	if (SectionFinalize(ecx, flInputSampleTime, pCmd, ctx) == CMFlow::RETURN_FALSE_EXIT)
+		return false;
 
 	return CALL_ORIGINAL(ecx, flInputSampleTime, pCmd);
 }

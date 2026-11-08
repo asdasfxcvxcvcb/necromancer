@@ -26,44 +26,64 @@ void CAimbotGlobal::SortPriority(std::vector<Target_t>& targets)
     });
 }
 
-bool CAimbotGlobal::PlayerBoneInFOV(C_TFPlayer* pTarget, Vec3 vLocalPos, Vec3 vLocalAngles, 
+bool CAimbotGlobal::PlayerBoneInFOV(C_TFPlayer* pTarget, Vec3 vLocalPos, Vec3 vLocalAngles,
                                     float& flFOVTo, Vec3& vPos, Vec3& vAngleTo, int iHitboxes)
 {
     if (!pTarget)
         return false;
 
-    // Get the center of the player as a fallback
-    vPos = pTarget->GetAbsOrigin() + Vec3(0, 0, 40); // Approximate body center
-    
-    // Try to get a better position from hitboxes
-    auto pModel = pTarget->GetModel();
-    if (pModel)
+    // Amalgam gates acquisition by its single General::AimFOV (default 180).
+    // The projectile module's knob here is the projectile FOV - the same value
+    // the native aimbot targets with and the FOV circle draws. Gating by the
+    // general FOV instead made most off-center targets invisible to this port.
+    const float flAimFOV = CFG::Aimbot_Projectile_FOV;
+
+    // Dormant/no-bones fallback: center eligibility (Amalgam's EntityCenterInFOV)
+    auto fCenter = [&]() -> bool
     {
-        auto pHDR = I::ModelInfoClient->GetStudiomodel(pModel);
-        if (pHDR)
+        vPos = pTarget->GetCenter();
+        vAngleTo = Math::CalcAngle(vLocalPos, vPos);
+        flFOVTo = Math::CalcFov(vLocalAngles, vAngleTo);
+        return flFOVTo < flAimFOV;
+    };
+
+    matrix3x4_t bones[128];
+    if (!pTarget->SetupBones(bones, 128, BONE_USED_BY_HITBOX, I::GlobalVars->curtime))
+        return fCenter();
+
+    // GetModel returns model_t*, so the hitbox set goes through ModelInfoClient
+    auto pModel = pTarget->GetModel();
+    auto pHDR = pModel ? I::ModelInfoClient->GetStudiomodel(pModel) : nullptr;
+    auto pSet = pHDR ? pHDR->pHitboxSet(pTarget->m_nHitboxSet()) : nullptr;
+    if (!pSet)
+        return fCenter();
+
+    // Amalgam scans every valid hitbox, accepts the target if any of them is
+    // inside the cone, and reports the closest one as the initial aim position
+    float flMinFOV = 180.f;
+    for (int nHitbox = 0; nHitbox < pSet->numhitboxes; nHitbox++)
+    {
+        if (!IsHitboxValid(pTarget, nHitbox, iHitboxes))
+            continue;
+
+        auto pBox = pSet->pHitbox(nHitbox);
+        if (!pBox)
+            continue;
+
+        Vec3 vCurPos;
+        Math::VectorTransform((pBox->bbmin + pBox->bbmax) * 0.5f, bones[pBox->bone], vCurPos);
+
+        const Vec3 vCurAngleTo = Math::CalcAngle(vLocalPos, vCurPos);
+        const float flCurFOVTo = Math::CalcFov(vLocalAngles, vCurAngleTo);
+        if (flCurFOVTo < flMinFOV)
         {
-            auto pSet = pHDR->pHitboxSet(pTarget->m_nHitboxSet());
-            if (pSet)
-            {
-                matrix3x4_t bones[128];
-                if (pTarget->SetupBones(bones, 128, BONE_USED_BY_HITBOX, I::GlobalVars->curtime))
-                {
-                    // Try head first
-                    if (auto pBox = pSet->pHitbox(0)) // HITBOX_HEAD
-                    {
-                        Vec3 vCenter;
-                        Math::VectorTransform((pBox->bbmin + pBox->bbmax) * 0.5f, bones[pBox->bone], vCenter);
-                        vPos = vCenter;
-                    }
-                }
-            }
+            vPos = vCurPos;
+            vAngleTo = vCurAngleTo;
+            flFOVTo = flMinFOV = flCurFOVTo;
         }
     }
 
-    vAngleTo = Math::CalcAngle(vLocalPos, vPos);
-    flFOVTo = Math::CalcFov(vLocalAngles, vAngleTo);
-    
-    return flFOVTo <= Vars::Aimbot::General::AimFOV.Value;
+    return flMinFOV < flAimFOV;
 }
 
 bool CAimbotGlobal::IsHitboxValid(C_BaseEntity* pEntity, int nHitbox, int iHitboxes)
@@ -116,9 +136,8 @@ bool CAimbotGlobal::ShouldIgnore(C_BaseEntity* pTarget, C_TFPlayer* pLocal, C_TF
         if (!IsAlive(pPlayer) || IsAGhost(pPlayer))
             return true;
 
-        // Same team (unless friendly fire)
         if (!FriendlyFire() && pPlayer->m_iTeamNum() == pLocal->m_iTeamNum())
-            return true;
+            return false;
 
         // Invulnerable
         if (Vars::Aimbot::General::Ignore.Value & Vars::Aimbot::General::IgnoreEnum::Invulnerable)

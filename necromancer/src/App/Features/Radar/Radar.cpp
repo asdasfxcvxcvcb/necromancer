@@ -3,6 +3,7 @@
 #include "../CFG.h"
 #include "../Menu/Menu.h"
 #include "../VisualUtils/VisualUtils.h"
+#include "../Players/Players.h"
 
 void CRadar::Drag()
 {
@@ -391,6 +392,7 @@ void CRadar::Run()
 		const bool bIgnoreEnemies = CFG::Radar_Players_Ignore_Enemies;
 		const bool bIgnoreInvisible = CFG::Radar_Players_Ignore_Invisible;
 		const bool bShowTeammateMedics = CFG::Radar_Players_Show_Teammate_Medics;
+		const bool bFriendTeammates = CFG::Radar_Players_Friend_Teammates;
 		const int nLocalTeam = pLocal->m_iTeamNum();
 		
 		for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PLAYERS_ALL))
@@ -420,17 +422,26 @@ void CRadar::Run()
 			if (bIgnoreFriends && bIsFriend)
 				continue;
 
-			if (!bIsLocal && !bIsFriend)
-			{
-				const int nPlayerTeam = pPlayer->m_iTeamNum();
-				
-				if (bIgnoreTeammates && nPlayerTeam == nLocalTeam)
-				{
-					if (!bShowTeammateMedics || pPlayer->m_iClass() != TF_CLASS_MEDIC)
-						continue;
-				}
+			const int nPlayerTeam = pPlayer->m_iTeamNum();
+			const bool bIsTeammate = nPlayerTeam == nLocalTeam;
 
-				if (bIgnoreEnemies && nPlayerTeam != nLocalTeam)
+			bool bIsIgnoredTag = false;
+			if (!bIsLocal && !bIsFriend && bIsTeammate)
+			{
+				PlayerPriority playerPriority = {};
+				if (F::Players->GetInfo(pPlayer->entindex(), playerPriority))
+					bIsIgnoredTag = playerPriority.Ignored;
+			}
+
+			if (!bIsLocal && bIsTeammate && !bIsFriend && !bIsIgnoredTag && (bFriendTeammates || bIgnoreTeammates))
+			{
+				if (!bShowTeammateMedics || pPlayer->m_iClass() != TF_CLASS_MEDIC)
+					continue;
+			}
+
+			if (!bIsLocal && !bIsFriend && !(bFriendTeammates && bIsTeammate && bIsIgnoredTag))
+			{
+				if (bIgnoreEnemies && !bIsTeammate)
 					continue;
 			}
 

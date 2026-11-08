@@ -9,6 +9,8 @@
 #include "../Features/MovementSimulation/MovementSimulation.h"
 #include "../Features/TickbaseManip/TickbaseManip.h"
 #include "../Features/ChatESP/ChatESP.h"
+#include "../Features/Misc/SkinChanger/SkinChanger.h"
+#include "../Features/Models/Models.h"
 
 MAKE_HOOK(IBaseClientDLL_LevelShutdown, Memory::GetVFunc(I::BaseClientDLL, 7), void, __fastcall,
 	void* ecx)
@@ -39,6 +41,8 @@ MAKE_HOOK(IBaseClientDLL_LevelShutdown, Memory::GetVFunc(I::BaseClientDLL, 7), v
 	F::Ticks->Reset();
 	F::MovementSimulation->ClearRecords();
 	F::ChatESP->OnLevelShutdown();
+	F::SkinChanger->OnLevelShutdown();
+	F::Models->OnLevelShutdown();
 
 	// Clear level transition flag - cleanup is done, menu should work again
 	G::bLevelTransition = false;

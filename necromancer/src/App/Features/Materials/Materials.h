@@ -31,6 +31,7 @@ public:
 
 	void Run();
 	void CleanUp();
+	void ValidateSheen();
 
 	// Called by the DrawModelExecute hook to provide the original function pointer
 	void SetDrawModelExecuteFn(IVModelRender::DrawModelExecuteFn fn) { m_fnDrawModelExecute = fn; }

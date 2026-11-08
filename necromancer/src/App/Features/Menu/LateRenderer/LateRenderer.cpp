@@ -49,7 +49,7 @@ void CLateRenderer::DrawAll()
 			I::MatSystemSurface->SetClippingRect(String.m_Clip.x, String.m_Clip.y, String.m_Clip.x + String.m_Clip.w, String.m_Clip.y + String.m_Clip.h);
 		}
 
-		H::Draw->String(String.m_dwFont, String.m_nX, String.m_nY, String.m_Color, String.m_nAlign, String.m_pwszString);
+		H::Draw->String(String.m_dwFont, String.m_nX, String.m_nY, String.m_Color, String.m_nAlign, "%s", String.m_strString.c_str());
 
 		if (String.m_Clip.x)
 			I::MatSystemSurface->DisableClipping(true);

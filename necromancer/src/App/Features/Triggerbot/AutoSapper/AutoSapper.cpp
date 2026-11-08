@@ -69,7 +69,9 @@ bool CAutoSapper::FindTargets(C_TFPlayer* pLocal)
 		Vec3 vPos = pBuilding->GetCenter();
 		float flDist = vLocalPos.DistTo(vPos);
 		bool bInRange = flDist <= SAPPER_RANGE;
-		bool bVisible = IsVisible(pLocal, pBuilding, vPos);
+		// lazy: every bVisible consumer is gated on bInRange, so don't pay a
+		// MASK_SHOT ray for buildings out of sapper range
+		bool bVisible = bInRange && IsVisible(pLocal, pBuilding, vPos);
 
 		Vec3 vAngleTo = Math::CalcAngle(vLocalPos, vPos);
 		float flFOVTo = Math::CalcFov(vLocalAngles, vAngleTo);

@@ -5,6 +5,8 @@
 #include "../Features/Players/Players.h"
 #include "../Features/Crits/Crits.h"
 #include "../Features/Chat/Chat.h"
+#include "../Features/Misc/SkinChanger/SkinChanger.h"
+#include "../Features/StatusWindow/StatusWindow.h"
 
 MAKE_SIGNATURE(CGameEventManager_FireEventIntern, "engine.dll", "44 88 44 24 ? 48 89 4C 24 ? 55 57", 0x0);
 
@@ -77,46 +79,57 @@ MAKE_HOOK(CGameEventManager_FireEventIntern, Signatures::CGameEventManager_FireE
 				int nAttacker = event->GetInt("attacker");
 				int nVictim = event->GetInt("userid");
 
-				// Convert userids to entity indices
-				for (int i = 1; i <= I::EngineClient->GetMaxClients(); i++)
+				// Convert userids to entity indices - the outer loop only ever
+				// acted on the local slot, so query it directly instead of
+				// walking every client slot with nested O(maxClients^2) engine
+				// calls per death event
+				player_info_t localInfo{};
+				if (I::EngineClient->GetPlayerInfo(nLocalIndex, &localInfo))
 				{
-					player_info_t pi{};
-					if (I::EngineClient->GetPlayerInfo(i, &pi))
+				if (localInfo.userID == nVictim)
+				{
+					F::SkinChanger->OnDeath();
+
+					for (int j = 1; j <= I::EngineClient->GetMaxClients(); j++)
 					{
-						if (pi.userID == nAttacker && i == nLocalIndex)
+						player_info_t attackerInfo{};
+						if (I::EngineClient->GetPlayerInfo(j, &attackerInfo) && attackerInfo.userID == nAttacker && j != nLocalIndex)
 						{
-							// Local player killed someone - find victim
-							for (int j = 1; j <= I::EngineClient->GetMaxClients(); j++)
-							{
-								player_info_t victimInfo{};
-								if (I::EngineClient->GetPlayerInfo(j, &victimInfo) && victimInfo.userID == nVictim && j != nLocalIndex)
-								{
-									uint64_t victimSteamID = static_cast<uint64_t>(victimInfo.friendsID) + 0x0110000100000000ULL;
-									F::Players->RecordKill(victimSteamID);
-									
-									// Killsay - pass victim entity index for tagged check
-									OnKill(victimInfo.name, j);
-									break;
-								}
-							}
-							break;
-						}
-						else if (pi.userID == nVictim && i == nLocalIndex)
-						{
-							// Local player died - find attacker
-							for (int j = 1; j <= I::EngineClient->GetMaxClients(); j++)
-							{
-								player_info_t attackerInfo{};
-								if (I::EngineClient->GetPlayerInfo(j, &attackerInfo) && attackerInfo.userID == nAttacker && j != nLocalIndex)
-								{
-									uint64_t attackerSteamID = static_cast<uint64_t>(attackerInfo.friendsID) + 0x0110000100000000ULL;
-									F::Players->RecordDeath(attackerSteamID);
-									break;
-								}
-							}
+							uint64_t attackerSteamID = static_cast<uint64_t>(attackerInfo.friendsID) + 0x0110000100000000ULL;
+							F::Players->RecordDeath(attackerSteamID);
 							break;
 						}
 					}
+				}
+				else if (localInfo.userID == nAttacker)
+				{
+					F::StatusWindow->OnLocalKill(event->GetString("weapon"), event->GetInt("customkill"), nVictim, (event->GetInt("damagebits") & (1 << 20)) != 0);
+
+					for (int j = 1; j <= I::EngineClient->GetMaxClients(); j++)
+					{
+						player_info_t victimInfo{};
+						if (I::EngineClient->GetPlayerInfo(j, &victimInfo) && victimInfo.userID == nVictim && j != nLocalIndex)
+						{
+							uint64_t victimSteamID = static_cast<uint64_t>(victimInfo.friendsID) + 0x0110000100000000ULL;
+							F::Players->RecordKill(victimSteamID);
+							F::SkinChanger->OnKill();
+							OnKill(victimInfo.name, j);
+							break;
+						}
+					}
+				}
+				else
+				{
+					for (int j = 1; j <= I::EngineClient->GetMaxClients(); j++)
+					{
+						player_info_t attackerInfo{};
+						if (I::EngineClient->GetPlayerInfo(j, &attackerInfo) && attackerInfo.userID == nAttacker && j != nLocalIndex)
+						{
+							F::StatusWindow->OnHealTargetKill(j);
+							break;
+						}
+					}
+				}
 				}
 			}
 		}
@@ -129,19 +142,36 @@ MAKE_HOOK(CGameEventManager_FireEventIntern, Signatures::CGameEventManager_FireE
 			{
 				const char* const name{ event->GetString("name") };
 
-				if (pi.Ignored)
-				{
-					I::ClientModeShared->m_pChatElement->ChatPrintf(0, std::format("\x1{} is marked as \x8{}[Ignored]", name, CFG::Color_Friend.toHexStr()).c_str());
-				}
-
+				// every tag announces on connect, in the same priority order the
+				// ESP name/tag colors use
 				if (pi.Cheater)
 				{
 					I::ClientModeShared->m_pChatElement->ChatPrintf(0, std::format("\x1{} is marked as \x8{}[Cheater]", name, CFG::Color_Cheater.toHexStr()).c_str());
 				}
 
+				if (pi.Targeted)
+				{
+					I::ClientModeShared->m_pChatElement->ChatPrintf(0, std::format("\x1{} is marked as \x8{}[Targeted]", name, CFG::Color_Targeted.toHexStr()).c_str());
+				}
+
+				if (pi.Nigger)
+				{
+					I::ClientModeShared->m_pChatElement->ChatPrintf(0, std::format("\x1{} is marked as \x8{}[Nigger]", name, CFG::Color_Nigger.toHexStr()).c_str());
+				}
+
 				if (pi.RetardLegit)
 				{
 					I::ClientModeShared->m_pChatElement->ChatPrintf(0, std::format("\x1{} is marked as \x8{}[Retard Legit]", name, CFG::Color_RetardLegit.toHexStr()).c_str());
+				}
+
+				if (pi.Streamer)
+				{
+					I::ClientModeShared->m_pChatElement->ChatPrintf(0, std::format("\x1{} is marked as \x8{}[Streamer]", name, CFG::Color_Streamer.toHexStr()).c_str());
+				}
+
+				if (pi.Ignored)
+				{
+					I::ClientModeShared->m_pChatElement->ChatPrintf(0, std::format("\x1{} is marked as \x8{}[Ignored]", name, CFG::Color_Friend.toHexStr()).c_str());
 				}
 			}
 		}

@@ -11,9 +11,9 @@ Enum(ProjSim,
     Trace = 1 << 0,         // Trace when doing GetProjectileFireSetup
     InitCheck = 1 << 1,     // Validate starting position
     Quick = 1 << 2,         // Use interpolation
-    NoRandomAngles = 1 << 3, // Don't do angle stuff for aimbot
+    NoRandomAngles = 1 << 3, // Don't do angle stuff for aimbot, nospread will pick that up
     PredictCmdNum = 1 << 4,  // Use crithack to predict command number
-    MaxSpeed = 1 << 5        // Default projectile speeds to their maximum
+    MaxSpeed = 1 << 5       // Default projectile speeds to their maximum
 )
 
 // ============================================
@@ -37,6 +37,26 @@ struct ProjectileInfo
     std::vector<Vec3> m_vPath = {};
 
     int m_iFlags = 0;
+};
+
+// Manual integrator state. Drag-free projectiles (rockets, flares) fly on the
+// plain ballistic step; drag projectiles (pipes, stickies, cannonballs) run the
+// engine's own drag formula here instead of in a vphysics environment - the
+// live vphysics applied none (measured: sim -1.9% speed vs real +13.4% loss)
+struct PhysicsObject_t
+{
+    Vec3 m_vOrigin = {};
+    Vec3 m_vVelocity = {};
+
+    // spinning body frame for the object-space drag sum
+    Vec3 m_vOrientFwd = {};
+    Vec3 m_vOrientRight = {};
+    Vec3 m_vOrientUp = {};
+    Vec3 m_vAngVel = {};
+
+    // per-axis drag basis (IVP order: x = HL forward, y = HL up, z = HL right)
+    Vec3 m_vDragBasis = {};
+    bool m_bDrag = false;
 };
 
 // ============================================
@@ -65,6 +85,22 @@ private:
 public:
     bool GetInfo(C_TFPlayer* pPlayer, C_TFWeaponBase* pWeapon, Vec3 vAngles, ProjectileInfo& tProjInfo, int iFlags = ProjSimEnum::Trace | ProjSimEnum::InitCheck, float flAutoCharge = -1.f);
     void SetupTrace(CTraceFilterCollideable& filter, int& nMask, C_TFWeaponBase* pWeapon, int nTick = 0, bool bQuick = false);
+
+    // True when the simulated projectile carries vphysics drag (pipes, stickies,
+    // cannonballs, cleavers, baseballs, jars...). Amalgam's aimbot gates its
+    // drag-compensation math on this.
+    bool m_bPhysics = false;
+
+    // true when m_bPhysics integrates on the manual path with the engine drag
+    // formula (the live vphysics environment applies no drag to our object)
+    bool m_bDragSim = false;
+
+    PhysicsObject_t m_tObj = {};
+
+    // Sub-tick offset between curtime and the upcoming server tick (cannon
+    // detonation timing is quantized to 0.195s server-side, so the aimbot
+    // adds this to know when the server will actually detonate).
+    float GetDesync();
 
     void GetInfo(C_BaseEntity* pProjectile, ProjectileInfo& tProjInfo);
     void SetupTrace(CTraceFilterCollideable& filter, int& nMask, C_BaseEntity* pProjectile);

@@ -2,11 +2,14 @@
 
 int NetVars::GetOffset(RecvTable *pTable, const char *szNetVar)
 {
+	if (!pTable || !pTable->m_pProps)
+		return 0;
+
 	for (int i = 0; i < pTable->m_nProps; i++)
 	{
 		RecvProp Prop = pTable->m_pProps[i];
-		
-		if (HASH_RT(Prop.m_pVarName) == HASH_RT(szNetVar))
+
+		if (Prop.m_pVarName && HASH_RT(Prop.m_pVarName) == HASH_RT(szNetVar))
 			return Prop.GetOffset();
 
 		if (auto DataTable = Prop.GetDataTable())
@@ -26,7 +29,7 @@ int NetVars::GetNetVar(const char *szClass, const char *szNetVar)
 	for (auto pCurrNode = pClasses; pCurrNode; pCurrNode = pCurrNode->m_pNext)
 	{
 		if (HASH_RT(szClass) == HASH_RT(pCurrNode->m_pNetworkName))
-			return GetOffset(pCurrNode->m_pRecvTable, szNetVar);
+			return pCurrNode->m_pRecvTable ? GetOffset(pCurrNode->m_pRecvTable, szNetVar) : 0;
 	}
 
 	return 0;

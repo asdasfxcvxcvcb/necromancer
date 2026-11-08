@@ -4,7 +4,8 @@
 #include "../Menu/Menu.h"
 #include "../amalgam_port/AmalgamCompat.h"
 
-// Convert command number to seed with entity/player mask (Amalgam's method)
+MAKE_SIGNATURE(CTFPlayerShared_UpdateCritBoostEffect, "client.dll", "48 8B C4 48 89 58 ? 48 89 70 ? 48 89 78 ? 41 56 48 81 EC ? ? ? ? 48 89 68", 0x0);
+
 int CCritHack::CommandToSeed(int iCommandNumber)
 {
 	int iSeed = MD5_PseudoRandom(iCommandNumber) & std::numeric_limits<int>::max();
@@ -286,6 +287,48 @@ bool CCritHack::WeaponCanCrit(C_TFWeaponBase* pWeapon, bool bWeaponOnly)
 	return true;
 }
 
+bool CCritHack::ShouldForceEffects(C_TFPlayer* pLocal)
+{
+	if (!CFG::Exploits_Crits_Effects || !pLocal || pLocal->deadflag() || pLocal->IsCritBoosted())
+		return false;
+
+	auto pWeapon = H::Entities->GetWeapon();
+	if (!pWeapon || !WeaponCanCrit(pWeapon))
+		return false;
+
+	const bool bCanCrit = CFG::Exploits_Crits_Ignore_Ban || (m_iAvailableCrits > 0 && !m_bCritBanned);
+	bool bPressed = H::Input->IsDown(CFG::Exploits_Crits_Force_Crit_Key);
+
+	if (m_bMelee && H::Input->IsDown(CFG::Exploits_Crits_Force_Crit_Key_Melee) && G::nTargetIndex)
+	{
+		auto pEntity = I::ClientEntityList->GetClientEntity(G::nTargetIndex);
+		if (pEntity && pEntity->GetClassId() == ETFClassIds::CTFPlayer)
+			bPressed = true;
+	}
+
+	const float flTickBase = TICKS_TO_TIME(pLocal->m_nTickBase());
+	return (bCanCrit && bPressed) || pWeapon->m_flCritTime() > flTickBase;
+}
+
+void CCritHack::RunEffects(C_TFPlayer* pLocal)
+{
+	if (!pLocal || pLocal->deadflag())
+		return;
+
+	const bool bEffects = ShouldForceEffects(pLocal);
+	if (!bEffects && !pLocal->IsCritBoosted() && pLocal->m_pCritBoostSoundLoop())
+	{
+		Signatures::CTFPlayerShared_UpdateCritBoostEffect.Call<void>(pLocal->m_SharedPtr(), 0);
+	}
+	else if (bEffects && !pLocal->m_pCritBoostSoundLoop())
+	{
+		const int iOriginalCondEx = pLocal->m_nPlayerCondEx();
+		pLocal->m_nPlayerCondEx() = iOriginalCondEx | (1 << (TF_COND_CRITBOOSTED_USER_BUFF - 32));
+		Signatures::CTFPlayerShared_UpdateCritBoostEffect.Call<void>(pLocal->m_SharedPtr(), 0);
+		pLocal->m_nPlayerCondEx() = iOriginalCondEx;
+	}
+}
+
 void CCritHack::Reset()
 {
 	m_iCritDamage = 0;
@@ -315,7 +358,6 @@ int CCritHack::GetCritRequest(CUserCmd* pCmd, C_TFWeaponBase* pWeapon)
 			bPressed = true;
 	}
 
-	// Always Melee Crit checkbox (ported from Amalgam)
 	// Only forces crits when the melee aimbot is actively targeting a player
 	// Manual swings (mouse1 without aimbot) are NOT forced to crit
 	if (CFG::Aimbot_Melee_Always_Crit && m_bMelee && G::nTargetIndex)
@@ -334,15 +376,10 @@ int CCritHack::GetCritRequest(CUserCmd* pCmd, C_TFWeaponBase* pWeapon)
 // Main run function - called from CreateMove
 void CCritHack::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd)
 {
-	// During shifting (doubletap), don't reset forced state - keep using the same forced command
-	// This ensures all shifted ticks use the same crit seed
-	if (!(Shifting::bShifting && !Shifting::bShiftingWarp) && !Shifting::bRapidFireWantShift)
-	{
-		m_bForcingCrit = false;
-		m_bForcingSkip = false;
-		m_iForcedCommandNumber = 0;
-		m_iForcedSeed = 0;
-	}
+	m_bForcingCrit = false;
+	m_bForcingSkip = false;
+	m_iForcedCommandNumber = 0;
+	m_iForcedSeed = 0;
 
 	if (!pWeapon || !pLocal || pLocal->deadflag() || !I::EngineClient->IsInGame())
 		return;
@@ -397,56 +434,54 @@ void CCritHack::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd)
 	
 	// Rapid fire weapons have a 1 second cooldown on crit checks
 	if (pWeapon->IsRapidFire() && I::GlobalVars->curtime < pWeapon->m_flLastRapidFireCritCheckTime() + 1.f)
+	{
+		if (bDoubletap)
+		{
+			int iSkipCommand = GetCritCommand(pWeapon, pCmd->command_number, false);
+			if (!iSkipCommand)
+				iSkipCommand = pCmd->command_number;
+			pCmd->command_number = iSkipCommand;
+			pCmd->random_seed = MD5_PseudoRandom(iSkipCommand) & std::numeric_limits<int>::max();
+			m_bForcingCrit = false;
+			m_bForcingSkip = true;
+			m_iForcedCommandNumber = iSkipCommand;
+			m_iForcedSeed = CommandToSeed(iSkipCommand);
+		}
 		return;
+	}
 
 	int iRequest = GetCritRequest(pCmd, pWeapon);
 	if (iRequest == CritRequest_Any)
 		return;
 
-	// Anti-cheat compatibility mode (skip if crit detection bypass is enabled)
-	if (CFG::Misc_AntiCheat_Enabled && !CFG::Misc_AntiCheat_SkipCritDetection)
+	if (CFG::Misc_AntiCheat_Enabled && !CFG::Misc_AntiCheat_SkipCritDetection && !bDoubletap)
 	{
-		// Safe mode: only fire when current command matches our request
 		if (!IsCritCommand(pCmd->command_number, pWeapon, iRequest == CritRequest_Crit, false))
 		{
-			// Block the attack - but preserve minigun rev state
 			pCmd->buttons &= ~IN_ATTACK;
-			
-			// For minigun: restore IN_ATTACK2 so it stays revved while waiting
+
 			if (pWeapon->GetWeaponID() == TF_WEAPON_MINIGUN)
 			{
 				if (G::OriginalCmd.buttons & IN_ATTACK2)
 					pCmd->buttons |= IN_ATTACK2;
 			}
-			
+
 			G::bSilentAngles = false;
 			return;
 		}
 	}
 	else
 	{
-		// During shifting, reuse the already-found forced command for all ticks
-		// This ensures all doubletap shots use the same crit seed
-		if (bDoubletap && m_iForcedCommandNumber != 0)
+		int iCommand = GetCritCommand(pWeapon, pCmd->command_number, iRequest == CritRequest_Crit);
+		if (iCommand)
 		{
-			pCmd->command_number = m_iForcedCommandNumber;
-			pCmd->random_seed = MD5_PseudoRandom(m_iForcedCommandNumber) & std::numeric_limits<int>::max();
-		}
-		else
-		{
-			// Normal mode: find a command number that will produce crit/non-crit
-			int iCommand = GetCritCommand(pWeapon, pCmd->command_number, iRequest == CritRequest_Crit);
-			if (iCommand)
-			{
-				pCmd->command_number = iCommand;
-				pCmd->random_seed = MD5_PseudoRandom(iCommand) & std::numeric_limits<int>::max();
-				
-				// Store forced state so CalcIsAttackCritical hook can use it
-				m_iForcedCommandNumber = iCommand;
-				m_iForcedSeed = CommandToSeed(iCommand);
-				m_bForcingCrit = (iRequest == CritRequest_Crit);
-				m_bForcingSkip = (iRequest == CritRequest_Skip);
-			}
+			pCmd->command_number = iCommand;
+			pCmd->random_seed = MD5_PseudoRandom(iCommand) & std::numeric_limits<int>::max();
+
+			m_iForcedCommandNumber = iCommand;
+			m_iForcedSeed = CommandToSeed(iCommand);
+			m_bForcingCrit = (iRequest == CritRequest_Crit);
+			m_bForcingSkip = (iRequest == CritRequest_Skip);
 		}
 	}
 	

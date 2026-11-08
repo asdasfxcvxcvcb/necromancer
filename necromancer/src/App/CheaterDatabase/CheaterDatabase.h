@@ -61,8 +61,7 @@ void FetchSourcebansBatch(const std::vector<uint64_t>& steamIDs);
 // Single player fetch (for manual refresh)
 void FetchSourcebans(uint64_t steamID64);
 
-// Check all players in the server
-void CheckAllPlayersSourcebans();
+void CheckAllPlayersSourcebans(uint64_t nLocalSteamId);
 
 // Helper to check if a player has sourcebans alert (not dismissed)
 bool HasSourcebansAlert(uint64_t steamID64);

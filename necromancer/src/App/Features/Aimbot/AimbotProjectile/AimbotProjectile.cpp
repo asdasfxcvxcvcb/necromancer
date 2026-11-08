@@ -1,6 +1,7 @@
 #include "AimbotProjectile.h"
 
 #include "../../CFG.h"
+#include "../../MoveSimDebug/MoveSimDebug.h"
 #include "../../MovementSimulation/MovementSimulation.h"
 #include "../../ProjectileSim/ProjectileSim.h"
 #include "../../Players/Players.h"
@@ -2262,6 +2263,9 @@ void CAimbotProjectile::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* 
 	{
 		G::nTargetIndexEarly = target.Entity->entindex();
 		G::nTargetIndex = target.Entity->entindex();
+
+		if (target.Entity->GetClassId() == ETFClassIds::CTFPlayer)
+			F::MoveSimDebug->NotifyProjectileTarget(target.Entity->As<C_TFPlayer>(), m_TargetPath, bShouldPredict);
 
 		// bCanFireNowEarly and bCanInterruptReloadEarly already computed above for throttle decision
 		const bool bOldCanPrimaryAttack = G::bCanPrimaryAttack;

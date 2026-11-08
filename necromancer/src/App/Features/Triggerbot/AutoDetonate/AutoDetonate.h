@@ -22,9 +22,13 @@ private:
 	bool IsEnemyMovingAway(const EnemyTrackingData& tracking, const Vec3& vCurrentPos, const Vec3& vStickyPos);
 	void ClearStickyTracking(int stickyIndex);
 	bool ShouldDetonateImmediate(C_BaseEntity* pEnemy, const Vec3& vStickyPos, float flRadius);
+	float GetEffectiveRadius(C_TFGrenadePipebombProjectile* pSticky, C_TFPlayer* pLocal);
+	bool EntityCaught(C_BaseEntity* pEntity, const Vec3& vStickyPos, float flRadius, float flLatency);
+	bool SelfCaught(C_TFPlayer* pLocal, const Vec3& vStickyPos, float flRadius, float flLatency);
 
 public:
 	void Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd);
+	float m_flLastDetonate = 0.f;
 };
 
 MAKE_SINGLETON_SCOPED(CAutoDetonate, AutoDetonate, F);

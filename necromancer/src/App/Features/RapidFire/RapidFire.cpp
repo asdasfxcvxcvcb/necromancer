@@ -2,6 +2,7 @@
 
 #include "../CFG.h"
 #include "../Crits/Crits.h"
+#include "../FakeAngle/FakeAngle.h"
 #include "../TickbaseManip/TickbaseManip.h"
 
 bool IsRapidFireWeapon(C_TFWeaponBase* pWeapon)
@@ -53,21 +54,20 @@ static bool CanInterruptReload(C_TFWeaponBase* pWeapon)
 	return H::AimUtils->GetWeaponType(pWeapon) == EWeaponType::HITSCAN && pWeapon->GetSlot() != WEAPON_SLOT_MELEE;
 }
 
-// SEOwnedDE-style ShouldStart — simple conditions, no per-weapon branching
 bool CRapidFire::ShouldStart(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
 {
-	// Need target and firing intent
-	if (G::nTicksSinceCanFire < 24 || G::nTargetIndex <= 1 || !G::bFiring)
+	if (G::nTargetIndex <= 1 || !G::bFiring)
 		return false;
 
-	// Don't start if already shifting or recharging
 	if (Shifting::bShifting || Shifting::bRecharging || Shifting::bShiftingWarp)
+		return false;
+
+	if (m_iWait)
 		return false;
 
 	if (!CanDoubleTapNow(pLocal, pWeapon))
 		return false;
 
-	// Need DT key held
 	if (!H::Input->IsDown(CFG::Exploits_RapidFire_Key))
 		return false;
 
@@ -106,7 +106,15 @@ void CRapidFire::AntiWarp(C_TFPlayer* pLocal, CUserCmd* pCmd, int nTicks)
 	}
 }
 
-// SEOwnedDE-style Run — save command, set shift flag, strip attack from real tick
+void CRapidFire::MaintainWait()
+{
+	if (G::Attacking == 1 || (!G::bCanPrimaryAttack && !G::bReloading))
+		m_iWait = CFG::Exploits_RapidFire_Ticks;
+
+	if (m_iWait > 0)
+		m_iWait--;
+}
+
 void CRapidFire::Run(CUserCmd* pCmd, bool* pSendPacket)
 {
 	Shifting::bRapidFireWantShift = false;
@@ -123,7 +131,6 @@ void CRapidFire::Run(CUserCmd* pCmd, bool* pSendPacket)
 
 	if (ShouldStart(pLocal, pWeapon))
 	{
-		// Delay ticks check (hacky but works — same as SEOwnedDE)
 		if (G::nTicksTargetSame < CFG::Exploits_RapidFire_Min_Ticks_Target_Same)
 		{
 			pCmd->buttons &= ~IN_ATTACK;
@@ -134,11 +141,13 @@ void CRapidFire::Run(CUserCmd* pCmd, bool* pSendPacket)
 		Shifting::bRapidFireWantShift = true;
 
 		m_ShiftCmd = *pCmd;
+		m_ShiftCmd.buttons |= IN_ATTACK;
 		m_bShiftSilentAngles = G::bSilentAngles || G::bPSilentAngles;
 		m_bSetCommand = false;
 
-		pCmd->buttons &= ~IN_ATTACK;  // Don't fire on the "real" tick
-		*pSendPacket = true;           // Send this tick immediately
+		if (!(IsRapidFireWeapon(pWeapon) && F::CritHack->m_bForcingCrit && F::CritHack->m_iForcedCommandNumber != 0))
+			pCmd->buttons &= ~IN_ATTACK;
+		*pSendPacket = true;
 
 		m_vShiftStart = pLocal->m_vecOrigin();
 		m_vAntiWarpVelocity = pLocal->m_vecVelocity();
@@ -147,48 +156,53 @@ void CRapidFire::Run(CUserCmd* pCmd, bool* pSendPacket)
 	}
 }
 
-// SEOwnedDE-style ShouldExitCreateMove — WalkTo antiwarp, no per-weapon attack logic
 bool CRapidFire::ShouldExitCreateMove(CUserCmd* pCmd)
 {
 	const auto pLocal = H::Entities->GetLocal();
 	if (!pLocal)
 		return false;
 
-	if (Shifting::bShifting && !Shifting::bShiftingWarp)
-	{
-		m_ShiftCmd.command_number = pCmd->command_number;
+	if (!(Shifting::bShifting && !Shifting::bShiftingWarp))
+		return false;
 
-		// First shift tick: apply the saved command (has IN_ATTACK)
+	m_ShiftCmd.command_number = pCmd->command_number;
+
+	const auto pWeapon = H::Entities->GetWeapon();
+	const bool bChargeWeapon = IsStickyWeapon(pWeapon);
+
+	if (bChargeWeapon)
+	{
 		if (!m_bSetCommand)
 		{
 			*pCmd = m_ShiftCmd;
 			m_bSetCommand = true;
 		}
+	}
+	else
+	{
+		const float flForward = pCmd->forwardmove;
+		const float flSide = pCmd->sidemove;
 
-		// Antiwarp: Amalgam-style velocity phase correction
-		if (CFG::Exploits_RapidFire_Antiwarp && m_bStartedShiftOnGround)
-		{
-			*pCmd = m_ShiftCmd;
-			const int nRemainingTicks = std::max(Shifting::nTotalShiftTicks - Shifting::nCurrentShiftTick, 0);
-			AntiWarp(pLocal, pCmd, nRemainingTicks);
-		}
-		else
-		{
-			// Rapid fire weapons (minigun/pistol/SMG) always use shift cmd
-			const auto pWeapon = H::Entities->GetWeapon();
-			if (IsRapidFireWeapon(pWeapon))
-				*pCmd = m_ShiftCmd;
-		}
-
-		return true;
+		*pCmd = m_ShiftCmd;
+		pCmd->forwardmove = flForward;
+		pCmd->sidemove = flSide;
 	}
 
-	return false;
+	if (CFG::Exploits_RapidFire_Antiwarp && m_bStartedShiftOnGround)
+	{
+		*pCmd = m_ShiftCmd;
+		const int nRemainingTicks = std::max(Shifting::nTotalShiftTicks - Shifting::nCurrentShiftTick, 0);
+		AntiWarp(pLocal, pCmd, nRemainingTicks);
+	}
+
+	return true;
 }
 
-// SEOwnedDE-style blocklist — same weapons they block
 bool CRapidFire::IsWeaponSupported(C_TFWeaponBase* pWeapon)
 {
+	if (!pWeapon)
+		return false;
+
 	const auto nWeaponType = H::AimUtils->GetWeaponType(pWeapon);
 
 	if (nWeaponType == EWeaponType::MELEE || nWeaponType == EWeaponType::OTHER)
@@ -227,14 +241,22 @@ bool CRapidFire::IsScottishResistance(C_TFWeaponBase* pWeapon)
 	return pWeapon->m_iItemDefinitionIndex() == Demoman_s_TheScottishResistance;
 }
 
+bool CRapidFire::IsQuickiebomb(C_TFWeaponBase* pWeapon)
+{
+	if (!pWeapon)
+		return false;
+
+	return pWeapon->m_iItemDefinitionIndex() == Demoman_s_TheQuickiebombLauncher;
+}
+
 int CRapidFire::GetStickyPreferredTicks(C_TFWeaponBase* pWeapon)
 {
-	// Scottish Resistance: 15 preferred ticks (lower fire rate)
-	// Normal sticky / Iron Bomber: 20 preferred ticks
-	const int nPreferred = IsScottishResistance(pWeapon) ? 15 : 20;
+	const int nMaxRecharge = std::max(CFG::Exploits_Shifting_Recharge_Limit, 8);
 
-	// Can't use more ticks than the recharge limit allows
-	const int nMaxRecharge = GetFastStickyMaxRecharge();
+	if (CFG::Exploits_FastSticky_Ticks > 0)
+		return std::min(CFG::Exploits_FastSticky_Ticks, nMaxRecharge);
+
+	const int nPreferred = (IsScottishResistance(pWeapon) ? 15 : 20) + 2;
 	return std::min(nPreferred, nMaxRecharge);
 }
 
@@ -275,12 +297,17 @@ bool CRapidFire::CanDoubleTapNow(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
 	if (Shifting::bShifting || Shifting::bRecharging || Shifting::bShiftingWarp)
 		return false;
 
-	if (G::nTicksSinceCanFire < 24)
+	if (m_iWait)
 		return false;
 
-	const int nProcessableTicks = F::Ticks->GetProcessableTicks();
-	const int nPacketTicks = std::min(nProcessableTicks + 1, Shifting::nMaxUsrCmdProcessTicks);
-	if (nProcessableTicks < CFG::Exploits_RapidFire_Ticks && GetShotsWithinPacket(pWeapon, nPacketTicks) <= 1)
+	const int nBankTicks = std::clamp(Shifting::nAvailableTicks, 0, Shifting::nMaxUsrCmdProcessTicks);
+	const int nPacketTicks = std::min(nBankTicks + 1, Shifting::nMaxUsrCmdProcessTicks);
+	const int nRateShots = GetShotsWithinPacket(pWeapon, nPacketTicks);
+	if (!(nPacketTicks >= CFG::Exploits_RapidFire_Ticks || nRateShots > 1))
+		return false;
+
+	const int nClip = pWeapon->m_iClip1();
+	if (nClip >= 0 && nClip < 2)
 		return false;
 
 	if (pWeapon->GetWeaponID() == TF_WEAPON_MINIGUN)
@@ -298,6 +325,11 @@ bool CRapidFire::CanDoubleTapNow(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
 	return G::bCanPrimaryAttack || bCanFireNextTick || CanInterruptReload(pWeapon);
 }
 
+int CRapidFire::GetReleaseTicks()
+{
+	return (std::min)({ CFG::Exploits_RapidFire_Ticks, std::max(Shifting::nAvailableTicks, 0), MAX_NEW_COMMANDS + MAX_BACKUP_COMMANDS });
+}
+
 int CRapidFire::GetTicks(C_TFWeaponBase* pWeapon)
 {
 	if (!pWeapon)
@@ -306,13 +338,8 @@ int CRapidFire::GetTicks(C_TFWeaponBase* pWeapon)
 	if (!CanDoubleTapNow(nullptr, pWeapon))
 		return 0;
 
-	const int nProcessableTicks = F::Ticks->GetProcessableTicks();
-	return std::min(CFG::Exploits_RapidFire_Ticks, nProcessableTicks);
+	return GetReleaseTicks();
 }
-
-// ============================================
-// FAST STICKY SHOOTING
-// ============================================
 
 int CRapidFire::GetFastStickyMaxRecharge()
 {
@@ -327,19 +354,7 @@ bool CRapidFire::IsFastStickyUsable()
 	if (CFG::Misc_AntiCheat_Enabled && !CFG::Misc_AntiCheat_IgnoreTickLimit)
 		return false;
 
-	// Need at least 8 recharge limit for fast sticky to be useful
 	if (CFG::Exploits_Shifting_Recharge_Limit < 8)
-		return false;
-
-	return true;
-}
-
-bool CRapidFire::ShouldStartFastSticky(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
-{
-	if (Shifting::bShifting || Shifting::bShiftingWarp)
-		return false;
-
-	if (F::Ticks->GetProcessableTicks() < 1)
 		return false;
 
 	return true;
@@ -347,6 +362,14 @@ bool CRapidFire::ShouldStartFastSticky(C_TFPlayer* pLocal, C_TFWeaponBase* pWeap
 
 void CRapidFire::RunFastSticky(CUserCmd* pCmd, bool* pSendPacket)
 {
+	static int s_nLastTapClip = -1;
+	static unsigned long long s_ullTapTime = 0;
+	static int s_nPlateauBank = -1;
+	static unsigned long long s_ullPlateauStart = 0;
+
+	Shifting::bStickyDTWantShift = false;
+	Shifting::nStickyRechargeTarget = 0;
+
 	if (!pSendPacket)
 		return;
 
@@ -354,7 +377,6 @@ void CRapidFire::RunFastSticky(CUserCmd* pCmd, bool* pSendPacket)
 	if (!pLocal || pLocal->deadflag())
 	{
 		m_bStickyCharging = false;
-		Shifting::nStickyRechargeTarget = 0;
 		return;
 	}
 
@@ -362,88 +384,86 @@ void CRapidFire::RunFastSticky(CUserCmd* pCmd, bool* pSendPacket)
 	if (!pWeapon || !IsStickyWeapon(pWeapon))
 	{
 		m_bStickyCharging = false;
-		Shifting::nStickyRechargeTarget = 0;
 		return;
 	}
 
 	if (I::MatSystemSurface->IsCursorVisible() || I::EngineVGui->IsGameUIVisible())
 	{
 		m_bStickyCharging = false;
-		Shifting::nStickyRechargeTarget = 0;
 		return;
 	}
 
 	if (Shifting::bShifting || Shifting::bShiftingWarp)
 		return;
 
-	const bool bKeyDown = H::Input->IsDown(CFG::Exploits_FastSticky_Key);
-
-	if (!bKeyDown)
+	if (!H::Input->IsDown(CFG::Exploits_FastSticky_Key))
 	{
 		m_bStickyCharging = false;
-		Shifting::nStickyRechargeTarget = 0;
+		s_nLastTapClip = -1;
+		s_nPlateauBank = -1;
+		s_ullPlateauStart = 0;
 		return;
 	}
 
 	if (!IsFastStickyUsable())
 	{
 		m_bStickyCharging = false;
-		Shifting::nStickyRechargeTarget = 0;
 		return;
 	}
 
 	m_bStickyCharging = true;
 
-	const bool bCanFire = G::bCanSecondaryAttack && pWeapon->HasPrimaryAmmoForShot();
-	const int nMaxRecharge = GetFastStickyMaxRecharge();
-	const int nTargetTicks = GetStickyPreferredTicks(pWeapon);
-	const int nRechargeTarget = std::min(nTargetTicks, nMaxRecharge);
+	const int nMaxRecharge = std::max(CFG::Exploits_Shifting_Recharge_Limit, 8);
+	const int nAaReserve = F::FakeAngle->YawOn() ? F::FakeAngle->AntiAimTicks() : 0;
+	const int nEffectiveCap = std::max(std::min(nMaxRecharge, Shifting::nMaxUsrCmdProcessTicks) - nAaReserve, 1);
+	int nTargetTicks = std::min(GetStickyPreferredTicks(pWeapon), nEffectiveCap);
 
-	// Tell CL_Move to stop recharging once we have enough ticks for the next shot
-	Shifting::nStickyRechargeTarget = nRechargeTarget;
+	const float flNextAttack = pWeapon->m_flNextPrimaryAttack();
+	const float flNow = static_cast<float>(pLocal->m_nTickBase()) * I::GlobalVars->interval_per_tick;
+	const bool bReloadPacing = flNextAttack - flNow > 0.35f;
+	const bool bTapStalled = pWeapon->m_iClip1() == s_nLastTapClip && GetTickCount64() - s_ullTapTime < 800;
+	const bool bReloadBusy = bReloadPacing || pWeapon->m_iClip1() == 0 || bTapStalled;
 
-	if (!bCanFire)
+	if (bReloadBusy || Shifting::nAvailableTicks != s_nPlateauBank)
 	{
-		if (Shifting::nAvailableTicks >= nRechargeTarget)
+		s_nPlateauBank = Shifting::nAvailableTicks;
+		s_ullPlateauStart = GetTickCount64();
+	}
+	else if (Shifting::nAvailableTicks < nTargetTicks && GetTickCount64() - s_ullPlateauStart >= 400)
+		nTargetTicks = std::max(Shifting::nAvailableTicks, 1);
+
+	if (Shifting::nAvailableTicks < nTargetTicks)
+	{
+		Shifting::nStickyRechargeTarget = nTargetTicks;
+		if (bReloadBusy)
 			Shifting::bRecharging = false;
 		else
 			Shifting::bRecharging = true;
-		return;
 	}
-
-	int nTicksToUse = 0;
-
-	const int nProcessableTicks = F::Ticks->GetProcessableTicks();
-	if (nProcessableTicks >= nTargetTicks)
-		nTicksToUse = nTargetTicks;
-	else if (nProcessableTicks >= 1)
-		nTicksToUse = nProcessableTicks;
-
-	if (nTicksToUse >= 1)
+	else if (bReloadBusy)
 	{
+		Shifting::nStickyRechargeTarget = nTargetTicks;
 		Shifting::bRecharging = false;
-		pCmd->buttons |= IN_ATTACK;
+	}
+	else
+	{
+		s_nLastTapClip = pWeapon->m_iClip1();
+		s_ullTapTime = GetTickCount64();
 
+		pCmd->buttons |= IN_ATTACK;
+		Shifting::bRecharging = false;
 		Shifting::bStickyDTWantShift = true;
-		Shifting::nStickyDTTicksToUse = nTicksToUse;
+		Shifting::nStickyDTTicksToUse = nTargetTicks;
 
 		m_ShiftCmd = *pCmd;
 		m_ShiftCmd.buttons |= IN_ATTACK;
-
 		m_bShiftSilentAngles = G::bSilentAngles;
 		m_bSetCommand = false;
 
 		m_vShiftStart = pLocal->m_vecOrigin();
 		m_vAntiWarpVelocity = pLocal->m_vecVelocity();
-		m_bStartedShiftOnGround = pLocal->m_fFlags() & FL_ONGROUND;
+		m_bStartedShiftOnGround = false;
 		m_nAntiWarpMaxTicks = 0;
-	}
-	else
-	{
-		const int nRechargeTarget = std::min(nTargetTicks, nMaxRecharge);
-		if (Shifting::nAvailableTicks >= nRechargeTarget)
-			Shifting::bRecharging = false;
-		else
-			Shifting::bRecharging = true;
+		*pSendPacket = true;
 	}
 }

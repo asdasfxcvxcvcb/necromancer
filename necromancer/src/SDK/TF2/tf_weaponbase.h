@@ -417,7 +417,7 @@ public:
 	// CanBeSelected - checks if weapon can be selected/switched to
 	bool CanBeSelected()
 	{
-		return reinterpret_cast<bool(__fastcall *)(void *)>(Memory::GetVFunc(this, 85))(this);
+		return reinterpret_cast<bool(__fastcall *)(void *)>(Memory::GetVFunc(this, 234))(this);
 	}
 };
 

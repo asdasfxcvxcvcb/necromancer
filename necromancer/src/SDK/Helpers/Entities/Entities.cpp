@@ -6,7 +6,9 @@
 #include "../../TF2/CTFGCClientSystem.h"
 #include "../../TF2/c_tf_playerresource.h"
 #include "../../../App/Features/CFG.h"
+#include <algorithm>
 #include <set>
+#include <vector>
 
 C_TFPlayer* CEntityHelper::GetLocal()
 {
@@ -225,6 +227,50 @@ void CEntityHelper::UpdatePlayerInfoFromGC()
 	}
 }
 
+static bool IsWeaponNetworkClass(int nRawClassId, ClientClass* pClientClass)
+{
+	static unsigned char s_ucClassCache[512] = {};
+
+	if (nRawClassId <= 0 || nRawClassId >= 512)
+		return false;
+
+	unsigned char& ucState = s_ucClassCache[nRawClassId];
+	if (ucState)
+		return ucState == 1;
+
+	ucState = 2;
+
+	if (pClientClass && pClientClass->m_pRecvTable)
+	{
+		std::vector<RecvTable*> vecStack;
+		vecStack.push_back(pClientClass->m_pRecvTable);
+
+		while (!vecStack.empty())
+		{
+			RecvTable* pTable = vecStack.back();
+			vecStack.pop_back();
+
+			if (!pTable || !pTable->m_pNetTableName)
+				continue;
+
+			if (!_stricmp(pTable->m_pNetTableName, "DT_TFWeaponBase"))
+			{
+				ucState = 1;
+				break;
+			}
+
+			for (int n = 0; n < pTable->m_nProps; n++)
+			{
+				const RecvProp* pProp = pTable->GetProp(n);
+				if (pProp && pProp->GetType() == DPT_DataTable && pProp->GetDataTable())
+					vecStack.push_back(pProp->GetDataTable());
+			}
+		}
+	}
+
+	return ucState == 1;
+}
+
 void CEntityHelper::UpdateCache()
 {
 	const auto pLocal = GetLocal();
@@ -273,6 +319,11 @@ void CEntityHelper::UpdateCache()
 		&& nLocalClass == TF_CLASS_ENGINEER
 		&& pLocalWeapon && pLocalWeapon->GetSlot() == 2; // WEAPON_SLOT_MELEE
 
+	// Soldier with the Disciplinary Action whips teammates for the speed buff
+	const bool bSoldierWhipCareTeammates = CFG::Perf_Minimal_Entities
+		&& nLocalClass == TF_CLASS_SOLDIER
+		&& nLocalWeaponDefIndex == Soldier_t_TheDisciplinaryAction;
+
 	// Pre-fetch client entity list pointer to avoid repeated virtual calls
 	IClientEntityList* pEntityList = I::ClientEntityList;
 
@@ -313,7 +364,7 @@ void CEntityHelper::UpdateCache()
 				continue;
 
 			// PERF: Skip teammate players — only care about enemies in minimal mode
-			if (CFG::Perf_Minimal_Entities && nLocalTeam == nPlayerTeam)
+			if (CFG::Perf_Minimal_Entities && nLocalTeam == nPlayerTeam && !bSoldierWhipCareTeammates)
 				break;
 
 			if (pPlayer->deadflag() && pPlayer->m_iObserverMode() != OBS_MODE_NONE)
@@ -460,7 +511,13 @@ void CEntityHelper::UpdateCache()
 		}
 
 		default:
+		{
+			if (!CFG::Perf_Extreme_Limit_Entity_Cache
+				&& IsWeaponNetworkClass(nRawClassId, pClientClass)
+				&& !pEntity->m_hOwnerEntity().Get())
+				m_mapGroups[static_cast<int>(EEntGroup::WEAPONS_DROPPED)].push_back(pEntity);
 			break;
+		}
 		}
 	}
 }
@@ -502,4 +559,45 @@ void CEntityHelper::ClearCache()
 {
 	for (int i = 0; i < static_cast<int>(EEntGroup::COUNT); i++)
 		m_mapGroups[i].clear();
+}
+
+void CEntityHelper::ValidateGroups()
+{
+	// UpdateCache rebuilds the groups in FrameStageNotify, but entity deletion is
+	// processed after that and before the following CreateMove ticks - on those
+	// ticks a group entry can point at a freed entity, and the first field read
+	// through it (e.g. InCond checking m_nPlayerCondEx2) faults. Prune every
+	// group against the pointers the entity list currently returns. Call this
+	// once per CreateMove before any feature consumes a group.
+	static std::vector<const void*> vLive;
+	vLive.clear();
+
+	const int nHighestIndex = I::ClientEntityList->GetHighestEntityIndex();
+	vLive.reserve(static_cast<size_t>(nHighestIndex) + 1);
+	for (int n = 0; n <= nHighestIndex; n++)
+	{
+		if (const auto pEntity = I::ClientEntityList->GetClientEntity(n))
+			vLive.push_back(pEntity);
+	}
+
+	if (vLive.empty())
+	{
+		ClearCache();
+		return;
+	}
+
+	std::sort(vLive.begin(), vLive.end());
+
+	for (int i = 0; i < static_cast<int>(EEntGroup::COUNT); i++)
+	{
+		auto& vGroup = m_mapGroups[i];
+		if (vGroup.empty())
+			continue;
+
+		vGroup.erase(std::remove_if(vGroup.begin(), vGroup.end(),
+			[](C_BaseEntity* pEntity)
+			{
+				return !std::binary_search(vLive.begin(), vLive.end(), pEntity);
+			}), vGroup.end());
+	}
 }

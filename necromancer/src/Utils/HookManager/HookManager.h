@@ -46,6 +46,11 @@ public:
 
 	inline void FreeAllHooks()
 	{
+		MH_DisableHook(MH_ALL_HOOKS);
+	}
+
+	inline void DestroyAllHooks()
+	{
 		MH_Uninitialize();
 	}
 

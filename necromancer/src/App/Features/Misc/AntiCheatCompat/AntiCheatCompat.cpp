@@ -54,7 +54,22 @@ void CAntiCheatCompat::ProcessCommand(CUserCmd* pCmd, bool* pSendPacket)
 		return;
 	}
 
-	Math::ClampAngles(pCmd->viewangles); // shouldn't happen, but failsafe
+	// never clamp a deliberately out-of-range pitch - 269/271 is the
+	// anti-backstab trick itself, and real input can never exceed ±89
+	if (pCmd->viewangles.x > -180.0f && pCmd->viewangles.x < 180.0f)
+		Math::ClampAngles(pCmd->viewangles);
+	else
+		pCmd->viewangles.y = Math::NormalizeAngle(pCmd->viewangles.y);
+
+	// Misc::AutoRocketJump marks its ticks for us ("AntiCheatCompat skips this
+	// tick", Misc.cpp) but nothing honored the flag. Honor it: the RJ sequence
+	// presses its own attack at its own angles, and the isolated-attack
+	// injection below would add IN_ATTACK to the in-between ticks (reload
+	// cancel gaps, C-tap frames) that carry view angles - rockets that then
+	// fire raw the moment the server's cooldown or reload state lets them
+	// through, instead of the aimed cmd the next RJ frame was about to send
+	if (F::Misc->IsAutoRocketJumpRunning())
+		return;
 
 	// Store current command in history - matching Amalgam's exact approach
 	// Only track the SENT angles (pCmd->viewangles after aimbot modification)

@@ -37,6 +37,9 @@ static bool HasFirstPersonSpectator(C_TFPlayer* pLocal)
 		if (!pPlayer || pEntity->GetClassId() != ETFClassIds::CTFPlayer)
 			continue;
 
+		if (pPlayer->IsDormant())
+			continue;
+
 		if (pPlayer->m_iObserverMode() != OBS_MODE_IN_EYE)
 			continue;
 
@@ -801,6 +804,9 @@ void CAimbotHitscan::Aim(CUserCmd* pCmd, C_TFPlayer* pLocal, const Vec3& vAngles
 				H::AimUtils->FixMovement(pCmd, vAngleTo);
 				pCmd->viewangles = vAngleTo;
 
+				m_vLastSilentAngles = pCmd->viewangles;
+				m_nLastSilentCmd = pCmd->command_number;
+
 				if (Shifting::bShifting && Shifting::bShiftingWarp)
 					G::bSilentAngles = true;  // Warp: choke handled by warp system
 				else if (G::Attacking == 1 || G::bFiring)
@@ -849,6 +855,59 @@ void CAimbotHitscan::Aim(CUserCmd* pCmd, C_TFPlayer* pLocal, const Vec3& vAngles
 
 		default: break;
 	}
+}
+
+void CAimbotHitscan::UpdateSilentReturn(CUserCmd* pCmd, C_TFPlayer* pLocal, bool bOwned)
+{
+	const bool bValid = CFG::Aimbot_Hitscan_Silent_Return
+		&& pLocal && !pLocal->deadflag()
+		&& pLocal->m_iClass() == TF_CLASS_HEAVYWEAPONS
+		&& GetActiveAimType(pLocal) == 1;
+
+	if (!bValid)
+	{
+		m_bOwnedLastTick = false;
+		m_bReturnActive = false;
+		return;
+	}
+
+	if (bOwned)
+	{
+		m_bOwnedLastTick = true;
+		m_bReturnActive = false;
+		return;
+	}
+
+	if (m_bOwnedLastTick)
+	{
+		m_bOwnedLastTick = false;
+		if (m_nLastSilentCmd && pCmd->command_number > m_nLastSilentCmd && pCmd->command_number - m_nLastSilentCmd <= 32)
+			m_bReturnActive = true;
+	}
+
+	if (!m_bReturnActive)
+		return;
+
+	Vec3 vTarget = G::vTrueOriginalAngles;
+	Vec3 vDelta = vTarget - m_vLastSilentAngles;
+	Math::ClampAngles(vDelta);
+
+	if (vDelta.Length() < 0.5f)
+	{
+		m_bReturnActive = false;
+		return;
+	}
+
+	const float flSpeed = std::max(CFG::Aimbot_Hitscan_Silent_Return_Speed, 1.0f);
+	Vec3 vNew = m_vLastSilentAngles + vDelta / flSpeed;
+	Math::ClampAngles(vNew);
+
+	H::AimUtils->FixMovement(pCmd, vNew);
+	pCmd->viewangles = vNew;
+	G::bSilentAngles = true;
+
+	m_vLastSilentAngles = vNew;
+	m_nLastSilentCmd = pCmd->command_number;
 }
 
 bool CAimbotHitscan::ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, const HitscanTarget_t& target)
@@ -901,7 +960,7 @@ bool CAimbotHitscan::ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWe
 		// Check if RapidFire/DoubleTap is active
 		const bool bRapidFireKey = CFG::Exploits_RapidFire_Key != 0 && H::Input->IsDown(CFG::Exploits_RapidFire_Key);
 		const int nStoredTicks = F::RapidFire->GetTicks(pWeapon);
-		const bool bRapidFireActive = bRapidFireKey && nStoredTicks >= F::Ticks->GetOptimalDTTicks();
+		const bool bRapidFireActive = bRapidFireKey && F::RapidFire->GetShotsWithinPacket(pWeapon, nStoredTicks) > 1;
 		const int nRapidFireShots = bRapidFireActive ? 2 : 1; // DoubleTap fires 2 shots
 
 		// Fakelag uncertainty: reduce effective hitbox radius when enemy is choking
@@ -921,7 +980,7 @@ bool CAimbotHitscan::ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWe
 
 		const Vec3 vShootPos = GetPredictedShootPos(pLocal, pCmd);
 		const float flHitchance = F::Hitchance->Calculate(pLocal, pWeapon, vShootPos, target.Position, flHitboxRadius, bRapidFireActive, nRapidFireShots);
-		
+
 		if (flHitchance < static_cast<float>(CFG::Aimbot_Hitscan_Hitchance))
 		{
 			return false;
@@ -994,30 +1053,6 @@ bool CAimbotHitscan::ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWe
 						return false;
 				}
 			}
-		}
-	}
-
-	// Minigun tapfire - uses hitchance slider to control delay based on distance
-	// This replaces the hitchance check for minigun (minigun is excluded from hitchance above)
-	// Returns false if tapfire delay not met - the Run function will handle removing IN_ATTACK
-	if (pWeapon->GetWeaponID() == TF_WEAPON_MINIGUN && CFG::Aimbot_Hitscan_Hitchance > 0)
-	{
-		const float flDistance = pLocal->GetAbsOrigin().DistTo(target.Position);
-		
-		// Get hitbox radius for the calculation
-		float flHitboxRadius = 16.0f; // Default body
-		if (target.Entity->GetClassId() == ETFClassIds::CTFPlayer)
-			flHitboxRadius = (target.AimedHitbox == HITBOX_HEAD) ? 10.0f : 16.0f;
-		
-		// Get optimal delay from hitchance system (uses hitchance slider for max delay)
-		// Close range = no delay, far range = up to 0.3s delay at 100% hitchance
-		const float flRequiredDelay = F::Hitchance->GetMinigunOptimalTapfireDelay(pWeapon, pLocal, flDistance, flHitboxRadius);
-		
-		if (flRequiredDelay > 0.0f)
-		{
-			const float flTimeSinceFire = (pLocal->m_nTickBase() * TICK_INTERVAL) - pWeapon->m_flLastFireTime();
-			if (flTimeSinceFire < flRequiredDelay)
-				return false;
 		}
 	}
 
@@ -1215,6 +1250,65 @@ void CAimbotHitscan::HandleFire(CUserCmd* pCmd, C_TFWeaponBase* pWeapon)
 	}
 }
 
+bool CAimbotHitscan::HandleMinigun(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, const HitscanTarget_t& target, bool bCanFireNow, bool bUserAttack2, bool bAimKeyDown)
+{
+	const int nState = pWeapon->As<C_TFMinigun>()->m_iWeaponState();
+	if (nState != AC_STATE_FIRING && nState != AC_STATE_SPINNING)
+	{
+		m_bMinigunBurst = false;
+		return false;
+	}
+
+	if (!pWeapon->HasPrimaryAmmoForShot())
+	{
+		m_bMinigunBurst = false;
+		return false;
+	}
+
+	float flTapfireDelay = 0.f;
+	if (CFG::Aimbot_Hitscan_Hitchance > 0)
+	{
+		const float flDistance = pLocal->GetAbsOrigin().DistTo(target.Position);
+
+		float flHitboxRadius = 16.0f;
+		if (target.Entity->GetClassId() == ETFClassIds::CTFPlayer)
+			flHitboxRadius = (target.AimedHitbox == HITBOX_HEAD) ? 10.0f : 16.0f;
+
+		flTapfireDelay = F::Hitchance->GetMinigunOptimalTapfireDelay(pWeapon, pLocal, flDistance, flHitboxRadius);
+	}
+
+	if (!m_bMinigunBurst)
+	{
+		if (!bAimKeyDown)
+			return false;
+
+		if (!bCanFireNow)
+			return false;
+
+		if (!ShouldFire(pCmd, pLocal, pWeapon, target))
+			return false;
+
+		if (flTapfireDelay > 0.f)
+		{
+			const float flTimeSinceFire = (pLocal->m_nTickBase() * TICK_INTERVAL) - pWeapon->m_flLastFireTime();
+			if (flTimeSinceFire < flTapfireDelay)
+				return false;
+		}
+
+		m_bMinigunBurst = true;
+
+		if (!bUserAttack2)
+			pCmd->buttons &= ~IN_ATTACK2;
+	}
+
+	pCmd->buttons |= IN_ATTACK;
+
+	if (flTapfireDelay > 0.f)
+		m_bMinigunBurst = false;
+
+	return true;
+}
+
 bool CAimbotHitscan::IsFiring(const CUserCmd* pCmd, C_TFWeaponBase* pWeapon)
 {
 	if (!pWeapon->HasPrimaryAmmoForShot() && !CanInterruptReload(pWeapon))
@@ -1274,7 +1368,18 @@ static bool CanInterruptReload(C_TFWeaponBase* pWeapon)
 void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
 {
 	if (!CFG::Aimbot_Hitscan_Active)
+	{
+		m_bMinigunBurst = false;
 		return;
+	}
+
+	const bool bIsMinigun = pWeapon->GetWeaponID() == TF_WEAPON_MINIGUN;
+	const bool bUserAttack2 = (G::OriginalCmd.buttons & IN_ATTACK2) != 0;
+
+	if (!bIsMinigun)
+	{
+		m_bMinigunBurst = false;
+	}
 
 	const int nAimType = GetActiveAimType(pLocal);
 
@@ -1292,19 +1397,25 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 	const auto aimKeyDown = CFG::Aimbot_Always_On || H::Input->IsDown(CFG::Aimbot_Key);
 	const bool canFireDuringReload = CFG::Aimbot_AutoShoot && aimKeyDown && CanInterruptReload(pWeapon);
 
-	// Auto Rev: spin up minigun when aim key is held, even without a target
-	if (CFG::Aimbot_Hitscan_Auto_Rev && aimKeyDown && pWeapon->GetWeaponID() == TF_WEAPON_MINIGUN)
+	if (bIsMinigun && !m_bMinigunBurst && CFG::Aimbot_Hitscan_Auto_Rev && aimKeyDown)
 	{
 		pCmd->buttons |= IN_ATTACK2;
 	}
 
+	if (!aimKeyDown)
+		m_bMinigunBurst = false;
+
 	HitscanTarget_t target = {};
-	if (GetTarget(pLocal, pWeapon, pCmd, target) && target.Entity)
+	const bool bTargetFound = GetTarget(pLocal, pWeapon, pCmd, target) && target.Entity;
+	if (bTargetFound)
 	{
 		// Re-validate entity — it may have been destroyed between GetTarget and here
 		// (e.g. class change destroys and recreates the player entity)
 		if (!H::Entities->IsEntityValid(target.Entity))
+		{
+			m_bMinigunBurst = false;
 			return;
+		}
 
 		G::nTargetIndexEarly = target.Entity->entindex();
 
@@ -1318,6 +1429,7 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 				&& !pLocal->IsZoomed() && pLocal->m_iClass() == TF_CLASS_SNIPER && pWeapon->GetSlot() == WEAPON_SLOT_PRIMARY && G::bCanPrimaryAttack)
 			{
 				pCmd->buttons |= IN_ATTACK2;
+				m_bMinigunBurst = false;
 				return;
 			}
 
@@ -1325,30 +1437,8 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 			if (CFG::Aimbot_AutoShoot && pWeapon->GetWeaponID() == TF_WEAPON_SNIPERRIFLE_CLASSIC)
 				pCmd->buttons |= IN_ATTACK;
 
-			// Spin up minigun
-			bool bMinigunAimbotAddedAttack = false;
-			if (pWeapon->GetWeaponID() == TF_WEAPON_MINIGUN)
-			{
-				const int nState = pWeapon->As<C_TFMinigun>()->m_iWeaponState();
-				if (nState == AC_STATE_IDLE || nState == AC_STATE_STARTFIRING)
-					G::bCanPrimaryAttack = false; // TODO: hack
-
-				// Always spin up (IN_ATTACK2) when targeting
+			if (bIsMinigun && !m_bMinigunBurst)
 				pCmd->buttons |= IN_ATTACK2;
-				
-				// For minigun, add IN_ATTACK when in firing/spinning state
-				// The tapfire check in ShouldFire will remove it if needed based on distance
-				// This also ensures G::LastUserCmd has IN_ATTACK for the crithack
-				// Track if WE added IN_ATTACK (not the user)
-				if (nState == AC_STATE_FIRING || nState == AC_STATE_SPINNING)
-				{
-					if (pWeapon->HasPrimaryAmmoForShot() && !(pCmd->buttons & IN_ATTACK))
-					{
-						pCmd->buttons |= IN_ATTACK;
-						bMinigunAimbotAddedAttack = true;
-					}
-				}
-			}
 
 			const int nSavedTickBase = pLocal->m_nTickBase();
 			pLocal->m_nTickBase() = nSavedTickBase + 1;
@@ -1358,22 +1448,14 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 			const bool bOldCanPrimaryAttack = G::bCanPrimaryAttack;
 			G::bCanPrimaryAttack = bCanFireNow || bCanInterruptReload;
 			
-			bool bShouldFire = false;
-			if (bCanFireNow || bCanInterruptReload)
+			if (bIsMinigun)
 			{
-				bShouldFire = ShouldFire(pCmd, pLocal, pWeapon, target);
+				HandleMinigun(pCmd, pLocal, pWeapon, target, bCanFireNow, bUserAttack2, aimKeyDown);
 			}
-
-			if (bShouldFire)
+			else if (bCanFireNow || bCanInterruptReload)
 			{
-				HandleFire(pCmd, pWeapon);
-			}
-			else
-			{
-				// If ShouldFire returned false for minigun, only remove IN_ATTACK if the aimbot added it
-				// This allows the user to manually fire even when aimbot is waiting for tapfire delay
-				if (pWeapon->GetWeaponID() == TF_WEAPON_MINIGUN && bMinigunAimbotAddedAttack)
-					pCmd->buttons &= ~IN_ATTACK;
+				if (ShouldFire(pCmd, pLocal, pWeapon, target))
+					HandleFire(pCmd, pWeapon);
 			}
 
 			const bool bIsFiring = IsFiring(pCmd, pWeapon);
@@ -1402,6 +1484,12 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 			}
 		}
 	}
+	else
+	{
+		m_bMinigunBurst = false;
+	}
+
+	UpdateSilentReturn(pCmd, pLocal, bTargetFound && aimKeyDown);
 }
 
 void CAimbotHitscan::HandleSwitchKey()

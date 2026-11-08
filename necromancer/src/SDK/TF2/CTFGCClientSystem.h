@@ -196,6 +196,11 @@ public:
 	{
 		*reinterpret_cast<bool*>(reinterpret_cast<uintptr_t>(this) + 1888) = bValue;
 	}
+
+	void SetAssignedMatchEnded(bool bValue)
+	{
+		*reinterpret_cast<bool*>(reinterpret_cast<uintptr_t>(this) + 1889) = bValue;
+	}
 };
 
 // Interface declaration - will be initialized via signature

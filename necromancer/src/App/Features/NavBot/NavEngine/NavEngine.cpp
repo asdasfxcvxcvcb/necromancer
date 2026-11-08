@@ -58,6 +58,19 @@ bool CNavEngine::NavTo(const Vec3& vDestination, ENavPriority ePriority, bool bS
 
 	float flCurTime = I::GlobalVars->curtime;
 
+	// Solve rate limiting: a solve whose destination can't be reached costs a full
+	// mesh search, and multiple jobs retry NavTo every tick while pathless — that
+	// turns into back-to-back exhaustive searches (the "lag at spawn" report).
+	// Enforce a floor between any two solve attempts, no matter who is asking.
+	if (flCurTime < m_flNextSolveTime)
+		return false;
+	m_flNextSolveTime = flCurTime + 0.2f;
+
+	// Failed-destination backoff: if the last solve to this destination found no
+	// path, don't re-run the (exhaustive) search until the backoff expires.
+	if (flCurTime < m_flFailedPathUntil && vDestination.DistTo(m_vFailedDest) < 100.0f)
+		return false;
+
 	// Minimum repath interval — prevents NavTo from being called every tick
 	// which causes rapid route switching and oscillation.
 	// Allow immediate pathing if: no current path, higher priority, or enough time elapsed.
@@ -69,16 +82,21 @@ bool CNavEngine::NavTo(const Vec3& vDestination, ENavPriority ePriority, bool bS
 		return false;
 
 	// Route variety cache invalidation (ported from TF2 bot's CTFBotPathCost)
-	// When the time modulus changes (every ~10s), path costs shift and cached paths become stale.
-	// Reset the pather so the new route preferences take effect.
+	// MicroPather caches solved paths, so a fresh solve would return the old route
+	// regardless of the shifted per-area preference costs. Reset the cache only when
+	// we actually want a NEW route (new destination) — never on a timer, so an
+	// actively followed path stays stable.
 	if (CFG::NavBot_RouteVariety)
 	{
-		int iTimeMod = static_cast<int>(flCurTime / 10.0f) + 1;
-		if (m_iLastRouteVarietyTimeMod >= 0 && iTimeMod != m_iLastRouteVarietyTimeMod)
+		if (bIsNewDest && !m_bRouteVarietyResetForDest)
 		{
 			m_pMap->m_pather.Reset();
+			m_bRouteVarietyResetForDest = true;
 		}
-		m_iLastRouteVarietyTimeMod = iTimeMod;
+		else if (!bIsNewDest)
+		{
+			m_bRouteVarietyResetForDest = false;
+		}
 	}
 
 	// Don't path if priority is too low (like Amalgam)
@@ -91,6 +109,7 @@ bool CNavEngine::NavTo(const Vec3& vDestination, ENavPriority ePriority, bool bS
 	CNavArea* pDestArea = m_pMap->FindClosestNavArea(vDestination);
 	if (!pDestArea)
 	{
+		NavDebug("NavTo fail: no nav area near dest (%.0f %.0f %.0f)", vDestination.x, vDestination.y, vDestination.z);
 		return false;
 	}
 
@@ -99,13 +118,25 @@ bool CNavEngine::NavTo(const Vec3& vDestination, ENavPriority ePriority, bool bS
 	// but the destination itself might not be on any nav area at all.
 	// If the destination isn't overlapping its closest nav area, it's in non-navmesh
 	// space — don't path there. "If the road is dark, don't drive where you can't see."
+	// EXCEPT: teammates routinely stand on props, crates or ledges just off the
+	// mesh (the follow goal spammed "dest off-mesh" forever for those). When the
+	// destination is near a nav area, path to the nearest walkable point of that
+	// area instead of refusing. vDest carries the (possibly snapped) destination
+	// through the rest of this function.
+	Vec3 vDest = vDestination;
 	{
-		bool bDestOverlapping = pDestArea->IsOverlapping(vDestination) &&
-		                        vDestination.z >= pDestArea->m_flMinZ && vDestination.z <= pDestArea->m_flMaxZ + 100.0f;
+		bool bDestOverlapping = pDestArea->IsOverlapping(vDest) &&
+		                        vDest.z >= pDestArea->m_flMinZ && vDest.z <= pDestArea->m_flMaxZ + 100.0f;
 		if (!bDestOverlapping)
 		{
-			// Destination is in non-navmesh space — cancel
-			return false;
+			Vec3 vSnapped = pDestArea->GetNearestPoint(Vector2D(vDest.x, vDest.y));
+			if (vDest.DistTo(vSnapped) > 150.0f)
+			{
+				// Destination is in non-navmesh space, too far from any area — cancel
+				NavDebug("NavTo fail: dest off-mesh (%.0f %.0f %.0f)", vDestination.x, vDestination.y, vDestination.z);
+				return false;
+			}
+			vDest = vSnapped;
 		}
 	}
 
@@ -123,43 +154,92 @@ bool CNavEngine::NavTo(const Vec3& vDestination, ENavPriority ePriority, bool bS
 	}
 
 	Vec3 vLocalPos = pLocalPlayer->m_vecOrigin();
-	CNavArea* pLocalArea = m_pMap->FindClosestNavArea(vLocalPos);
-	if (!pLocalArea)
-	{
-		return false;
-	}
 
-	// Validate that the starting area is actually reachable from the bot's position.
-	// The bot can be slightly off the navmesh edge (IsOverlapping returns false),
-	// so we allow a 200-unit tolerance. But if the bot is far from any nav area,
-	// don't try to path through non-navmesh space.
-	Vec3 vDistToArea = pLocalArea->m_vCenter - vLocalPos;
-	vDistToArea.z = 0.0f;
-	float flDistToAreaCenter = vDistToArea.Length();
-	bool bIsOverlapping = pLocalArea->IsOverlapping(vLocalPos) &&
-	                      vLocalPos.z >= pLocalArea->m_flMinZ && vLocalPos.z <= pLocalArea->m_flMaxZ + 100.0f;
-	if (!bIsOverlapping && flDistToAreaCenter > 200.0f)
+	// Find a starting nav area that we can actually reach. The nearest area by
+	// center distance can sit on the other side of a wall (the bot then drives at
+	// the first crumb through that wall forever), so try the best few candidates
+	// and require a hull-trace-clean path to the area center when we're not
+	// overlapping it. Also skip graph islands: an area with no usable outbound
+	// connections (spawn rooms are full of them) makes every solve return
+	// "no path" no matter the destination — prefer a connected overlapping area
+	// and only fall back to the island if nothing connected is available.
+	CNavArea* pLocalArea = nullptr;
+	CNavArea* pOverlapFallback = nullptr;
 	{
-		return false;
+		auto vStartCandidates = m_pMap->FindClosestNavAreas(vLocalPos, 5);
+		for (CNavArea* pCandidate : vStartCandidates)
+		{
+			if (!pCandidate)
+				continue;
+
+			bool bIsOverlapping = pCandidate->IsOverlapping(vLocalPos) &&
+			                      vLocalPos.z >= pCandidate->m_flMinZ && vLocalPos.z <= pCandidate->m_flMaxZ + 100.0f;
+			if (bIsOverlapping)
+			{
+				if (!pOverlapFallback)
+					pOverlapFallback = pCandidate;
+				if (m_pMap->HasUsableOutgoing(pCandidate))
+				{
+					pLocalArea = pCandidate;
+					break;
+				}
+				continue;
+			}
+
+			// Not overlapping: allow a 200-unit tolerance for being slightly off the
+			// mesh edge, but verify direct reachability with a hull trace so we never
+			// start a path from an area behind a wall.
+			Vec3 vDistToArea = pCandidate->m_vCenter - vLocalPos;
+			vDistToArea.z = 0.0f;
+			if (vDistToArea.Length() > 200.0f)
+				continue;
+
+			if (!m_pMap->HasUsableOutgoing(pCandidate))
+				continue;
+
+			const Vec3 vHullMin(-NAV_HULL_HALF_WIDTH, -NAV_HULL_HALF_WIDTH, 0.0f);
+			const Vec3 vHullMax(NAV_HULL_HALF_WIDTH, NAV_HULL_HALF_WIDTH, 62.0f);
+			const Vec3 vStepHeight(0.0f, 0.0f, 18.0f);
+			CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
+			CGameTrace trace = {};
+			H::AimUtils->TraceHull(vLocalPos + vStepHeight, pCandidate->m_vCenter + vStepHeight, vHullMin, vHullMax, MASK_PLAYERSOLID_BRUSHONLY, &filter, &trace);
+
+			if (trace.fraction >= 0.98f || trace.startsolid)
+			{
+				pLocalArea = pCandidate;
+				break;
+			}
+		}
+
+		// Everything connected was rejected — accept the overlapping island as a
+		// last resort (solves will fail, but EscapeSpawn's fallbacks still run).
+		if (!pLocalArea)
+			pLocalArea = pOverlapFallback;
+
+		if (!pLocalArea)
+		{
+			NavDebug("NavTo fail: no start area at (%.0f %.0f %.0f)", vLocalPos.x, vLocalPos.y, vLocalPos.z);
+			return false;
+		}
 	}
 
 
 	// Find path using MicroPather
 	int iResult = 0;
 	std::vector<void*> vAreaPath = m_pMap->FindPath(pLocalArea, pDestArea, &iResult);
-	
+
 	// Handle single-area path (start and end in same area)
 	if (vAreaPath.empty() && iResult == micropather::MicroPather::START_END_SAME)
 	{
 		// Validate that the direct path is actually passable with a hull trace.
 		// A large nav area can span across a wall/obstacle, so a straight-line path
 		// within the same area can still cross walls.
-		const Vec3 vHullMin(-20.0f, -20.0f, 0.0f);
-		const Vec3 vHullMax(20.0f, 20.0f, 72.0f);
+		const Vec3 vHullMin(-NAV_HULL_HALF_WIDTH, -NAV_HULL_HALF_WIDTH, 0.0f);
+		const Vec3 vHullMax(NAV_HULL_HALF_WIDTH, NAV_HULL_HALF_WIDTH, 72.0f);
 		const Vec3 vStepHeight(0.0f, 0.0f, 18.0f);
 		CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
 		CGameTrace trace = {};
-		H::AimUtils->TraceHull(vLocalPos + vStepHeight, vDestination + vStepHeight, vHullMin, vHullMax, MASK_PLAYERSOLID_BRUSHONLY, &filter, &trace);
+		H::AimUtils->TraceHull(vLocalPos + vStepHeight, vDest + vStepHeight, vHullMin, vHullMax, MASK_PLAYERSOLID_BRUSHONLY, &filter, &trace);
 
 		if (trace.fraction >= 1.0f || trace.startsolid)
 		{
@@ -170,46 +250,81 @@ bool CNavEngine::NavTo(const Vec3& vDestination, ENavPriority ePriority, bool bS
 			tStartCrumb.m_pNavArea = pLocalArea;
 			m_vCrumbs.push_back(tStartCrumb);
 			Crumb_t tEndCrumb = {};
-			tEndCrumb.m_vPos = vDestination;
+			tEndCrumb.m_vPos = vDest;
 			tEndCrumb.m_pNavArea = pLocalArea;
 			m_vCrumbs.push_back(tEndCrumb);
-			m_vDestination = vDestination;
-			m_vLastDestination = vDestination;
+			m_vDestination = vDest;
+			m_vLastDestination = vDest;
 			m_nCurrentCrumbIndex = 0;
 			m_eCurrentPriority = ePriority;
 			m_bRepathOnFail = bShouldRepath;
 			m_flLastPathTime = flCurTime;
+			m_flFailBackoff = 1.0f;
+			m_flApproachBlockSince = 0.0f;
+			m_pLastSolveStartArea = pLocalArea;   // stuck marks key on this solve's own world
 			return true;
 		}
 
 		// Direct path is blocked by a wall within the same area.
 		// Try to find a multi-area path by resetting the pather and searching again.
 		m_pMap->m_pather.Reset();
+		m_pMap->ClearTransientConnBlocks();
 		vAreaPath = m_pMap->FindPath(pLocalArea, pDestArea, &iResult);
 		if (vAreaPath.empty())
 		{
+			// Failure key uses the RAW caller destination: the backoff matcher
+			// compares against the next call's raw destination, and a snapped
+			// dest can sit up to 150 units away — beyond the 100-unit match
+			// radius, which would defeat the backoff and re-solve every 0.2s.
+			m_vFailedDest = vDestination;
+			m_flFailedPathUntil = flCurTime + m_flFailBackoff;
+			m_flFailBackoff = (std::min)(m_flFailBackoff * 2.0f, 5.0f);
 			return false;
 		}
 	}
 
-	// No path found
+	// No path found. MicroPather caches NO_SOLUTION per (start,end) pair and
+	// serves it forever after that — a solve that failed for a transient
+	// reason (setup gates closed at the time, a capture door still shut)
+	// would stay failed for the whole match even after the world opened up,
+	// freezing the bot until something moved it onto a different start area.
+	// Reset the pather (clears the path cache AND the node pool) and re-solve
+	// once with current costs; only a failure that reproduces from a clean
+	// state is reported and backed off.
 	if (vAreaPath.empty())
 	{
+		// Ported from Unibox's RetryFailure: a solve that fails outright may have
+		// failed BECAUSE of transient corridor blocks (false positives that sealed
+		// the only route). Clear the non-stuck blocks, reset the pather, and
+		// re-solve once with current state before reporting failure.
+		m_pMap->m_pather.Reset();
+		m_pMap->ClearTransientConnBlocks();
+		vAreaPath = m_pMap->FindPath(pLocalArea, pDestArea, &iResult);
+	}
+
+	if (vAreaPath.empty())
+	{
+		NavDebug("NavTo fail: no path %u -> %u (dest %.0f %.0f %.0f)",
+			pLocalArea->m_uId, pDestArea->m_uId, vDestination.x, vDestination.y, vDestination.z);
+		m_vFailedDest = vDestination;
+		m_flFailedPathUntil = flCurTime + m_flFailBackoff;
+		m_flFailBackoff = (std::min)(m_flFailBackoff * 2.0f, 5.0f);
 		return false;
 	}
 
 	// If this is a new destination (not a repath to same place), reset vischeck failure tracking
-	bool bIsNewDestination = vDestination.DistTo(m_vDestination) > 1.0f || m_eCurrentPriority == NAV_PRIO_NONE;
+	bool bIsNewDestination = vDest.DistTo(m_vDestination) > 1.0f || m_eCurrentPriority == NAV_PRIO_NONE;
 
 	// Set destination BEFORE building path so BuildWorldPath can append it correctly
-	m_vDestination = vDestination;
-	m_vLastDestination = vDestination;
+	m_vDestination = vDest;
+	m_vLastDestination = vDest;
 	m_bRepathOnFail = bShouldRepath;
 
 	if (bIsNewDestination)
 	{
 		m_nVischeckFailCount = 0;
 		m_flVischeckCooldownUntil = 0.0f;
+		m_flFailBackoff = 1.0f;
 	}
 
 	// Convert area path to crumbs (TF2-style edge point navigation)
@@ -228,41 +343,84 @@ bool CNavEngine::NavTo(const Vec3& vDestination, ENavPriority ePriority, bool bS
 		m_vCrumbs.insert(m_vCrumbs.begin(), tStartCrumb);
 	}
 
-	// Skip any crumbs the bot has already passed (dot product check).
-	// This prevents walking back to crumbs that are behind the bot's forward direction.
-	if (m_vCrumbs.size() >= 2)
+	// Skip crumbs that duplicate the bot's exact position (the inserted start
+	// crumb can coincide with the first edge crumb on short paths). The loop that
+	// used to live here also erased every waypoint behind the bot's VIEW angle —
+	// at spawn the bot commonly faces a wall with the exit behind it, so the
+	// whole out-of-spawn path got erased and the bot pushed the wall it stared
+	// at. Where to walk is a property of the path, not of the view.
+	while (m_vCrumbs.size() >= 2 && (m_vCrumbs[1].m_vPos - vLocalPos).Length2D() < 1.0f)
+		m_vCrumbs.erase(m_vCrumbs.begin());
+
+	// === Corridor validation of the solved path (ported from Unibox's
+	// StoreValidatedCrumbs) ===
+	// The solver only sees the nav mesh — a real wall can still stand between
+	// two edge crumbs (mesh errors, props, large areas spanning geometry). But
+	// like Unibox, DIRECT mesh connections are trusted and never traced: doors,
+	// props and tight doorways legitimately intersect player-width corridor
+	// tests, and trace-rejecting them freezes the bot at spawn. Every solver
+	// edge IS a direct connection, so in practice nothing here gets traced —
+	// walls that the mesh claims but reality denies are caught at runtime by
+	// the progress sampler + stuck marks instead.
 	{
-		Vec3 vForward, vRight;
-		Math::AngleVectors(pLocalPlayer->GetEyeAngles(), &vForward, &vRight, nullptr);
-		vForward.z = 0.0f;
-		vForward.Normalize();
-
-		// Skip crumbs that are behind us relative to our facing direction
-		while (m_vCrumbs.size() >= 2)
+		bool bCorridorBlocked = false;
+		for (size_t i = 0; i + 1 < m_vCrumbs.size(); ++i)
 		{
-			Vec3 vDirToNext = m_vCrumbs[1].m_vPos - vLocalPos;
-			vDirToNext.z = 0.0f;
-			float flLen = vDirToNext.Length();
-			if (flLen < 1.0f)
+			const Crumb_t& tA = m_vCrumbs[i];
+			const Crumb_t& tB = m_vCrumbs[i + 1];
+			if (tA.m_bRequiresDrop || tB.m_bRequiresDrop)
+				continue;   // drop transitions jump floors — the corridor test is planar
+			if (!tA.m_pNavArea || !tB.m_pNavArea || tA.m_pNavArea == tB.m_pNavArea)
+				continue;   // same-area hops (start crumb, subdivided mids) carry no connection
+			if (m_pMap->HasDirectConnection(tA.m_pNavArea, tB.m_pNavArea))
+				continue;   // the mesh offers this link — trust it (Unibox: StoreValidatedCrumbs)
+
+			bool bCachedPassable = false;
+			if (m_pMap->GetConnVerdict(tA.m_pNavArea, tB.m_pNavArea, bCachedPassable))
 			{
-				m_vCrumbs.erase(m_vCrumbs.begin());
-				continue;
-			}
-			vDirToNext /= flLen;
-
-			// If next crumb is ahead of us, stop skipping
-			float flDot = vForward.Dot(vDirToNext);
-			if (flDot > -0.1f)  // Not behind us (allow slight sideways)
+				if (bCachedPassable)
+					continue;
+				bCorridorBlocked = true;
 				break;
+			}
 
-			// Next crumb is behind us - skip it
-			m_vCrumbs.erase(m_vCrumbs.begin());
+			const bool bPassable = IsPlayerPassableNavigation(pLocalPlayer, tA.m_vPos, tB.m_vPos);
+			// Passable verdicts live 30s (repaths constantly re-solve the same
+			// route); blocked ones only 10s so moved props / opened doors recover.
+			m_pMap->MarkConn(tA.m_pNavArea, tB.m_pNavArea, bPassable, bPassable ? 30.0f : 10.0f);
+			if (!bPassable)
+			{
+				bCorridorBlocked = true;
+				NavDebug("NavTo reject: corridor blocked %u -> %u on path to (%.0f %.0f %.0f)",
+					tA.m_pNavArea->m_uId, tB.m_pNavArea->m_uId, vDest.x, vDest.y, vDest.z);
+				break;
+			}
+		}
+
+		if (bCorridorBlocked)
+		{
+			m_vCrumbs.clear();
+			m_nCurrentCrumbIndex = 0;
+			m_bApproachingDestination = false;
+			m_pMap->m_pather.Reset();   // rebuild the next solve around the blocked link
+			m_vFailedDest = vDestination;
+			m_flFailedPathUntil = flCurTime + m_flFailBackoff;
+			m_flFailBackoff = (std::min)(m_flFailBackoff * 2.0f, 5.0f);
+			return false;
 		}
 	}
+
+	ResetStuckProgress();
 
 	m_nCurrentCrumbIndex = 0;
 	m_eCurrentPriority = ePriority;
 	m_flLastPathTime = flCurTime;
+	m_flFailBackoff = 1.0f;
+	m_flApproachBlockSince = 0.0f;
+	m_pLastSolveStartArea = pLocalArea;   // stuck marks key on this solve's own world
+
+	NavDebug("NavTo ok: prio %d, %zu crumbs -> (%.0f %.0f %.0f)",
+		static_cast<int>(ePriority), m_vCrumbs.size(), vDest.x, vDest.y, vDest.z);
 
 	return !m_vCrumbs.empty();
 }
@@ -335,6 +493,46 @@ void CNavEngine::BuildWorldPath(const std::vector<void*>& vAreaPath)
 		else
 			i++;
 	}
+
+	// Subdivide long legs into ~200u crumbs (Unibox's AppendAreaSegment idea).
+	// One crumb per area edge means a path across a few large areas sends the
+	// bot beeline for hundreds of units at the next crumb with only whisker
+	// steering — the "walking at one far waypoint" behavior. Intermediate
+	// crumbs give the look-ahead skip, vischeck segments and corner-speed
+	// logic real geometry to work with. Drop transitions are never subdivided
+	// (their approach metadata covers a short push-past-the-edge move).
+	if (m_vCrumbs.size() >= 2)
+	{
+		std::vector<Crumb_t> vDense;
+		vDense.reserve(m_vCrumbs.size() + 8);
+		for (size_t i = 0; i < m_vCrumbs.size(); i++)
+		{
+			vDense.push_back(m_vCrumbs[i]);
+			if (i + 1 >= m_vCrumbs.size())
+				break;
+
+			const Crumb_t& tNext = m_vCrumbs[i + 1];
+			if (m_vCrumbs[i].m_bRequiresDrop || tNext.m_bRequiresDrop)
+				continue;
+
+			Vec3 vLeg = tNext.m_vPos - m_vCrumbs[i].m_vPos;
+			vLeg.z = 0.0f;
+			const float flLen = vLeg.Length();
+			if (flLen <= 250.0f)
+				continue;
+
+			const int nExtra = static_cast<int>(flLen / 200.0f);
+			for (int k = 1; k <= nExtra; k++)
+			{
+				const float t = static_cast<float>(k) / static_cast<float>(nExtra + 1);
+				Crumb_t tMid = {};
+				tMid.m_vPos = m_vCrumbs[i].m_vPos + (tNext.m_vPos - m_vCrumbs[i].m_vPos) * t;
+				tMid.m_pNavArea = m_vCrumbs[i].m_pNavArea;
+				vDense.push_back(tMid);
+			}
+		}
+		m_vCrumbs = std::move(vDense);
+	}
 }
 
 void CNavEngine::FollowPath(C_TFPlayer* pLocal, CUserCmd* pCmd)
@@ -356,10 +554,13 @@ void CNavEngine::FollowPath(C_TFPlayer* pLocal, CUserCmd* pCmd)
 	Vec3 vLocalPos = pLocal->m_vecOrigin();
 	float flCurTime = I::GlobalVars->curtime;
 
-	// Track inactivity for stuck detection (like Amalgam's m_tInactivityTimer)
-	Vec3 vVelocity = pLocal->m_vecVelocity();
-	if (vVelocity.Length2D() > 40.0f)
-		m_flInactivityTime = flCurTime;
+	// Deliberately NO velocity reset of m_flInactivityTime here. A bot grinding
+	// a wall at an angle slides along it well above 40 u/s — velocity is not
+	// progress. Unibox's follower has no velocity check anywhere: its stuck
+	// clock advances on geometric progress only (the sampler in
+	// UpdateStuckTime, plus crumb advancement below). A velocity>40 reset here
+	// kept flStuckTime pinned near zero during wall-grinds, so the wall probe
+	// and connection blacklist never fired and the bot never rerouted.
 
 	// Track on-ground state for dropdown nudge logic
 	bool bOnGround = (pLocal->m_fFlags() & FL_ONGROUND) != 0;
@@ -425,6 +626,10 @@ void CNavEngine::FollowPath(C_TFPlayer* pLocal, CUserCmd* pCmd)
 	// Amalgam uses reach radii: kDefaultReachRadius=50, kDropReachRadius=28
 	constexpr float kDefaultReachRadius = 50.f;
 	constexpr float kDropReachRadius = 28.f;
+
+	// Bounds look-ahead skips per tick (each skip costs a hull trace)
+	int iLookaheadSkips = 0;
+	const Vec3 vLookaheadStep(0.0f, 0.0f, 18.0f);
 
 	while (m_nCurrentCrumbIndex < m_vCrumbs.size())
 	{
@@ -528,14 +733,74 @@ void CNavEngine::FollowPath(C_TFPlayer* pLocal, CUserCmd* pCmd)
 					// If we're closer to the next crumb than the current crumb,
 					// and the current crumb is even slightly behind us, skip it current one.
 					// This prevents the bot from walking backward to a waypoint it already passed.
+					// Same-area only: this skip is verified by no trace, and where the path
+					// bends hard around a wall corner the bot grinds, sliding along the wall
+					// makes boundary crumbs read as "behind, next is closer" — the index then
+					// crept across area transitions the bot never physically crossed, and the
+					// stuck sampler credited failures to connections the solve never used.
+					// Crossing into a new area still happens by reaching the boundary crumb
+					// (reach radius) or through the hull-traced look-ahead skip below.
+					const bool bSameAreaSkip = !tNext.m_pNavArea || !tActive.m_pNavArea
+						|| tNext.m_pNavArea == tActive.m_pNavArea;
 					bool bNextIsCloser = flNextDist < flDist;
-					if (bNextIsCloser && flDot < -0.1f && flHeightDiff < flBehindHeightTolerance)
+					if (bSameAreaSkip && bNextIsCloser && flDot < -0.1f && flHeightDiff < flBehindHeightTolerance)
 					{
 						m_nCurrentCrumbIndex++;
 						m_flInactivityTime = flCurTime;
 						continue;
 					}
 				}
+			}
+		}
+
+		// Strategy 4: Verified look-ahead (concept from the TF2 bot's
+		// PathFollower::CheckProgress segment skipping). Skip redundant crumbs we
+		// can walk straight past — but only when a hull trace confirms the direct
+		// line is clear and the crumb isn't uphill, so we never cut corners
+		// through walls. This straightens out paths that hug a wall just because
+		// many small nav areas chain along it.
+		if (CFG::NavBot_PathLookAhead > 1.0f && bOnGround && !m_bDropNudgeActive && iLookaheadSkips < 3)
+		{
+			size_t uSkipTo = 0;
+			for (size_t j = m_vCrumbs.size() - 1; j > m_nCurrentCrumbIndex; j--)
+			{
+				const Crumb_t& tSkip = m_vCrumbs[j];
+				Vec3 vSkipDelta = tSkip.m_vPos - vLocalPos;
+				float flSkipHeight = vSkipDelta.z;
+				vSkipDelta.z = 0.0f;
+				float flSkipDist = vSkipDelta.Length();
+				if (flSkipDist > CFG::NavBot_PathLookAhead || flSkipDist < 1.0f)
+					continue;
+				// Never skip drop crumbs or the final destination crumb
+				if (tSkip.m_bRequiresDrop || j == m_vCrumbs.size() - 1)
+					continue;
+				// Not uphill beyond step height, not below a cliff-sized drop
+				if (flSkipHeight > 18.0f || flSkipHeight < -72.0f)
+					continue;
+
+				const Vec3 vHullMinLA(-NAV_HULL_HALF_WIDTH, -NAV_HULL_HALF_WIDTH, 0.0f);
+				const Vec3 vHullMaxLA(NAV_HULL_HALF_WIDTH, NAV_HULL_HALF_WIDTH, 62.0f);
+				CTraceFilterWorldAndPropsOnlyAmalgam filterLA = {};
+				CGameTrace traceLA = {};
+				H::AimUtils->TraceHull(vLocalPos + vLookaheadStep, tSkip.m_vPos + vLookaheadStep, vHullMinLA, vHullMaxLA, MASK_PLAYERSOLID_BRUSHONLY, &filterLA, &traceLA);
+
+				// startsolid means the probe BEGAN inside geometry — the bot is
+				// hugging the wall it's about to be steered along. The old code
+				// treated that as "clear" and skipped to the far crumb THROUGH the
+				// wall. Embedded start = can't verify the line = don't skip.
+				if (traceLA.fraction >= 0.98f && !traceLA.startsolid)
+				{
+					uSkipTo = j;
+					break;
+				}
+			}
+
+			if (uSkipTo > m_nCurrentCrumbIndex)
+			{
+				m_nCurrentCrumbIndex = uSkipTo;
+				m_flInactivityTime = flCurTime;
+				iLookaheadSkips++;
+				continue;
 			}
 		}
 
@@ -556,6 +821,119 @@ void CNavEngine::FollowPath(C_TFPlayer* pLocal, CUserCmd* pCmd)
 			m_bApproachingDestination = true;
 			Vec3 vMoveTarget = m_vDestination;
 			vMoveTarget.z = vLocalPos.z;
+
+			// Whisker steering here too — the final stretch to a supply entity
+			// often runs along a wall corner the crumbs didn't hug
+			if (CFG::NavBot_AvoidObstacles && bOnGround)
+			{
+				Vec3 vSteerDir = vMoveTarget - vLocalPos;
+				vSteerDir.z = 0.0f;
+				float flSteerLen = vSteerDir.Length();
+				if (flSteerLen > 1.0f)
+				{
+					vSteerDir /= flSteerLen;
+					Vec3 vLeftSteer(-vSteerDir.y, vSteerDir.x, 0.0f);
+					vMoveTarget = AvoidObstacles(pLocal, vMoveTarget, vSteerDir, vLeftSteer);
+					vMoveTarget.z = vLocalPos.z;
+				}
+			}
+
+			// Approach gate + no-progress watchdog. The mesh can route the last crumb
+			// to a spot from which a wall still stands between the bot and the
+			// destination (large areas spanning geometry) — the old code only noticed
+			// after 2s of wall-humping. Now the first tick of the approach phase
+			// hull-traces straight at the destination:
+			//  - world brush hit → blacklist the destination area so the repath comes
+			//    at it from the connected side instead of through the wall,
+			//  - entity hit (closed door) → stand and wait up to 25s like the gate
+			//    logic in UpdateStuckTime; a blocker still closed after that is
+			//    blacklisted too.
+			if (m_flApproachBlockSince > 0.0f)
+			{
+				// Standing at an entity blocker on the direct approach.
+				if (flCurTime - m_flApproachBlockSince > 25.0f)
+				{
+					// Still closed after 25s — effectively permanent
+					m_flApproachBlockSince = 0.0f;
+					if (CNavArea* pDestArea = m_pMap->FindClosestNavArea(m_vDestination))
+					{
+						m_pMap->m_mStuckBlacklist[pDestArea] = { flCurTime + 20.0f, 20000.0f };
+						m_pMap->m_pather.Reset();
+					}
+					AbandonPath("Approach blocked by door that never opened");
+					return;
+				}
+
+				// Re-probe every 0.5s so a gate opening resumes movement quickly
+				if (flCurTime - m_flApproachBlockSince >= 0.5f)
+				{
+					const Vec3 vFrom = vLocalPos + Vec3(0.0f, 0.0f, 18.0f);
+					const Vec3 vTo = m_vDestination + Vec3(0.0f, 0.0f, 18.0f);
+					const Vec3 vHullMin(-NAV_HULL_HALF_WIDTH, -NAV_HULL_HALF_WIDTH, 0.0f);
+					const Vec3 vHullMax(NAV_HULL_HALF_WIDTH, NAV_HULL_HALF_WIDTH, 62.0f);
+					CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
+					CGameTrace trace = {};
+					H::AimUtils->TraceHull(vFrom, vTo, vHullMin, vHullMax, MASK_PLAYERSOLID_BRUSHONLY, &filter, &trace);
+					if (trace.fraction >= 0.85f || trace.startsolid)
+						m_flApproachBlockSince = 0.0f;  // Way is clear — walk on
+					else
+						return;  // Still blocked — keep standing
+				}
+				else
+					return;
+			}
+
+			if (m_flApproachCheckTime <= 0.0f)
+			{
+				m_flApproachCheckTime = flCurTime;
+				m_flApproachCheckDist = flDistToDest;
+
+				const Vec3 vFrom = vLocalPos + Vec3(0.0f, 0.0f, 18.0f);
+				const Vec3 vTo = m_vDestination + Vec3(0.0f, 0.0f, 18.0f);
+				const Vec3 vHullMin(-NAV_HULL_HALF_WIDTH, -NAV_HULL_HALF_WIDTH, 0.0f);
+				const Vec3 vHullMax(NAV_HULL_HALF_WIDTH, NAV_HULL_HALF_WIDTH, 62.0f);
+				CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
+				CGameTrace trace = {};
+				H::AimUtils->TraceHull(vFrom, vTo, vHullMin, vHullMax, MASK_PLAYERSOLID_BRUSHONLY, &filter, &trace);
+
+				if (trace.fraction < 0.85f && !trace.startsolid)
+				{
+					if (trace.m_pEnt && trace.m_pEnt->entindex() != 0)
+					{
+						// Entity blocker (gate/door) — stand and wait for it to open.
+						// Reset the progress sampler so a freshly-opened gate doesn't
+						// trip the no-progress watchdog with timestamps from before the wait.
+						m_flApproachBlockSince = flCurTime;
+						m_flApproachCheckTime = 0.0f;
+						return;
+					}
+
+					// World wall between the last crumb and the destination — aim the
+					// repath at the destination area from another direction.
+					if (CNavArea* pDestArea = m_pMap->FindClosestNavArea(m_vDestination))
+					{
+						m_pMap->m_mStuckBlacklist[pDestArea] = {
+							flCurTime + 20.0f,
+							20000.0f  // Heavier than the unreliable-connection penalty so
+						};            // any real alternate route beats the blocked approach
+						m_pMap->m_pather.Reset();
+					}
+					AbandonPath("Direct approach blocked by world wall");
+					return;
+				}
+			}
+			else if (flCurTime - m_flApproachCheckTime >= 2.0f)
+			{
+				if (m_flApproachCheckDist - flDistToDest < 40.0f)
+				{
+					m_flApproachCheckTime = 0.0f;
+					AbandonPath("Approach phase made no progress");
+					return;
+				}
+				m_flApproachCheckTime = flCurTime;
+				m_flApproachCheckDist = flDistToDest;
+			}
+
 			MoveTowards(pLocal, pCmd, vMoveTarget);
 			return;
 		}
@@ -634,6 +1012,49 @@ void CNavEngine::FollowPath(C_TFPlayer* pLocal, CUserCmd* pCmd)
 	// Reset Z to local height (like Amalgam's bResetHeight logic)
 	vMoveTarget.z = vLocalPos.z;
 
+	// === Corner speed modulation (concept from the TF2 bot's
+	// PathFollower::AdjustSpeed, which slows the bot by path curvature) ===
+	// Slow down into sharp turns so the bot doesn't overshoot the turn point
+	// and plow into the wall behind it.
+	float flSpeedScale = 1.0f;
+	if (CFG::NavBot_CornerSpeed < 1.0f && m_nCurrentCrumbIndex + 1 < uCrumbsSize)
+	{
+		Vec3 vToCrumbDir = tActiveCrumb.m_vPos - vLocalPos;
+		vToCrumbDir.z = 0.0f;
+		float flToCrumbLen = vToCrumbDir.Length();
+		Vec3 vCrumbToNext = m_vCrumbs[m_nCurrentCrumbIndex + 1].m_vPos - tActiveCrumb.m_vPos;
+		vCrumbToNext.z = 0.0f;
+		float flCrumbToNextLen = vCrumbToNext.Length();
+
+		// Only slow down when the turn is actually imminent
+		if (flToCrumbLen > 1.0f && flCrumbToNextLen > 1.0f && flToCrumbLen < 150.0f)
+		{
+			float flDot = std::clamp(vToCrumbDir.Dot(vCrumbToNext) / (flToCrumbLen * flCrumbToNextLen), -1.0f, 1.0f);
+			float flTurnDeg = acosf(flDot) * (180.0f / 3.14159265f);
+			float flTurnFactor = std::clamp(flTurnDeg / 90.0f, 0.0f, 1.0f);
+			flSpeedScale = 1.0f - flTurnFactor * (1.0f - CFG::NavBot_CornerSpeed);
+		}
+	}
+
+	// === Whisker obstacle avoidance (concept from the TF2 bot's
+	// PathFollower::Avoid reflex steering) ===
+	// Steer the immediate movement goal away from near obstacles (walls, props)
+	// detected by small left/right hull probes. Skipped during drop nudges and
+	// while airborne (the probes would fire constantly mid-jump).
+	if (CFG::NavBot_AvoidObstacles && !m_bDropNudgeActive && bOnGround)
+	{
+		Vec3 vSteerDir = vMoveTarget - vLocalPos;
+		vSteerDir.z = 0.0f;
+		float flSteerLen = vSteerDir.Length();
+		if (flSteerLen > 1.0f)
+		{
+			vSteerDir /= flSteerLen;
+			Vec3 vLeftSteer(-vSteerDir.y, vSteerDir.x, 0.0f);
+			vMoveTarget = AvoidObstacles(pLocal, vMoveTarget, vSteerDir, vLeftSteer);
+			vMoveTarget.z = vLocalPos.z;
+		}
+	}
+
 	// === Dropdown edge nudge move override ===
 	// When the bot is at a drop crumb but hasn't actually fallen (navmesh doesn't
 	// cover the real edge), override the move target to push further forward.
@@ -677,33 +1098,51 @@ void CNavEngine::FollowPath(C_TFPlayer* pLocal, CUserCmd* pCmd)
 		}
 	}
 
-	MoveTowards(pLocal, pCmd, vMoveTarget);
+	MoveTowards(pLocal, pCmd, vMoveTarget, flSpeedScale);
 
 	// Handle smart jump state machine (ported from Amalgam's HandleSmartJump)
 	if (CFG::NavBot_AutoJump)
 		HandleSmartJump(pLocal, pCmd);
+
+	// Unibox's stuck Jump phase (TickStuckSample -> FollowCrumbs): with ~1.5s of
+	// no progress, jump while still pushing toward the crumb. A hull pressed into
+	// a door frame while jumping slides around the corner — the physical escape
+	// that no amount of repathing provides (this is why Unibox walks out of tight
+	// spawn corners where the old code only blacklisted). Ducks midair like
+	// Unibox for crouch-jump clearance. Applied AFTER HandleSmartJump so the
+	// stuck phase's buttons win over the state machine's.
+	if (m_eStuckPhase == STUCK_JUMP)
+	{
+		if (bOnGround)
+		{
+			pCmd->buttons &= ~IN_DUCK;
+			pCmd->buttons |= IN_JUMP;
+		}
+		else
+			pCmd->buttons |= IN_DUCK;
+	}
 }
 
-void CNavEngine::MoveTowards(C_TFPlayer* pLocal, CUserCmd* pCmd, const Vec3& vTarget)
+void CNavEngine::MoveTowards(C_TFPlayer* pLocal, CUserCmd* pCmd, const Vec3& vTarget, float flSpeedScale)
 {
 	if (!pLocal || !pCmd)
 		return;
 
 	Vec3 vLocalPos = pLocal->m_vecOrigin();
-	
+
 	// Calculate direction to target (2D only) — like Amalgam's ComputeMove/WalkTo
 	Vec3 vDirection = vTarget - vLocalPos;
 	vDirection.z = 0.0f;
-	
+
 	float flDist = vDirection.Length();
 	if (flDist < 1.0f)
 		return;
-	
+
 	vDirection.Normalize();
-	
+
 	// Get view angles
 	Vec3 vViewAngles = pCmd->viewangles;
-	
+
 	// Convert direction to forward/side move based on view angles
 	Vec3 vForward, vRight;
 	Math::AngleVectors(vViewAngles, &vForward, &vRight, nullptr);
@@ -711,13 +1150,98 @@ void CNavEngine::MoveTowards(C_TFPlayer* pLocal, CUserCmd* pCmd, const Vec3& vTa
 	vRight.z = 0.0f;
 	vForward.Normalize();
 	vRight.Normalize();
-	
+
 	// Calculate movement commands (like Amalgam's ComputeMove)
-	float flForwardMove = vDirection.Dot(vForward) * 450.0f;
-	float flSideMove = vDirection.Dot(vRight) * 450.0f;
-	
+	float flForwardMove = vDirection.Dot(vForward) * 450.0f * flSpeedScale;
+	float flSideMove = vDirection.Dot(vRight) * 450.0f * flSpeedScale;
+
 	pCmd->forwardmove = flForwardMove;
 	pCmd->sidemove = flSideMove;
+}
+
+Vec3 CNavEngine::AvoidObstacles(C_TFPlayer* pLocal, const Vec3& vGoalPos, const Vec3& vForward, const Vec3& vLeft)
+{
+	if (!pLocal)
+		return vGoalPos;
+
+	float flCurTime = I::GlobalVars->curtime;
+
+	// Check sparsely while the way is clear, every few ticks while actually
+	// steering around something (mirrors the TF2 bot's avoid timer invalidation)
+	if (!m_bWhiskerSteering && flCurTime < m_flNextWhiskerCheckTime)
+		return vGoalPos;
+
+	Vec3 vLocalPos = pLocal->m_vecOrigin();
+
+	// Small probe hull (quarter-width whiskers), lifted above step height so
+	// stairs and ramps read as clear, crouch-height tall so anything we could
+	// crouch under is ignored.
+	const float flSize = 10.0f;
+	const float flOffset = flSize + 2.0f;
+	const float flRange = 55.0f;
+	const Vec3 vHullMin(-flSize, -flSize, 18.1f);
+	const Vec3 vHullMax(flSize, flSize, 62.0f);
+
+	CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
+	CGameTrace trace = {};
+
+	// Left probe
+	float flLeftAvoid = 0.0f;
+	{
+		Vec3 vFrom = vLocalPos + vLeft * flOffset;
+		Vec3 vTo = vFrom + vForward * flRange;
+		H::AimUtils->TraceHull(vFrom, vTo, vHullMin, vHullMax, MASK_PLAYERSOLID_BRUSHONLY, &filter, &trace);
+		if (trace.startsolid)
+			flLeftAvoid = 1.0f;  // probe starts inside geometry — treat as fully blocked
+		else if (trace.fraction < 1.0f)
+			flLeftAvoid = 1.0f - trace.fraction;
+	}
+
+	// Right probe
+	float flRightAvoid = 0.0f;
+	{
+		Vec3 vFrom = vLocalPos - vLeft * flOffset;
+		Vec3 vTo = vFrom + vForward * flRange;
+		H::AimUtils->TraceHull(vFrom, vTo, vHullMin, vHullMax, MASK_PLAYERSOLID_BRUSHONLY, &filter, &trace);
+		if (trace.startsolid)
+			flRightAvoid = 1.0f;
+		else if (trace.fraction < 1.0f)
+			flRightAvoid = 1.0f - trace.fraction;
+	}
+
+	m_flWhiskerLeftAvoid = flLeftAvoid;
+	m_flWhiskerRightAvoid = flRightAvoid;
+	m_bWhiskerSteering = (flLeftAvoid > 0.0f || flRightAvoid > 0.0f);
+	m_flNextWhiskerCheckTime = flCurTime + (m_bWhiskerSteering ? 0.05f : 0.25f);
+
+	if (!m_bWhiskerSteering)
+		return vGoalPos;
+
+	// Steer away from the blocked side: keep moving mostly forward, pushed
+	// sideways away from the obstacle
+	float flAvoidResult = 0.0f;
+	if (flLeftAvoid <= 0.0f && flRightAvoid > 0.0f)
+		flAvoidResult = -flRightAvoid;   // left clear, right blocked → steer left
+	else if (flRightAvoid <= 0.0f && flLeftAvoid > 0.0f)
+		flAvoidResult = flLeftAvoid;     // right clear, left blocked → steer right
+	else
+	{
+		// Both blocked — steer away from whichever is deeper. If they're equal
+		// we're squarely facing a wall and the path itself must turn; don't fight it.
+		const float flEqualTolerance = 0.01f;
+		if (std::abs(flRightAvoid - flLeftAvoid) < flEqualTolerance)
+			return vGoalPos;
+		flAvoidResult = (flRightAvoid > flLeftAvoid) ? -flRightAvoid : flLeftAvoid;
+	}
+
+	Vec3 vAvoidDir = vForward * 0.5f - vLeft * flAvoidResult;
+	float flAvoidLen = vAvoidDir.Length2D();
+	if (flAvoidLen < 0.01f)
+		return vGoalPos;
+	vAvoidDir /= flAvoidLen;
+	vAvoidDir.z = 0.0f;
+
+	return vLocalPos + vAvoidDir * 100.0f;
 }
 
 void CNavEngine::CancelPath()
@@ -738,6 +1262,14 @@ void CNavEngine::CancelPath()
 	m_flAbandonCooldown = 0.0f;
 	m_pCachedLocalArea = nullptr;
 	m_flCachedLocalAreaTime = 0.0f;
+	m_bWhiskerSteering = false;
+	m_flWhiskerLeftAvoid = 0.0f;
+	m_flWhiskerRightAvoid = 0.0f;
+	m_flApproachCheckTime = 0.0f;
+	m_flApproachCheckDist = 0.0f;
+	m_flApproachBlockSince = 0.0f;
+	m_pLastSolveStartArea = nullptr;
+	ResetStuckProgress();
 }
 
 void CNavEngine::UpdateStuckTime(C_TFPlayer* pLocal)
@@ -746,56 +1278,192 @@ void CNavEngine::UpdateStuckTime(C_TFPlayer* pLocal)
 		return;
 
 	float flCurTime = I::GlobalVars->curtime;
+	const Vec3 vLocalPos = pLocal->m_vecOrigin();
 
 	// Get current nav area — use cached result from FollowPath if available
 	CNavArea* pCurrentArea = m_pCachedLocalArea;
 	if (!pCurrentArea || (flCurTime - m_flCachedLocalAreaTime) > 0.2f)
 	{
-		pCurrentArea = m_pMap->FindClosestNavArea(pLocal->m_vecOrigin());
+		pCurrentArea = m_pMap->FindClosestNavArea(vLocalPos);
 		m_pCachedLocalArea = pCurrentArea;
 		m_flCachedLocalAreaTime = flCurTime;
 	}
 
-	// Check if we're making progress (2D velocity check, like Amalgam)
-	Vec3 vVelocity = pLocal->m_vecVelocity();
-	if (vVelocity.Length2D() > 40.0f)
+	// === Progress sampling (ported from Unibox's TickStuckSample) ===
+	// The old velocity-only check (Length2D > 40 = moving) missed wall-grinding:
+	// a bot sliding along a wall reads as "moving" while making zero progress
+	// toward its crumb, so it ground into geometry forever without ever being
+	// called stuck. Sample every 0.3s while grounded: progress = the nav area
+	// changed, or the distance to the active crumb dropped by more than a
+	// speed-scaled threshold (fast movement between samples isn't a false stuck,
+	// slow deliberate movement still counts).
+	const bool bOnGround = (pLocal->m_fFlags() & FL_ONGROUND) != 0;
+	if (flCurTime >= m_flNextStuckSampleTime && bOnGround)
 	{
-		m_flInactivityTime = flCurTime;  // Moving, reset inactivity
-		m_pLastNavArea = pCurrentArea;
-		return;
-	}
+		m_flNextStuckSampleTime = flCurTime + 0.3f;
 
-	// We're stuck (no 2D movement) - track per-connection stuck time
-	float flStuckTime = flCurTime - m_flInactivityTime;
-	float flTrigger = 1.0f;  // StuckTime / 2 (like Amalgam's default)
+		const Vec3 vCrumbTarget = (m_nCurrentCrumbIndex < m_vCrumbs.size())
+			? m_vCrumbs[m_nCurrentCrumbIndex].m_vPos : m_vDestination;
+		Vec3 vToCrumb = vCrumbTarget - vLocalPos;
+		vToCrumb.z = 0.0f;
+		const float flDistToCrumb = vToCrumb.Length();
+		const float flSpeed = pLocal->m_vecVelocity().Length2D();
+		const bool bCrumbChanged = !m_bHasSampledCrumb
+			|| (m_vSampledCrumbPos - vCrumbTarget).LengthSqr() > 1.0f;
+		const bool bAreaChanged = m_pLastProgressArea && pCurrentArea && m_pLastProgressArea != pCurrentArea;
+		const bool bProgress = m_flLastSampleDistToCrumb == FLT_MAX || bCrumbChanged || bAreaChanged
+			|| flDistToCrumb < m_flLastSampleDistToCrumb - (std::max)(8.0f, flSpeed * 0.3f * 0.18f);
 
-	if (flStuckTime > flTrigger && m_pLastNavArea && pCurrentArea)
-	{
-		// Track stuck time on this specific connection (from→to)
-		auto& rFromMap = m_pMap->m_mConnectionStuckTime[m_pLastNavArea];
-		auto& rEntry = rFromMap[pCurrentArea];
-		rEntry.m_iStuckTicks++;
-		rEntry.m_flExpireTime = flCurTime + 10.0f;  // Expires in 10 seconds
+		m_vSampledCrumbPos = vCrumbTarget;
+		m_bHasSampledCrumb = true;
+		m_flLastSampleDistToCrumb = flDistToCrumb;
 
-		// If stuck for too many ticks on this connection, blacklist it and repath
-		// (like Amalgam's iDetectTicks check)
-		int iDetectTicks = 30;  // ~0.46s at 66 tick rate
-		if (rEntry.m_iStuckTicks > iDetectTicks)
+		if (bProgress)
 		{
-			// Blacklist the destination area (like Amalgam's blacklist)
-			m_pMap->m_mStuckBlacklist[pCurrentArea] = {
-				flCurTime + 10.0f,  // Blacklist expires in 10 seconds
-				2500.0f             // Massive penalty
-			};
-
-			// Reset pather so it recalculates with the blacklist
-			m_pMap->m_pather.Reset();
-
-			AbandonPath("Stuck (connection blacklisted)");
+			m_flInactivityTime = flCurTime;   // HandleSmartJump keys off this
+			m_eStuckPhase = STUCK_IDLE;       // escaped — stop jumping (stale phase kept jumping)
+			m_pLastProgressArea = pCurrentArea;
+			m_pLastNavArea = pCurrentArea;
 			return;
 		}
 	}
 
+	// We're stuck (no progress toward the crumb) — wall-grinding now reaches
+	// here too, it used to pass the velocity check
+	float flStuckTime = flCurTime - m_flInactivityTime;
+
+	// === Unibox's TickStuckSample phase ladder ===
+	// Idle until 1.5s without progress, Jump until 1.85s, Fail after. FollowPath
+	// applies the Jump phase (IN_JUMP while still pushing toward the crumb — a hull
+	// pressed into a door frame while jumping slides around the corner). Fail was
+	// 1.0s before with no jump at all, so the old bot never even tried the one
+	// escape that needs no repathing.
+	if (flStuckTime <= 1.5f)
+	{
+		m_eStuckPhase = STUCK_IDLE;
+		m_pLastNavArea = pCurrentArea;
+		return;
+	}
+	m_eStuckPhase = (flStuckTime <= 1.85f) ? STUCK_JUMP : STUCK_FAIL;
+	if (m_eStuckPhase == STUCK_JUMP || !bOnGround || !pCurrentArea)
+	{
+		// Airborne: no fail — descents take time and midair repathing is useless.
+		// An issued stuck jump keeps its midair duck (Unibox crouch-jumps it).
+		if (!bOnGround && m_eStuckPhase == STUCK_FAIL)
+			m_eStuckPhase = STUCK_JUMP;
+		m_pLastNavArea = pCurrentArea;
+		return;
+	}
+
+	// === Fail phase (stuck > 1.85s with no progress) ===
+	// Unibox's AbandonPath(bStuck) -> RecordStuckFailure: credit the fail to the
+	// exact path connection and corridor-block it briefly; the destination AREA is
+	// only marked after repeated strikes on the same link. The old response
+	// blacklisted the area past the blocker on the FIRST fail with a 20000 penalty
+	// — at Dustbowl spawn that poisoned the only exit area, every repath failed
+	// until the mark lapsed, and the bot cycled between grinding the door frame
+	// and standing sealed out of its own exit.
+
+	// Attribute the fail to an edge the NEXT solve would actually traverse. Marks
+	// key on the area the last solve STARTED from (m_pLastSolveStartArea): NavTo's
+	// start candidate can be an area past the wall the bot is grinding (the hull
+	// trace to its center threads a door opening), and anchoring on
+	// FindClosestNavArea(bot) then sealed links in a world the solver never
+	// visited — Dustbowl logged 20+ strikes on one link while every solve
+	// regenerated the identical grinding route. The current crumb's stamped area
+	// is the fallback (crumbs stamp the LEAVING area, so it is the from-side of
+	// the leg the path is walking — Unibox's lastCrumb->currentCrumb).
+	CNavArea* pFromArea = m_pLastSolveStartArea
+		? m_pLastSolveStartArea
+		: ((m_nCurrentCrumbIndex < m_vCrumbs.size() && m_vCrumbs[m_nCurrentCrumbIndex].m_pNavArea)
+			? m_vCrumbs[m_nCurrentCrumbIndex].m_pNavArea : pCurrentArea);
+	CNavArea* pBlockTarget = nullptr;
+	Vec3 vBlockCrumbPos = {};
+	{
+		size_t uProbe = m_nCurrentCrumbIndex;
+		int iTried = 0;
+		while (uProbe < m_vCrumbs.size() && iTried < 6)
+		{
+			CNavArea* pCrumbArea = m_vCrumbs[uProbe].m_pNavArea
+				? m_vCrumbs[uProbe].m_pNavArea : m_pMap->FindClosestNavArea(m_vCrumbs[uProbe].m_vPos);
+			if (pCrumbArea && pCrumbArea != pFromArea)
+			{
+				pBlockTarget = pCrumbArea;
+				vBlockCrumbPos = m_vCrumbs[uProbe].m_vPos;
+				break;
+			}
+			uProbe++;
+			iTried++;
+		}
+	}
+
+	// Classify the blocker with a brush-only hull trace to the target crumb: a
+	// crowd of players never hits it, so onlookers can't poison the marks.
+	bool bBlockedByWorld = false;
+	if (pBlockTarget)
+	{
+		const Vec3 vFrom = vLocalPos + Vec3(0.0f, 0.0f, 18.0f);
+		const Vec3 vTo = vBlockCrumbPos + Vec3(0.0f, 0.0f, 18.0f);
+		const Vec3 vHullMin(-NAV_HULL_HALF_WIDTH, -NAV_HULL_HALF_WIDTH, 0.0f);
+		const Vec3 vHullMax(NAV_HULL_HALF_WIDTH, NAV_HULL_HALF_WIDTH, 62.0f);
+		CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
+		CGameTrace trace = {};
+		H::AimUtils->TraceHull(vFrom, vTo, vHullMin, vHullMax, MASK_PLAYERSOLID_BRUSHONLY, &filter, &trace);
+		bBlockedByWorld = trace.fraction < 0.98f;
+
+		// Entity blockers (func_door stage gate, respawn-room door, func_brush)
+		// move or vanish on their own: stand and wait instead of failing — jumping
+		// at a shut gate and re-solving into it buys nothing. A blocker still shut
+		// after 25s is effectively permanent and falls through to the strikes.
+		if (bBlockedByWorld && trace.m_pEnt && trace.m_pEnt->entindex() != 0
+			&& flStuckTime < 25.0f)
+		{
+			m_pLastNavArea = pCurrentArea;
+			return;
+		}
+	}
+
+	// The to-side: the probe's first different-area crumb, else the from area
+	// itself (Unibox's pTo→pTo self-mark when the whole leg stays in one area).
+	CNavArea* pToArea = pBlockTarget ? pBlockTarget : pFromArea;
+	auto& rEntry = m_pMap->m_mConnectionStuckTime[pFromArea][pToArea];
+	if (rEntry.m_flExpireTime > 0.0f && rEntry.m_flExpireTime <= flCurTime)
+	{
+		rEntry.m_iStuckTicks = 0;
+		rEntry.m_iFailStrikes = 0;
+	}
+	rEntry.m_iStuckTicks += 5;          // +250 solve cost per fail (AdjacentCost: ticks * 50)
+	rEntry.m_iFailStrikes++;
+	rEntry.m_flExpireTime = flCurTime + 100.0f;  // Unibox StuckExpireTime — strikes
+	                                             // accumulate across grind cycles
+
+	// Corridor-block the exact failed link (Unibox's stuck MarkConnection):
+	// AdjacentCost hard-excludes it for 6s (Unibox StuckBlacklistTime default) so
+	// the repath must find a different way in.
+	if (pFromArea != pToArea)
+		m_pMap->MarkConn(pFromArea, pToArea, false, 6.0f, true);
+
+	// Unibox's 3-strike rule: the same link failing over and over means the area
+	// past it is the problem (sealed gate, one-way trap) — make the repath and the
+	// goal machine rotate elsewhere. A penalty, not a skip: when the link is the
+	// only route, the solve still goes through instead of sealing.
+	if (rEntry.m_iFailStrikes >= 3)
+		m_pMap->m_mStuckBlacklist[pToArea] = { flCurTime + 6.0f, 20000.0f };
+
+	// Unibox's EnsureLocalExit: never let our own marks seal us in. If every exit
+	// of the current area is now corridor-blocked, shorten them so the next solve
+	// can retry the only route (with the Jump phase backing the retry).
+	if (!m_pMap->HasUsableExit(pCurrentArea))
+		m_pMap->ShortenExitBlocks(pCurrentArea, 5.0f);
+
+	NavDebug("stuck fail: link %u->%u strike %d%s (probe %u)",
+		pFromArea->m_uId, pToArea->m_uId, rEntry.m_iFailStrikes,
+		bBlockedByWorld ? " (world blocked)" : "",
+		pCurrentArea->m_uId);
+
+	// Reset pather so the reroute sees the new marks, then abandon into a repath
+	m_pMap->m_pather.Reset();
+	AbandonPath(bBlockedByWorld ? "Stuck (wall on path connection)" : "Stuck (no progress)");
 	m_pLastNavArea = pCurrentArea;
 }
 
@@ -842,6 +1510,7 @@ void CNavEngine::AbandonPath(const char* sReason)
 	// Clear current path
 	m_vCrumbs.clear();
 	m_nCurrentCrumbIndex = 0;
+	m_bApproachingDestination = false;   // an abandon during the approach phase must not leave IsPathing() true
 	m_vCurrentPathDir = {};
 	m_eCurrentPriority = NAV_PRIO_NONE;
 
@@ -850,6 +1519,57 @@ void CNavEngine::AbandonPath(const char* sReason)
 	{
 		NavTo(vLastDest, eLastPrio, true);
 	}
+}
+
+// Ported from Unibox's IsPlayerPassableNavigation: can the player walk the
+// straight line vFrom -> vTo? Two ray traces run along the walk line, offset to
+// its sides by the nav hull half-width and lifted above step height (so stairs
+// and ramps don't read as blockers; near-equal endpoint heights are levelled so
+// gentle slopes don't clip the ray through rising ground). A hit on either side
+// means geometry is in the way. Zero-extent hulls are treated as rays by the
+// engine (m_IsRay in cmodel.h).
+bool CNavEngine::IsPlayerPassableNavigation(C_TFPlayer* pLocal, const Vec3& vFrom, const Vec3& vTo)
+{
+	if (!pLocal)
+		return false;
+
+	Vec3 vDelta = vTo - vFrom;
+	vDelta.z = 0.0f;
+	if (vDelta.Length() < 16.0f)
+		return true;   // portal-to-portal hops this short are too noisy to trace
+
+	Vec3 vRight(-vDelta.y, vDelta.x, 0.0f);
+	vRight.Normalize();
+	const Vec3 vOffset = vRight * NAV_HULL_HALF_WIDTH;
+
+	Vec3 vStart = vFrom;
+	vStart.z += PLAYER_CROUCHED_JUMP_HEIGHT;   // ray height above the mesh floor
+	Vec3 vEnd = vTo;
+	vEnd.z += PLAYER_CROUCHED_JUMP_HEIGHT;
+	if (std::abs(vEnd.z - vStart.z) <= PLAYER_JUMP_HEIGHT)
+		vEnd.z = vStart.z;   // level corridor test for ramps/steps within jump height
+
+	const Vec3 vRayMins(0.0f, 0.0f, 0.0f);
+	const Vec3 vRayMaxs(0.0f, 0.0f, 0.0f);
+	CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
+	CGameTrace trace = {};
+
+	H::AimUtils->TraceHull(vStart - vOffset, vEnd - vOffset, vRayMins, vRayMaxs, MASK_PLAYERSOLID_BRUSHONLY, &filter, &trace);
+	if (trace.fraction < 1.0f)
+		return false;
+
+	H::AimUtils->TraceHull(vStart + vOffset, vEnd + vOffset, vRayMins, vRayMaxs, MASK_PLAYERSOLID_BRUSHONLY, &filter, &trace);
+	return trace.fraction >= 1.0f;
+}
+
+void CNavEngine::ResetStuckProgress()
+{
+	m_flNextStuckSampleTime = 0.0f;
+	m_flLastSampleDistToCrumb = FLT_MAX;
+	m_vSampledCrumbPos = {};
+	m_bHasSampledCrumb = false;
+	m_pLastProgressArea = nullptr;
+	m_eStuckPhase = STUCK_IDLE;   // fresh path — no stale jump/fail phase
 }
 
 void CNavEngine::VischeckPath(C_TFPlayer* pLocal)
@@ -870,8 +1590,8 @@ void CNavEngine::VischeckPath(C_TFPlayer* pLocal)
 	m_flNextVischeckTime = flCurTime + 0.5f;
 
 	// Player hull dimensions (like Amalgam's IsWalkable)
-	const Vec3 vHullMin(-20.0f, -20.0f, 0.0f);
-	const Vec3 vHullMax(20.0f, 20.0f, 72.0f);
+	const Vec3 vHullMin(-NAV_HULL_HALF_WIDTH, -NAV_HULL_HALF_WIDTH, 0.0f);
+	const Vec3 vHullMax(NAV_HULL_HALF_WIDTH, NAV_HULL_HALF_WIDTH, 72.0f);
 	const Vec3 vStepHeight(0.0f, 0.0f, 18.0f);  // m_flStepSize approximation
 
 	// Only check segments ahead of the current crumb index
@@ -897,30 +1617,50 @@ void CNavEngine::VischeckPath(C_TFPlayer* pLocal)
 		Vec3 vFrom = m_vCrumbs[i].m_vPos;
 		Vec3 vTo = m_vCrumbs[i + 1].m_vPos;
 
+		// Direct mesh connections are trusted (ported from Unibox's VischeckPath,
+		// which never abandons them: "if (!bPassable && bConnected) continue").
+		// Doorways, props and corners legitimately intersect this hull test on
+		// real routes — penalizing + abandoning them every 0.5s was the spawn
+		// freeze ("spawn pinball"). Genuine blockers on these links are caught on
+		// contact by the progress sampler + stuck branches instead.
+		CNavArea* pSegFrom = m_vCrumbs[i].m_pNavArea;
+		CNavArea* pSegTo = m_vCrumbs[i + 1].m_pNavArea;
+		if (pSegFrom && pSegTo && m_pMap->HasDirectConnection(pSegFrom, pSegTo))
+			continue;
+
 		CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
 		CGameTrace trace = {};
 
 		H::AimUtils->TraceHull(vFrom + vStepHeight, vTo + vStepHeight, vHullMin, vHullMax, MASK_PLAYERSOLID_BRUSHONLY, &filter, &trace);
 
-		if (trace.fraction < 1.0f && !trace.startsolid)
+		// Only a substantially blocked segment fails. Edge-to-edge traces between
+		// adjacent areas legitimately graze corners on valid paths (in tight rooms
+		// like spawn, the old 0.85 threshold blocked its own doorway every 0.5s and
+		// froze the bot); anything above half-blocked is left to the whiskers and
+		// stuck logic, which handle genuine blockers on contact.
+		if (trace.fraction < 0.5f && !trace.startsolid)
 		{
-			// Blacklist the nav areas of the blocked segment so the next path avoids them
+			// Penalize the specific CONNECTION this segment traverses (FROM area →
+			// TO area), not the whole TO area. A whole-area blacklist excluded the
+			// doorway/room for 30s and the bot refused to path through its own
+			// spawn; a connection penalty keeps the link usable when it's the only
+			// route and lapses after 15s instead of poisoning the mesh.
 			CNavArea* pFromArea = m_vCrumbs[i].m_pNavArea;
 			CNavArea* pToArea = m_vCrumbs[i + 1].m_pNavArea;
 
-			if (pToArea)
+			if (pFromArea && pToArea && pFromArea != pToArea)
 			{
-				m_pMap->m_mStuckBlacklist[pToArea] = {
-					flCurTime + 15.0f,  // Blacklist for 15 seconds
-					5000.0f             // Heavy penalty
-				};
-			}
-			if (pFromArea && pFromArea != pToArea)
-			{
-				m_pMap->m_mStuckBlacklist[pFromArea] = {
-					flCurTime + 15.0f,
-					3000.0f
-				};
+				auto& rEntry = m_pMap->m_mConnectionStuckTime[pFromArea][pToArea];
+				// Escalate instead of pinning: a fixed penalty solved back into the
+				// SAME path every repath (vischeck blocked it, abandoned, repathed,
+				// blocked again — the spawn pinball in the debug log). Each block
+				// makes this connection costlier, so the next solve routes around
+				// it as soon as ANY alternative exists; the cap keeps a last-resort
+				// route available when the connection is the only way through.
+				rEntry.m_iStuckTicks = (std::min)(rEntry.m_iStuckTicks + 30, 600);
+				rEntry.m_flExpireTime = flCurTime + 15.0f;
+				NavDebug("vischeck: conn %u->%u blocked (frac %.2f), penalty now %.0f",
+					pFromArea->m_uId, pToArea->m_uId, trace.fraction, rEntry.m_iStuckTicks * 50.0f);
 			}
 
 			// Track vischeck failures for this destination
@@ -934,7 +1674,7 @@ void CNavEngine::VischeckPath(C_TFPlayer* pLocal)
 				return;
 			}
 
-			// Reset pather so it recalculates with the new blacklists
+			// Reset pather so it recalculates with the new penalties
 			m_pMap->m_pather.Reset();
 
 			AbandonPath("Path blocked by world (hull trace)");
@@ -949,6 +1689,12 @@ void CNavEngine::VischeckPath(C_TFPlayer* pLocal)
 void CNavEngine::Reset(bool bForced)
 {
 	CancelPath();
+
+	// Clear solve throttling so a fresh map solves immediately
+	m_flNextSolveTime = 0.0f;
+	m_flFailedPathUntil = 0.0f;
+	m_vFailedDest = {};
+	m_flFailBackoff = 1.0f;
 
 	// Get current map name from engine
 	const char* szLevelName = I::EngineClient->GetLevelName();
@@ -976,15 +1722,45 @@ void CNavEngine::Reset(bool bForced)
 
 	// Reload nav mesh for new map
 	std::string sNavPath = "tf/maps/" + sMapPath;
+
+	// A failed load used to be retried from scratch every CreateMove tick: each
+	// attempt re-opens the .nav file and builds + frees the whole CMap including
+	// the MicroPather pools (~0.9 MB of allocator traffic per tick). Throttle
+	// retries of the same missing mesh; real map changes still load immediately
+	// through the forced Reset(true) from LevelInitPostEntity.
+	static std::string s_sFailedMap;
+	static float s_flLastFailTime = -5.0f;
+	if (!bForced && sMapPath == s_sFailedMap && I::GlobalVars->realtime - s_flLastFailTime < 5.0f)
+		return;
+
+	// Scrub state tied to the OLD map's clock and mesh: curtime restarts at 0
+	// on a level change, so absolute-time throttles left over from the previous
+	// map read as "not yet" for the entire new map (min repath interval,
+	// vischeck, jump throttle, abandon cooldown), and CNavArea* caches point
+	// into the mesh we're about to free. CancelPath above covered the rest.
+	m_flNextVischeckTime = 0.0f;
+	m_flLastJumpTime = 0.0f;
+	m_flLastAbandonTime = 0.0f;
+	m_flLastPathTime = 0.0f;
+	m_flDropNudgeStartTime = 0.0f;
+	m_vDropNudgeDir = {};
+	m_pLastNavArea = nullptr;
+	m_vDestination = {};
+	m_vLastDestination = {};
+	m_bRouteVarietyResetForDest = false;
+
 	m_pMap = std::make_unique<CMap>(sNavPath.c_str());
 
 	if (!m_pMap || m_pMap->m_eState != NavState::Active)
 	{
 		m_pMap.reset();
 		m_sLastMapName.clear();
+		s_sFailedMap = sMapPath;
+		s_flLastFailTime = I::GlobalVars->realtime;
 		return;
 	}
 
+	s_sFailedMap.clear();
 	m_sLastMapName = sMapPath;
 	m_vRespawnRoomExitAreas.clear();
 	m_bUpdatedRespawnRooms = false;
@@ -1013,63 +1789,230 @@ bool CNavEngine::IsSurfaceWalkable(const Vec3& vNormal) const
 	return vNormal.z > 0.7f;
 }
 
+namespace
+{
+	// Shared read for IsSetupTime()/AreSetupGatesClosed(). The round-state
+	// props ride on the game rules proxy's RecvTable, but Source delivers them
+	// through SendProxy_GameRules, which redirects the proxy's "game_rules"
+	// sub-table into the GAME RULES OBJECT — the offsets are relative to
+	// CTFGameRules, not the proxy entity, so they resolve against
+	// I::TFGameRules() (the same object Unibox reads with the same netvar
+	// class names). The previous version scanned the entity list for the
+	// proxy ENTITY and applied these offsets to it, which read garbage:
+	// setup was never detected and the bot ground against the closed gates.
+	struct SetupRoundState_t
+	{
+		bool bValid = false;   // rules object found and at least one prop resolved
+		bool bMvM = false;
+		bool bPipeline = false;   // plr_pipeline's preround isn't a gate hold
+		int iRoundState = -1;
+		bool bInSetup = false;
+		bool bInWaitingForPlayers = false;
+	};
+
+	// Round-state trace, throttled to ~1/s (and only with CFG::NavBot_Debug on):
+	// shows the live values IsSetupTime/AreSetupGatesClosed act on, so a stuck
+	// wait-for-setup test tells us whether the game-rules read itself works
+	void TraceRoundState(const char* szFmt, ...)
+	{
+		static float flLastTraceTime = -1.0f;
+		const float flNow = I::GlobalVars->curtime;
+		if (flLastTraceTime >= 0.0f && flNow >= flLastTraceTime && flNow - flLastTraceTime < 1.0f)
+			return;
+		flLastTraceTime = flNow;
+
+		char szBuf[512];
+		va_list args;
+		va_start(args, szFmt);
+		vsnprintf_s(szBuf, sizeof(szBuf), _TRUNCATE, szFmt, args);
+		va_end(args);
+		NavDebug("%s", szBuf);
+	}
+
+	SetupRoundState_t QuerySetupRoundState()
+	{
+		SetupRoundState_t tState;
+
+		const auto pGameRules = I::TFGameRules();
+		if (!pGameRules)
+		{
+			TraceRoundState("no game rules object (I::TFGameRules() == null) — setup state unreadable");
+			return tState;
+		}
+
+		// The TF proxy (CTFGameRulesProxy) embeds the base round table
+		// (CTeamplayRoundBasedRulesProxy); try the derived class name first
+		// and the base name second so either recv-table layout resolves
+		auto GetProxyOffset = [](const char* szProp) -> int
+		{
+			int nOffset = NetVars::GetNetVar("CTFGameRulesProxy", szProp);
+			if (nOffset <= 0)
+				nOffset = NetVars::GetNetVar("CTeamplayRoundBasedRulesProxy", szProp);
+			return nOffset;
+		};
+		static int nRoundStateOffset = GetProxyOffset("m_iRoundState");
+		static int nInSetupOffset = GetProxyOffset("m_bInSetup");
+		static int nInWaitingOffset = GetProxyOffset("m_bInWaitingForPlayers");
+		static int nMvMOffset = GetProxyOffset("m_bPlayingMannVsMachine");
+
+		if (nRoundStateOffset <= 0 && nInSetupOffset <= 0 && nInWaitingOffset <= 0)
+		{
+			TraceRoundState("game rules object %p but every round-state prop resolved to offset 0 — netvar lookup failed", pGameRules);
+			return tState;
+		}
+
+		const auto pBase = reinterpret_cast<std::uintptr_t>(pGameRules);
+		tState.bValid = true;
+		tState.bMvM = nMvMOffset > 0 && *reinterpret_cast<bool*>(pBase + nMvMOffset);
+
+		// GetLevelName() returns "maps/mapname.bsp" — match substrings
+		const std::string sLevelName = I::EngineClient->GetLevelName();
+		tState.bPipeline = sLevelName.find("plr_pipeline") != std::string::npos;
+
+		if (nRoundStateOffset > 0)
+			tState.iRoundState = *reinterpret_cast<int*>(pBase + nRoundStateOffset);
+		if (nInSetupOffset > 0)
+			tState.bInSetup = *reinterpret_cast<bool*>(pBase + nInSetupOffset);
+		if (nInWaitingOffset > 0)
+			tState.bInWaitingForPlayers = *reinterpret_cast<bool*>(pBase + nInWaitingOffset);
+
+		TraceRoundState("roundstate=%d inSetup=%d waiting=%d mvm=%d pipeline=%d (%s)",
+			tState.iRoundState, tState.bInSetup, tState.bInWaitingForPlayers,
+			tState.bMvM, tState.bPipeline, sLevelName.c_str());
+
+		return tState;
+	}
+}
+
 bool CNavEngine::IsSetupTime()
 {
-	// Ported from Amalgam's IsSetupTime
-	// During setup time on PL/CP maps, blue team can't leave spawn
-	// The bot should stop pathing and wait for setup to end
+	// Hold semantics (Unibox IsSetupTime): GR_STATE_PREROUND gates everyone;
+	// m_bInSetup / waiting-for-players gate only BLU on PL/CP maps. MvM wave
+	// setup is a respawn-room hold with no gates to wait behind.
 	static float flLastCheckTime = 0.0f;
 	static bool bSetupTime = false;
 
 	float flNow = I::GlobalVars->curtime;
-	if (flNow - flLastCheckTime < 0.5f)
+	// curtime resets to 0 on a map change: a negative delta means the clock
+	// went backwards, so fall through and recompute — otherwise this throttle
+	// never expires and the bot serves the previous map's answer forever
+	const float flSinceLastCheck = flNow - flLastCheckTime;
+	if (flSinceLastCheck >= 0.0f && flSinceLastCheck < 0.5f)
 		return bSetupTime;
 	flLastCheckTime = flNow;
 
-	auto pLocal = H::Entities->GetLocal();
-	if (!pLocal || !pLocal->IsAlive())
+	bSetupTime = false;
+
+	const SetupRoundState_t t = QuerySetupRoundState();
+	if (!t.bValid || t.bMvM)
 		return bSetupTime;
 
-	if (auto pGameRules = I::TFGameRules())
+	// GR_STATE_PREROUND = 3 — the gates are closed for everyone (Unibox
+	// excludes plr_pipeline's quirky preround)
+	if (!t.bPipeline && t.iRoundState == 3)
+		return bSetupTime = true;
+
+	// BLU is the gate-blocked team on PL/CP maps: m_bInSetup, and the
+	// waiting-for-players phase before the first round reads as setup too
+	auto pLocal = H::Entities->GetLocal();
+	if (!t.bPipeline && pLocal && pLocal->IsAlive() && pLocal->m_iTeamNum() == TF_TEAM_BLUE)
 	{
-		auto pBase = reinterpret_cast<std::uintptr_t>(pGameRules);
+		if (t.bInSetup)
+			return bSetupTime = true;
 
-		// Read round state from CTeamplayRoundBasedRulesProxy netvar
-		static int nRoundStateOffset = NetVars::GetNetVar("CTeamplayRoundBasedRulesProxy", "m_iRoundState");
-		static int nInSetupOffset = NetVars::GetNetVar("CTeamplayRoundBasedRulesProxy", "m_bInSetup");
-		static int nInWaitingOffset = NetVars::GetNetVar("CTeamplayRoundBasedRulesProxy", "m_bInWaitingForPlayers");
-
-		if (nRoundStateOffset > 0)
+		if (t.bInWaitingForPlayers)
 		{
-			int nRoundState = *reinterpret_cast<int*>(pBase + nRoundStateOffset);
-
-			// GR_STATE_PREROUND = 3 - all players frozen
-			if (nRoundState == 3)
+			const std::string sLevelName = I::EngineClient->GetLevelName();
+			if (sLevelName.find("pl_") != std::string::npos || sLevelName.find("cp_") != std::string::npos
+				|| sLevelName.find("plr_") != std::string::npos)
 				return bSetupTime = true;
 		}
-
-		// Blue team can't move during setup on PL/CP maps
-		if (pLocal->m_iTeamNum() == TF_TEAM_BLUE)
-		{
-			bool bInSetup = nInSetupOffset > 0 ? *reinterpret_cast<bool*>(pBase + nInSetupOffset) : false;
-			bool bInWaiting = nInWaitingOffset > 0 ? *reinterpret_cast<bool*>(pBase + nInWaitingOffset) : false;
-
-			if (bInSetup)
-				return bSetupTime = true;
-
-			// On PL/CP maps, waiting for players also counts as setup for blue
-			if (bInWaiting)
-			{
-				std::string sLevelName = I::EngineClient->GetLevelName();
-				if (sLevelName.find("pl_") == 0 || sLevelName.find("cp_") == 0 || sLevelName.find("plr_") == 0)
-					return bSetupTime = true;
-			}
-		}
-
-		bSetupTime = false;
 	}
 
 	return bSetupTime;
+}
+
+bool CNavEngine::AreSetupGatesClosed()
+{
+	// Team-agnostic companion for the path-cost gate seal: a closed setup
+	// gate brush is solid for BOTH teams, so while setup runs even RED's
+	// paths must route around the BLU gates. Gating the seal on
+	// IsSetupTime() (BLU-hold semantics) let defenders solve paths straight
+	// through the closed gates and grind them.
+	static float flLastCheckTime = 0.0f;
+	static bool bClosed = false;
+
+	float flNow = I::GlobalVars->curtime;
+	const float flSinceLastCheck = flNow - flLastCheckTime;
+	if (flSinceLastCheck >= 0.0f && flSinceLastCheck < 0.5f)
+		return bClosed;
+	flLastCheckTime = flNow;
+
+	bClosed = false;
+
+	const SetupRoundState_t t = QuerySetupRoundState();
+	if (!t.bValid || t.bMvM)
+		return bClosed;
+
+	if (!t.bPipeline && (t.iRoundState == 3 || t.bInSetup))
+		return bClosed = true;
+
+	// Waiting for players before the first round: gates still closed on
+	// PL/CP maps
+	if (t.bInWaitingForPlayers)
+	{
+		const std::string sLevelName = I::EngineClient->GetLevelName();
+		if (sLevelName.find("pl_") != std::string::npos || sLevelName.find("cp_") != std::string::npos
+			|| sLevelName.find("plr_") != std::string::npos)
+			return bClosed = true;
+	}
+
+	return bClosed;
+}
+
+bool CNavEngine::IsMovementLocked()
+{
+	// Unibox NavRuntime::IsMovementLocked: during waiting-for-players, preround
+	// (gates closed) and between-rounds the bot cannot move at all — its job
+	// system stands down and its engine cancels any live path. This IS the
+	// "wait for setup" behavior; there is no wander helper in Unibox. The lock
+	// is team-agnostic (RED defenders hold too) and skips MvM, whose wave
+	// setup is a respawn-room hold with no gates.
+	static float flLastCheckTime = 0.0f;
+	static bool bLocked = false;
+
+	float flNow = I::GlobalVars->curtime;
+	const float flSinceLastCheck = flNow - flLastCheckTime;
+	if (flSinceLastCheck >= 0.0f && flSinceLastCheck < 0.5f)
+		return bLocked;
+	flLastCheckTime = flNow;
+
+	bLocked = false;
+
+	const SetupRoundState_t t = QuerySetupRoundState();
+	if (!t.bValid || t.bMvM)
+		return bLocked;
+
+	// GR_STATE_PREROUND = 3, GR_STATE_BETWEEN_RNDS = 10; m_bInSetup covers
+	// quirky states where the gates are shut outside a plain preround
+	if (t.bInWaitingForPlayers || t.bInSetup || t.iRoundState == 3 || t.iRoundState == 10)
+		bLocked = true;
+
+	return bLocked;
+}
+
+bool CNavEngine::IsRoundLive()
+{
+	// Unibox CanCaptureObjective: capture logic only runs in a live round
+	const SetupRoundState_t t = QuerySetupRoundState();
+	if (!t.bValid)
+		return true;   // unreadable — don't blind the capture job (Unibox: no rules -> true)
+
+	if (t.bInWaitingForPlayers)
+		return false;
+
+	// GR_STATE_RND_RUNNING = 4, GR_STATE_STALEMATE = 7
+	return t.iRoundState == 4 || t.iRoundState == 7;
 }
 
 bool CNavEngine::SmartJump(C_TFPlayer* pLocal, CUserCmd* pCmd, const Vec3& vTarget)
@@ -1367,11 +2310,13 @@ void CNavEngine::UpdateRespawnRooms()
 
 	if (vSpawnRooms.empty())
 	{
-		m_bUpdatedRespawnRooms = true;
-		return;
+		// No func_respawnroom entities visible client-side. Don't bail out —
+		// the nav file usually carries authored SPAWN_ROOM flags, and the exit
+		// derivation below only needs those. (The old early return latched the
+		// update flag with an empty exit cache, so EscapeSpawn had no exit
+		// candidates for the rest of the map.)
 	}
-
-	// Flag nav areas that are within spawn rooms
+	// Flag nav areas that are within spawn room entity volumes
 	std::unordered_set<CNavArea*> setSpawnRoomAreas;
 
 	for (auto& tRoom : vSpawnRooms)
@@ -1408,18 +2353,31 @@ void CNavEngine::UpdateRespawnRooms()
 		}
 	}
 
-	// Set spawn room exit attributes on areas connected to spawn rooms
-	for (auto pArea : setSpawnRoomAreas)
+	// Set spawn room exit attributes on areas connected to spawn rooms.
+	// Derived from the SPAWN_ROOM flags themselves (set by the entity scan
+	// above, or authored directly in the nav file) rather than the scan's set,
+	// so exits exist even when no func_respawnroom entities are visible — the
+	// file flags are always present. The EXIT flag check dedupes areas
+	// connected from more than one spawn area.
+	for (auto& tArea : m_pMap->m_navfile.m_vAreas)
 	{
-		for (auto& tConnection : pArea->m_vConnections)
+		if (!(tArea.m_iTFAttributeFlags & (TF_NAV_SPAWN_ROOM_RED | TF_NAV_SPAWN_ROOM_BLUE)))
+			continue;
+		for (auto& tConnection : tArea.m_vConnections)
 		{
-			if (!(tConnection.m_pArea->m_iTFAttributeFlags & (TF_NAV_SPAWN_ROOM_RED | TF_NAV_SPAWN_ROOM_BLUE | TF_NAV_SPAWN_ROOM_EXIT)))
-			{
-				tConnection.m_pArea->m_iTFAttributeFlags |= TF_NAV_SPAWN_ROOM_EXIT;
-				m_vRespawnRoomExitAreas.push_back(tConnection.m_pArea);
-			}
+			CNavArea* pNext = tConnection.m_pArea;
+			if (!pNext || pNext == &tArea)
+				continue;
+			if (pNext->m_iTFAttributeFlags & (TF_NAV_SPAWN_ROOM_RED | TF_NAV_SPAWN_ROOM_BLUE | TF_NAV_SPAWN_ROOM_EXIT))
+				continue;
+			pNext->m_iTFAttributeFlags |= TF_NAV_SPAWN_ROOM_EXIT;
+			m_vRespawnRoomExitAreas.push_back(pNext);
 		}
 	}
+
+	if (CFG::NavBot_Debug)
+		NavDebug("UpdateRespawnRooms: %zu spawn exits (%zu rooms, %zu flagged areas)",
+			m_vRespawnRoomExitAreas.size(), vSpawnRooms.size(), setSpawnRoomAreas.size());
 
 	m_bUpdatedRespawnRooms = true;
 }

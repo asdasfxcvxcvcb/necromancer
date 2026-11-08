@@ -7,6 +7,7 @@ class CMisc
 {
 public:
 	void Bunnyhop(CUserCmd* pCmd);
+	void AutoJumpbug(C_TFPlayer* pLocal, CUserCmd* pCmd);
 	void AutoStrafer(CUserCmd* pCmd);
 	void CrouchWhileAirborne(CUserCmd* pCmd);
 	void NoiseMakerSpam();
@@ -15,7 +16,6 @@ public:
 
 	void AutoRocketJump(CUserCmd* cmd);
 	void AutoDisguise(CUserCmd* cmd);
-	void AutoUber(CUserCmd* cmd);
 	void AutoMedigun(CUserCmd* cmd);
 	void MovementLock(CUserCmd* cmd);
 	void MvmInstaRespawn();
@@ -40,7 +40,12 @@ public:
 	// Check if auto FaN is currently running
 	bool IsAutoFaNRunning() const { return m_bFaNRunning; }
 
+	float m_flLastJumpbug = 0.f;
+	float m_flLastEdgeJump = 0.f;
+	float m_flLastFaN = 0.f;
+
 private:
+	bool m_bJumpbugEngaged = false;
 	int m_iRJFrame = -1;
 	int m_iRJDelay = 0;
 	bool m_bRJFull = false;

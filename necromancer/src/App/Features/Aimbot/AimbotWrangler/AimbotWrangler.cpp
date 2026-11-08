@@ -416,21 +416,22 @@ bool CAimbotWrangler::GetHitscanTarget(C_TFPlayer* pLocal, C_ObjectSentrygun* pS
 			
 			// Target body for sentry (more reliable)
 			Vec3 vPos = pPlayer->GetHitboxPos(HITBOX_PELVIS);
-			
+
+			// FOV-filter first - the sentry visibility trace is a real ray per
+			// candidate, so don't pay it for targets the FOV rejects anyway
+			Vec3 vAngleTo = Math::CalcAngle(vLocalPos, vPos);
+			const float flFOVTo = Math::CalcFov(vLocalAngles, vAngleTo);
+			const float flDistTo = vSentryPos.DistTo(vPos);
+
+			if (flFOVTo > CFG::Aimbot_Hitscan_FOV)
+				continue;
+
 			// Check if SENTRY can see the target (this is what matters for wrangler)
 			CGameTrace sentryTrace = {};
 			CTraceFilterHitscan sentryFilter = {};
 			sentryFilter.m_pIgnore = pSentry;
 			H::AimUtils->Trace(vSentryPos, vPos, MASK_SHOT, &sentryFilter, &sentryTrace);
 			if (sentryTrace.m_pEnt != pPlayer && sentryTrace.fraction < 1.0f)
-				continue;
-			
-			// Wrangler aims based on player's view - calculate angle from player's eye
-			Vec3 vAngleTo = Math::CalcAngle(vLocalPos, vPos);
-			const float flFOVTo = Math::CalcFov(vLocalAngles, vAngleTo);
-			const float flDistTo = vSentryPos.DistTo(vPos);
-			
-			if (flFOVTo > CFG::Aimbot_Hitscan_FOV)
 				continue;
 			
 			m_vecTargets.emplace_back(WranglerTarget_t{
@@ -454,20 +455,21 @@ bool CAimbotWrangler::GetHitscanTarget(C_TFPlayer* pLocal, C_ObjectSentrygun* pS
 			
 			Vec3 vPos = pBuilding->GetCenter();
 			
+			// FOV-filter first - the sentry visibility trace is a real ray per
+			// candidate, so don't pay it for targets the FOV rejects anyway
+			Vec3 vAngleTo = Math::CalcAngle(vLocalPos, vPos);
+			const float flFOVTo = Math::CalcFov(vLocalAngles, vAngleTo);
+			const float flDistTo = vSentryPos.DistTo(vPos);
+
+			if (flFOVTo > CFG::Aimbot_Hitscan_FOV)
+				continue;
+
 			// Check if SENTRY can see the target
 			CGameTrace sentryTrace = {};
 			CTraceFilterHitscan sentryFilter = {};
 			sentryFilter.m_pIgnore = pSentry;
 			H::AimUtils->Trace(vSentryPos, vPos, MASK_SHOT, &sentryFilter, &sentryTrace);
 			if (sentryTrace.m_pEnt != pBuilding && sentryTrace.fraction < 1.0f)
-				continue;
-			
-			// Wrangler aims based on player's view
-			Vec3 vAngleTo = Math::CalcAngle(vLocalPos, vPos);
-			const float flFOVTo = Math::CalcFov(vLocalAngles, vAngleTo);
-			const float flDistTo = vSentryPos.DistTo(vPos);
-			
-			if (flFOVTo > CFG::Aimbot_Hitscan_FOV)
 				continue;
 			
 			m_vecTargets.emplace_back(WranglerTarget_t{

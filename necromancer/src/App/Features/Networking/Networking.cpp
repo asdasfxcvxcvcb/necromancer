@@ -1,5 +1,6 @@
 #include "Networking.h"
 #include "../../../SDK/TF2/demo.h"
+#include "../CFG.h"
 
 // Signatures for CL_Move rebuild internals
 MAKE_SIGNATURE(Net_Time, "engine.dll", "F2 0F 10 0D ? ? ? ? F2 0F 5C 0D", 0x4);
@@ -9,8 +10,7 @@ MAKE_SIGNATURE(Host_Framerate_stddeviation, "engine.dll", "F3 0F 10 0D ? ? ? ? 4
 void CNetworking::CL_Sendmove()
 {
 	std::byte data[4000];
-	const auto pNetChan = reinterpret_cast<CNetChannel*>(I::ClientState->m_NetChannel);
-	const int Chocked = pNetChan->m_nChokedPackets;
+	const int Chocked = I::ClientState->chokedcommands;
 	const int NextCommandNumber = I::ClientState->lastoutgoingcommand + Chocked + 1;
 
 	CLC_Move Message;
@@ -38,7 +38,8 @@ void CNetworking::CL_Sendmove()
 }
 
 void CNetworking::CL_Move(float AccumulatedExtraSamples, bool FinalTick) {
-	auto cl_cmdrate = I::CVar->FindVar("cl_cmdrate");
+	// cached: FindVar is a by-string lookup and this runs every tick plus every shifted tick
+	static auto cl_cmdrate = I::CVar->FindVar("cl_cmdrate");
 
 	if (!I::ClientState->IsConnected())
 	{
@@ -60,7 +61,9 @@ void CNetworking::CL_Move(float AccumulatedExtraSamples, bool FinalTick) {
 		}
 	}
 
-	if ((!I::ClientState->m_NetChannel->IsLoopback()) &&
+	const bool bForceSend = FinalTick && (Shifting::bRecharging || Shifting::bShifting);
+
+	if ((!I::ClientState->m_NetChannel->IsLoopback()) && !bForceSend &&
 		((NetTime < I::ClientState->m_flNextCmdTime) || !I::ClientState->m_NetChannel->CanPacket() || !FinalTick)) {
 		bSendPacket = false;
 	}
@@ -107,6 +110,7 @@ void CNetworking::CL_Move(float AccumulatedExtraSamples, bool FinalTick) {
 	}
 
 	I::ClientState->lastoutgoingcommand = I::ClientState->m_NetChannel->SendDatagram(NULL);
+	Shifting::nServerBudgetEstimate = std::max(Shifting::nServerBudgetEstimate - (I::ClientState->chokedcommands + 1), 0);
 	I::ClientState->chokedcommands = 0;
 
 	if (I::ClientState->IsActive()) {

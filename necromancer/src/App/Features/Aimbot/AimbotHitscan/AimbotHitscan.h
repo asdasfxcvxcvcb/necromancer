@@ -28,6 +28,13 @@ class CAimbotHitscan
 
 	std::vector<HitscanTarget_t> m_vecTargets = {};
 
+	bool m_bMinigunBurst = false;
+
+	Vec3 m_vLastSilentAngles = {};
+	int m_nLastSilentCmd = 0;
+	bool m_bOwnedLastTick = false;
+	bool m_bReturnActive = false;
+
 
 
 	int GetAimHitbox(C_TFWeaponBase* pWeapon);
@@ -65,6 +72,10 @@ class CAimbotHitscan
 	bool ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, const HitscanTarget_t& target);
 
 	void HandleFire(CUserCmd* pCmd, C_TFWeaponBase* pWeapon);
+
+	bool HandleMinigun(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, const HitscanTarget_t& target, bool bCanFireNow, bool bUserAttack2, bool bAimKeyDown);
+
+	void UpdateSilentReturn(CUserCmd* pCmd, C_TFPlayer* pLocal, bool bOwned);
 
 	void DragIndicator();
 

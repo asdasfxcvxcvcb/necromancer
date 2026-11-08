@@ -30,8 +30,13 @@ MAKE_HOOK(CTFPlayerPanel_GetTeam, Signatures::CTFPlayerPanel_GetTeam.Get(), int,
 				iReturn = iLocalTeam;
 
 			// Force health bar visibility to update when team changes
+			// (+688 is a hardcoded offset - a TF2 update moving the field
+			// would make us vcall through garbage, so validate the object
+			// is readable and its vtable actually belongs to client.dll)
 			if (auto pHealthBar = *reinterpret_cast<void**>(reinterpret_cast<uintptr_t>(rcx) + 688);
-				pHealthBar && reinterpret_cast<bool(__fastcall*)(void*)>(Memory::GetVFunc(pHealthBar, 34))(pHealthBar) != (iReturn == iLocalTeam))
+				pHealthBar && Memory::IsReadableMemory(pHealthBar, sizeof(void*))
+				&& Memory::IsInModule("client.dll", *static_cast<void* const*>(pHealthBar))
+				&& reinterpret_cast<bool(__fastcall*)(void*)>(Memory::GetVFunc(pHealthBar, 34))(pHealthBar) != (iReturn == iLocalTeam))
 				*reinterpret_cast<int*>(reinterpret_cast<uintptr_t>(rcx) + 624) = -1;
 		}
 	}

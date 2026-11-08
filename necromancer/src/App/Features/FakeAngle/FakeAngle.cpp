@@ -1,5 +1,6 @@
 #include "FakeAngle.h"
 #include "../CFG.h"
+#include "../AntiBackstab/AntiBackstab.h"
 #include "../amalgam_port/AmalgamCompat.h"
 
 // Jitter system (hash-based like Amalgam)
@@ -106,98 +107,27 @@ bool CFakeAngle::ShouldRun(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd
 	return true;
 }
 
-// Legit AA: Get yaw offset based on class, weapon slot, and movement direction
-static float GetLegitAAOffset(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd)
+static float GetLegitAAOffset(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
 {
-	if (!pLocal || !pWeapon || !pCmd)
+	if (!pLocal || !pWeapon)
 		return 0.0f;
-	
-	int iClass = pLocal->m_iClass();
-	
-	// Get weapon slot
-	int iSlot = pWeapon->GetSlot();
-	bool bPrimary = (iSlot == WEAPON_SLOT_PRIMARY);
-	bool bSecondary = (iSlot == WEAPON_SLOT_SECONDARY);
-	bool bMelee = (iSlot >= WEAPON_SLOT_MELEE);
-	
-	// Get movement direction
-	bool bForward = pCmd->forwardmove > 10.0f;
-	bool bBackward = pCmd->forwardmove < -10.0f;
-	bool bLeft = pCmd->sidemove < -10.0f;
-	bool bRight = pCmd->sidemove > 10.0f;
-	bool bStill = !bForward && !bBackward && !bLeft && !bRight;
-	
+
+	const int iClass = pLocal->m_iClass();
+	const int iSlot = pWeapon->GetSlot();
+	const bool bPrimary = iSlot == WEAPON_SLOT_PRIMARY;
+	const bool bSecondary = iSlot == WEAPON_SLOT_SECONDARY;
+
 	switch (iClass)
 	{
-		case TF_CLASS_SCOUT:
-			if (bStill) return -105.0f; // All weapons standing still
-			if (bMelee) return bLeft ? 100.0f : 100.0f;
-			if (bLeft) return bSecondary ? 100.0f : 120.0f;
-			return -110.0f;
-		
-		case TF_CLASS_SOLDIER:
-			if (bMelee) return bStill ? -95.0f : 100.0f;
-			if (bSecondary) return bStill ? 110.0f : 100.0f;
-			if (bStill) return -95.0f;
-			if (bRight) return -100.0f;
-			return 110.0f;
-		
-		case TF_CLASS_PYRO:
-			return bStill ? 110.0f : 115.0f;
-		
-		case TF_CLASS_DEMOMAN:
-			return 120.0f;
-		
-		case TF_CLASS_HEAVYWEAPONS:
-			return bStill ? 120.0f : 115.0f;
-		
-		case TF_CLASS_ENGINEER:
-			return 105.0f;
-		
-		case TF_CLASS_MEDIC:
-			if (bStill) return -180.0f;
-			if (bLeft && (bForward || bBackward)) return 125.0f;
-			if (bRight && (bForward || bBackward)) return -100.0f;
-			if (bForward || bBackward) return 105.0f;
-			if (bLeft) return 125.0f;
-			if (bRight) return -100.0f;
-			return 105.0f;
-		
-		case TF_CLASS_SNIPER:
-			if (bPrimary)
-			{
-				bool bScoped = pLocal->InCond(TF_COND_ZOOMED);
-				return bScoped ? -90.0f : -180.0f;
-			}
-			if (bSecondary)
-			{
-				if (bStill) return -180.0f;
-				if (bLeft && (bForward || bBackward)) return 90.0f;
-				if (bRight && (bForward || bBackward)) return -90.0f;
-				return -180.0f;
-			}
-			// Melee
-			if (bStill) return 120.0f;
-			if (bForward && !bLeft && !bRight) return -90.0f;
-			if (bBackward && !bLeft && !bRight) return -180.0f;
-			if (bRight) return -120.0f;
-			if (bLeft) return 110.0f;
-			return 120.0f;
-		
-		case TF_CLASS_SPY:
-			if (bSecondary && pWeapon->GetWeaponID() == TF_WEAPON_BUILDER)
-				return -180.0f; // Sapper
-			if (bMelee)
-				return bRight ? -120.0f : 100.0f;
-			// Primary/Revolver
-			if (bStill) return 180.0f;
-			if (bLeft && bBackward) return 90.0f;
-			if (bLeft && bForward) return 120.0f;
-			if (bLeft) return 110.0f;
-			if (bForward && !bRight) return 105.0f;
-			if (bBackward && !bRight) return 95.0f;
-			if (bRight) return -130.0f;
-			return 105.0f;
+		case TF_CLASS_SCOUT: return 155.0f;
+		case TF_CLASS_SOLDIER: return 150.0f;
+		case TF_CLASS_PYRO: return 150.0f;
+		case TF_CLASS_DEMOMAN: return 150.0f;
+		case TF_CLASS_HEAVYWEAPONS: return bPrimary ? 160.0f : 180.0f;
+		case TF_CLASS_ENGINEER: return 155.0f;
+		case TF_CLASS_MEDIC: return bPrimary ? 165.0f : (bSecondary ? 180.0f : 170.0f);
+		case TF_CLASS_SNIPER: return bPrimary ? -155.0f : 165.0f;
+		case TF_CLASS_SPY: return bPrimary ? -170.0f : 170.0f;
 	}
 	return 0.0f;
 }
@@ -214,7 +144,7 @@ float CFakeAngle::GetYawOffset(C_TFPlayer* pLocal, bool bFake)
 		
 		// Real yaw uses the legit AA offset
 		auto pWeapon = H::Entities->GetWeapon();
-		return GetLegitAAOffset(pLocal, pWeapon, G::CurrentUserCmd);
+		return GetLegitAAOffset(pLocal, pWeapon);
 	}
 	
 	const int iMode = bFake ? CFG::Exploits_AntiAim_YawFake : CFG::Exploits_AntiAim_YawReal;
@@ -435,14 +365,26 @@ void CFakeAngle::MinWalk(CUserCmd* pCmd, C_TFPlayer* pLocal)
 	}
 }
 
-void CFakeAngle::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, bool bSendPacket, const Vec3& vOriginalAngles)
+void CFakeAngle::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, bool& bSendPacket, const Vec3& vOriginalAngles)
 {
 	// Set global anti-aim flag (like Amalgam's G::AntiAim)
 	bool bAntiAimActive = AntiAimOn() && ShouldRun(pLocal, pWeapon, pCmd);
-	
-	// FakeShotAngles runs regardless of anti-aim state
-	FakeShotAngles(pLocal, pWeapon, pCmd);
-	
+
+	// Anti-backstab (Amalgam Misc::AntiBackstab): 0 = nothing, 1 = yaw override,
+	// 2 = pitch override. It may force-unchoke bSendPacket when engaged so the
+	// protective angle actually goes out instead of waiting for the choke window
+	int iAntiBackstab = F::AntiBackstab->Run(pLocal, pCmd, &bSendPacket);
+	if (iAntiBackstab)
+	{
+		// The anti-backstab angles were written directly into the cmd - take the
+		// silent path at the end of CreateMove so they reach the server untouched
+		// and the local view isn't snapped along (also required when anti-aim is
+		// off, otherwise the 269/271 pitch would end up on the user's screen)
+		G::bSilentAngles = true;
+	}
+	else
+		FakeShotAngles(pLocal, pWeapon, pCmd);
+
 	if (!bAntiAimActive)
 	{
 		// No anti-aim, no threat - just store current angles to BOTH
@@ -458,8 +400,9 @@ void CFakeAngle::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon
 	// Store to the appropriate angle variable based on bSendPacket
 	// ============================================
 	
-	// Calculate pitch (same for both real and fake)
-	float flPitch = GetPitch(vOriginalAngles.x);
+	// Calculate pitch (same for both real and fake) - when anti-backstab pitch
+	// engaged, keep the 269/271 it wrote (that's the whole trick)
+	float flPitch = iAntiBackstab == 2 ? pCmd->viewangles.x : GetPitch(vOriginalAngles.x);
 	
 	// Get reference to the appropriate angle to apply (like Amalgam)
 	Vec2& vAngles = bSendPacket ? m_vFakeAngles : m_vRealAngles;
@@ -468,18 +411,20 @@ void CFakeAngle::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon
 	// bSendPacket = true means we're calculating FAKE angles (what enemies see)
 	// bSendPacket = false means we're calculating REAL angles (your hitbox)
 	vAngles.x = flPitch;
-	vAngles.y = GetYaw(pLocal, pCmd, bSendPacket);
+	vAngles.y = !iAntiBackstab ? GetYaw(pLocal, pCmd, bSendPacket) : pCmd->viewangles.y;
 	
 	// On send tick, also calculate and store the real angles for comparison
 	// This is needed for SetupFakeModel to properly compare real vs fake
 	if (bSendPacket)
 	{
 		float flRealYaw = GetYaw(pLocal, pCmd, false);  // false = real angles
-		m_vRealAngles = { flPitch, flRealYaw };
+		float flRealPitch = iAntiBackstab == 2 ? std::clamp(vOriginalAngles.x, -89.0f, 89.0f) : flPitch;
+		m_vRealAngles = { flRealPitch, flRealYaw };
 	}
 	
 	// Clamp if anti-cheat compatibility is enabled
-	if (CFG::Misc_AntiCheat_Enabled)
+	// (never clamp the anti-backstab pitch - 269/271 is the trick itself)
+	if (CFG::Misc_AntiCheat_Enabled && iAntiBackstab != 2)
 	{
 		vAngles.x = std::clamp(vAngles.x, -89.0f, 89.0f);
 		vAngles.y = Math::NormalizeAngle(vAngles.y);
@@ -491,7 +436,7 @@ void CFakeAngle::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon
 	H::AimUtils->FixMovement(pCmd, pCmd->viewangles, Vec3{ vAngles.x, vAngles.y, 0.0f });
 	pCmd->viewangles.x = vAngles.x;
 	pCmd->viewangles.y = vAngles.y;
-	
+
 	G::bSilentAngles = true;
 	
 	MinWalk(pCmd, pLocal);

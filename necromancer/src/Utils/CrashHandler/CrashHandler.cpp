@@ -1,5 +1,7 @@
 #include "CrashHandler.h"
 
+#include "../InterfaceManager/InterfaceManager.h"
+
 #include <DbgHelp.h>
 #include <Psapi.h>
 #include <deque>
@@ -120,6 +122,48 @@ static std::string GetModuleOffset(void* address)
 	return std::format("{:#x}", reinterpret_cast<uintptr_t>(address));
 }
 
+// Validate a memory range with VirtualQuery — this never faults, and unlike
+// __try/__except it also works while the vectored handler is dispatching
+// another exception (SEH scope tables are bypassed during nested dispatch,
+// which is exactly when our reporter used to fault itself)
+static bool IsReadableMemory(const void* pAddr, size_t uSize)
+{
+	if (!pAddr || uSize > 0x10000)
+		return false;
+
+	const auto dwAddr = reinterpret_cast<uintptr_t>(pAddr);
+	MEMORY_BASIC_INFORMATION mbi = {};
+	if (!VirtualQuery(pAddr, &mbi, sizeof(mbi)) || mbi.State != MEM_COMMIT)
+		return false;
+	if (mbi.Protect & PAGE_GUARD)
+		return false;
+
+	constexpr DWORD dwReadable = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY
+		| PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+	if (!(mbi.Protect & dwReadable))
+		return false;
+
+	// the whole range must sit inside this committed region
+	const auto dwRegionEnd = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
+	return dwAddr + uSize <= dwRegionEnd;
+}
+
+// Read *pPtr without ever faulting ourselves - the pointer can be garbage
+// while we're reporting the crash that garbage caused
+static const void* SafeDeref(const void* pPtr)
+{
+	if (!pPtr || !IsReadableMemory(pPtr, sizeof(void*)))
+		return nullptr;
+	__try
+	{
+		return *static_cast<const void* const*>(pPtr);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		return nullptr;
+	}
+}
+
 // Get the directory where our DLL lives — avoids __ImageBase which isn't always available
 static std::string GetModuleDirectory()
 {
@@ -199,6 +243,8 @@ static void DumpModules(std::stringstream& ss)
 // Read a pointer from memory safely — returns 0 if unreadable
 static uintptr_t SafeReadPtr(uintptr_t addr)
 {
+	if (!IsReadableMemory(reinterpret_cast<const void*>(addr), sizeof(uintptr_t)))
+		return 0;
 	__try { return *reinterpret_cast<uintptr_t*>(addr); }
 	__except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
 }
@@ -208,7 +254,10 @@ static void SafeReadPtrs4(uintptr_t addr, uintptr_t out[4])
 {
 	__try {
 		auto* p = reinterpret_cast<uintptr_t*>(addr);
-		out[0] = p[0]; out[1] = p[1]; out[2] = p[2]; out[3] = p[3];
+		out[0] = IsReadableMemory(p, sizeof(uintptr_t)) ? p[0] : 0;
+		out[1] = IsReadableMemory(p + 1, sizeof(uintptr_t)) ? p[1] : 0;
+		out[2] = IsReadableMemory(p + 2, sizeof(uintptr_t)) ? p[2] : 0;
+		out[3] = IsReadableMemory(p + 3, sizeof(uintptr_t)) ? p[3] : 0;
 	}
 	__except (EXCEPTION_EXECUTE_HANDLER) {
 		out[0] = out[1] = out[2] = out[3] = 0;
@@ -266,9 +315,24 @@ static LONG APIENTRY ExceptionFilter(PEXCEPTION_POINTERS ExceptionInfo)
 	case STATUS_ACCESS_VIOLATION: sError = "ACCESS VIOLATION"; break;
 	case STATUS_STACK_OVERFLOW:   sError = "STACK OVERFLOW"; break;
 	case STATUS_HEAP_CORRUPTION:  sError = "HEAP CORRUPTION"; break;
-	case STATUS_RUNTIME_ERROR:    sError = "RUNTIME ERROR"; break;
 	case DBG_PRINTEXCEPTION_C:     return EXCEPTION_EXECUTE_HANDLER;
+	// Benign first-chance exceptions the game/cheat handle themselves (MSVC
+	// C++ throw, int3, debug prints, thread names). Running the full report
+	// path (SymInitialize + StackWalk64 + MiniDumpWriteDump) for these stalled
+	// the throwing thread and wrote bogus crash dumps; passing them through
+	// dispatches identically to before. Same skip list as Amalgam's handler.
+	case STATUS_RUNTIME_ERROR:
+	case EXCEPTION_BREAKPOINT:
+	case 0x4001000A: // DBG_PRINTEXCEPTION_WIDE_C
+	case 0x406D1388: // DBG_THREAD_NAMING
+		return EXCEPTION_EXECUTE_HANDLER;
 	}
+
+	// Fault inside a guarded region (see s_iSuppressDepth): the local
+	// __except at the call site handles it. Reporting here would pop a crash
+	// dialog for a fault the cheat is deliberately swallowing every frame.
+	if (CCrashHandler::s_iSuppressDepth > 0)
+		return EXCEPTION_EXECUTE_HANDLER;
 
 	if (s_mAddresses.contains(ExceptionInfo->ExceptionRecord->ExceptionAddress)
 		|| s_iExceptions && GetAsyncKeyState(VK_SHIFT) & 0x8000 && GetAsyncKeyState(VK_RETURN) & 0x8000)
@@ -338,6 +402,32 @@ static LONG APIENTRY ExceptionFilter(PEXCEPTION_POINTERS ExceptionInfo)
 		ss << std::format("InGame: {} | LevelTransition: {}\n", ctx.m_bInGame, ctx.m_bLevelTransition);
 		ss << std::format("Map: {}\n", ctx.m_szMapName[0] ? ctx.m_szMapName : "(unknown)");
 		ss << std::format("CmdNum: {} | TargetIdx: {} | EntityIdx: {}\n", ctx.m_nCommandNumber, ctx.m_nTargetIndex, ctx.m_nEntityIndex);
+	}
+
+	// Interface health - a pointer or vtable reported outside its owning
+	// module means our interface globals got corrupted/use-after-freed,
+	// which turns virtual calls into jumps into random game code
+	ss << "\n--- Interfaces ---\n";
+	for (const InterfaceInit_t* pInterface : U::InterfaceManager->GetInterfaces())
+	{
+		if (!pInterface || !pInterface->m_pPtr)
+			continue;
+
+		const void* pPtr = *pInterface->m_pPtr;
+		const void* pVTable = SafeDeref(pPtr);
+		// a "vtable" outside any module is usually a plain struct with no
+		// vtable at all (GlobalVars/ClientState read their first floats) -
+		// don't flag those as corruption
+		HMODULE hVTableMod = nullptr;
+		const bool bVTableValid = pVTable && GetModuleHandleExA(
+			GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+			reinterpret_cast<LPCSTR>(pVTable), &hVTableMod);
+		ss << std::format("{} ({}): ptr {} | vtable {}\n",
+			pInterface->m_pszVersion, pInterface->m_pszDLLName,
+			GetModuleOffset(const_cast<void*>(pPtr)),
+			pVTable ? (bVTableValid ? GetModuleOffset(const_cast<void*>(pVTable))
+				: std::format("0x{:x} (not in any module - plain struct?)", reinterpret_cast<uintptr_t>(pVTable)))
+				: std::string("unreadable"));
 	}
 
 	// Registers

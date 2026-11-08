@@ -1,23 +1,30 @@
 #pragma once
 
 #include "../AmalgamCompat.h"
-#include "../../MovementSimulation/MovementSimulation.h"
+#include "../MoveSim/MoveSimAmalgam.h"
 #include "../AimbotGlobal/AimbotGlobal.h"
+#include "../ProjectileSimulation/ProjectileSimulation.h" // ProjectileInfo (m_tProjInfo)
 
 // ============================================
-// Point Type Enum (for splash prediction)
+// Amalgam's current point/flag architecture
 // ============================================
+// PointFlags: what a direct hitbox offset carries (Regular = flat, Lob = high arc)
+// PointType:  how a point is validated when tested
+//             (Direct = projectile must hit the target itself,
+//              Geometry = projectile lands near a surface point,
+//              Air = airdet happens near a point)
+// CalculateFlags: which extras CalculateAngle applies
+//             (TwoPass = redo the solution from the real spawn position,
+//              SetupClip = re-trace the spawn position at the aim angles,
+//              AccountDrag = vphysics drag compensation, LobAngle = high arc)
 
-Enum(PointType, None = 0, Regular = 1 << 0, Obscured = 1 << 1, ObscuredExtra = 1 << 2, ObscuredMulti = 1 << 3)
-
-// ============================================
-// Calculation State Enum
-// ============================================
-
+Enum(PointFlags, None = 0, Regular = 1 << 0, Lob = 1 << 1)
+Enum(PointType, Direct, Geometry, Air)
+Enum(CalculateFlags, None = 0, TwoPass = 1 << 0, SetupClip = 1 << 1, AccountDrag = 1 << 2, LobAngle = 1 << 3, Accuracy = TwoPass | SetupClip | AccountDrag)
 Enum(Calculated, Pending, Good, Time, Bad)
 
 // ============================================
-// Solution Structure
+// Structures
 // ============================================
 
 struct Solution_t
@@ -28,15 +35,56 @@ struct Solution_t
     int m_iCalculated = CalculatedEnum::Pending;
 };
 
-// ============================================
-// Point Structure
-// ============================================
+struct Setup_t
+{
+    Vec3 m_vPoint = {};
+    int m_iType = PointTypeEnum::Geometry;
+};
 
 struct Point_t
 {
     Vec3 m_vPoint = {};
     Solution_t m_tSolution = {};
+    int m_iType = PointTypeEnum::Direct;
 };
+
+struct Offset_t
+{
+    Vec3 m_vOffset = {};
+    int m_iFlags = PointFlagsEnum::Regular;
+};
+using Directs_t = std::unordered_map<int, Offset_t>;
+using Splashes_t = std::vector<int>;
+
+struct History_t
+{
+    Vec3 m_vOrigin = {};
+    int m_iSimtime = 0;
+
+    History_t() = default;
+    History_t(const Vec3& vOrigin, int iSimtime) : m_vOrigin(vOrigin), m_iSimtime(iSimtime) {}
+};
+struct Direct_t : History_t
+{
+    float m_flPitch = 0.f;
+    float m_flYaw = 0.f;
+    float m_flTime = 0.f;
+    Vec3 m_vPoint = {};
+    int m_iPriority = 0;
+
+    Direct_t() = default;
+    Direct_t(const History_t& tHistory, float flPitch, float flYaw, float flTime, const Vec3& vPoint, int iPriority)
+        : History_t(tHistory), m_flPitch(flPitch), m_flYaw(flYaw), m_flTime(flTime), m_vPoint(vPoint), m_iPriority(iPriority) {}
+};
+struct Splash_t : History_t
+{
+    float m_flTimeTo = 0.f;
+
+    Splash_t() = default;
+    Splash_t(const History_t& tHistory, float flTimeTo) : History_t(tHistory), m_flTimeTo(flTimeTo) {}
+};
+using DirectHistory_t = std::unordered_map<int, std::vector<Direct_t>>;
+using SplashHistory_t = std::unordered_map<int, std::vector<Splash_t>>;
 
 // ============================================
 // Info Structure (projectile calculation context)
@@ -46,12 +94,13 @@ struct Info_t
 {
     C_TFPlayer* m_pLocal = nullptr;
     C_TFWeaponBase* m_pWeapon = nullptr;
+    Target_t* m_pTarget = nullptr;
+    C_BaseEntity* m_pProjectile = nullptr;
 
     Vec3 m_vLocalEye = {};
     Vec3 m_vTargetEye = {};
 
     float m_flLatency = 0.f;
-
     Vec3 m_vHull = {};
     Vec3 m_vOffset = {};
     Vec3 m_vAngFix = {};
@@ -59,19 +108,20 @@ struct Info_t
     float m_flGravity = 0.f;
     float m_flRadius = 0.f;
     float m_flRadiusTime = 0.f;
-    float m_flBoundingTime = 0.f;
+    float m_flBoundsTime = 0.f;
     float m_flOffsetTime = 0.f;
-    int m_iSplashCount = 0;
-    int m_iSplashMode = 0;
-    float m_flPrimeTime = 0;
-    int m_iPrimeTime = 0;
+    int m_iSplashRestrict = 0;
+    int m_iArmTime = 0;
+    float m_flNormalOffset = 0.f;
+    bool m_bIgnoreTiming = false;
 };
 
 // ============================================
-// Rocket Launcher Aimbot (Amalgam Port)
-// Supports: Splash prediction, Neckbreaker, Midpoint aim
-// Targets: Players, Buildings (sentries, dispensers, teleporters)
+// Projectile Aimbot (Amalgam port, current architecture)
 // ============================================
+// History-based solver: the simulation loop collects candidate direct points
+// and splash detonation windows per tick, then HandleDirect/HandleSplash
+// replay each candidate through ProjSim + TestAngle, best-first.
 
 class CAmalgamAimbotProjectile
 {
@@ -79,62 +129,73 @@ private:
     std::vector<Target_t> GetTargets(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon);
     std::vector<Target_t> SortTargets(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon);
 
-    int CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon);
+    Directs_t GetDirects();
+    Splashes_t GetSplashes();
+    void SetupSplashPoints(Vec3& vOrigin, std::vector<Setup_t>& vSplashPoints, int iFlags = CalculateFlagsEnum::None);
+    std::vector<Point_t> GetSplashPoints(Vec3 vOrigin, std::vector<Setup_t>& vSplashPoints, int iSimTime, int iFlags = CalculateFlagsEnum::Accuracy, bool bFirst = false);
+
+    void CalculateAngle(const Vec3& vLocalPos, const Vec3& vTargetPos, int iSimTime, Solution_t& tOut, int iFlags = CalculateFlagsEnum::Accuracy, int iTolerance = -1, float flRoll = 0.f);
+    bool TestAngle(const Vec3& vPoint, const Vec3& vAngles, int iSimTime, int iType, int iFlags, bool bSecondTest = false);
+
+    bool HandlePoint(const Vec3& vOrigin, int iSimTime, float flPitch, float flYaw, float flTime, const Vec3& vPoint, int iType = PointTypeEnum::Direct, int iFlags = PointFlagsEnum::Regular);
+    bool HandleDirect(DirectHistory_t& mDirectHistory);
+    bool HandleSplash(SplashHistory_t& mSplashHistory);
+
+    int CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, bool bUpdate = true);
     bool RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd);
 
-    // For auto airblast (stub)
+    // Auto airblast path (stubbed - Necromancer has no auto airblast integration yet)
     bool CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, C_BaseEntity* pProjectile);
+    bool TestAngle(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, C_BaseEntity* pProjectile, Target_t& tTarget, Vec3& vPoint, Vec3& vAngles, int iSimTime, bool bSplash, std::vector<Vec3>* pProjectilePath = nullptr);
 
-    bool Aim(Vec3 vCurAngle, Vec3 vToAngle, Vec3& vOut, int iMethod = Vars::Aimbot::General::AimType.Value);
-    void Aim(CUserCmd* pCmd, Vec3& vAngle, int iMethod = Vars::Aimbot::General::AimType.Value, bool bIsFiring = false);
+    bool Aim(const Vec3& vCurAngle, const Vec3& vToAngle, Vec3& vOut, int iMethod = Vars::Aimbot::General::AimType.Value);
+    void Aim(CUserCmd* pCmd, Vec3& vAngles, int iMethod = Vars::Aimbot::General::AimType.Value);
+
+    Info_t m_tInfo = {};
+    AmalgamMoveStorage m_tMoveStorage = {};
+    ProjectileInfo m_tProjInfo = {};
+    std::vector<Setup_t> m_vSplashPoints = {};
 
     bool m_bLastTickHeld = false;
+    bool m_bLastTickAimbotCharge = false;
+    bool m_bManualBailLatch = false;
 
     float m_flTimeTo = std::numeric_limits<float>::max();
     std::vector<Vec3> m_vPlayerPath = {};
     std::vector<Vec3> m_vProjectilePath = {};
-    std::vector<DrawBox_t> m_vBoxes = {};
 
-    // Prediction throttle — full prediction runs at ~17Hz,
-    // cached result used on intermediate ticks for cheap aim/firing/draw
-    int m_nLastPredictTick = 0;
-    bool m_bPredictionSession = false; // true after first prediction attempt (even if no target)
-    bool m_bWasReadyToFire = false;   // tracks can-fire transition for force-predict
-    int m_iCachedResult = 0;  // 0=none, 1=direct hit, 2=smooth/assistive
-    int m_iCachedTargetIndex = 0;
-    C_BaseEntity* m_pCachedEntity = nullptr;
-    Vec3 m_vCachedAngleTo = {};
-    Vec3 m_vCachedTargetPos = {};
-    std::vector<Vec3> m_vCachedProjectilePath = {};
-    std::vector<Vec3> m_vCachedPlayerPath = {};
+    Vec3 m_vAngleTo = {};
+    Vec3 m_vPredicted = {};
+    Vec3 m_vTarget = {};
+
+    // tick of the last validated (iResult == 1) solution - lets the failure
+    // path carry a fresh angle through validation-flicker gaps
+    int m_iLastSolutionTick = -1;
+
+    int m_iResult = false;
+    bool m_bUpdate = true;
+
+    // set by TestAngle when a flight traced into something other than its
+    // point's purpose (direct missed the target, splash never reached its
+    // surface) - the one failure mode muzzle roll (neckbreaker) can route
+    // around; cleared at every TestAngle entry
+    bool m_bObstructed = false;
+
+    // budget of roll angles the neckbreaker search may spend per HandleDirect
+    // or HandleSplash evaluation - full rolls across every candidate would
+    // multiply the simulation cost by 360/step
+    int m_iRollBudget = 0;
 
 public:
-    // Main entry point - only handles rocket launchers
-    void Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd);
-    
-    // Splash radius calculation
-    float GetSplashRadius(C_TFWeaponBase* pWeapon, C_TFPlayer* pPlayer);
-    float GetSplashRadius(C_BaseEntity* pProjectile, C_TFWeaponBase* pWeapon = nullptr, C_TFPlayer* pPlayer = nullptr, float flScale = 1.f, C_TFWeaponBase* pAirblast = nullptr);
+    // Main entry point. Claims every projectile-type weapon Necromancer
+    // dispatches here (EWeaponType::PROJECTILE), matching Amalgam's Run; the
+    // native projectile aimbot only ever runs for weapons that never reach
+    // this port.
+    bool Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd);
+    void RestoreCancel(C_TFPlayer* pLocal, CUserCmd* pCmd);
 
-    // Splash point generation - public for external use
-    std::unordered_map<int, Vec3> GetDirectPoints(Target_t& tTarget, C_BaseEntity* pProjectile = nullptr);
-    std::vector<Point_t> GetSplashPoints(Target_t& tTarget, std::vector<std::pair<Vec3, int>>& vSpherePoints, int iSimTime);
-    void SetupSplashPoints(Target_t& tTarget, std::vector<std::pair<Vec3, int>>& vSpherePoints, std::vector<std::pair<Vec3, Vec3>>& vSimplePoints);
-    std::vector<Point_t> GetSplashPointsSimple(Target_t& tTarget, std::vector<std::pair<Vec3, Vec3>>& vSpherePoints, int iSimTime);
-    
-    // Angle calculation and testing - public for external use
-    void CalculateAngle(const Vec3& vLocalPos, const Vec3& vTargetPos, int iSimTime, Solution_t& out, bool bAccuracy = true);
-    bool TestAngle(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, Target_t& tTarget, Vec3& vPoint, Vec3& vAngles, int iSimTime, bool bSplash, bool* pHitSolid = nullptr, std::vector<Vec3>* pProjectilePath = nullptr);
-    bool TestAngle(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, C_BaseEntity* pProjectile, Target_t& tTarget, Vec3& vPoint, Vec3& vAngles, int iSimTime, bool bSplash, std::vector<Vec3>* pProjectilePath = nullptr);
-    
-    // Info structure - public for external setup
-    Info_t m_tInfo = {};
-    
-    // Setup info for a weapon
-    void SetupInfo(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon);
-    
-    // Compute sphere points for splash prediction (hardcoded to 75 points)
-    static std::vector<std::pair<Vec3, int>> ComputeSphere(float flRadius, int iSamples);
+    float GetSplashRadius(C_TFWeaponBase* pWeapon, C_TFPlayer* pPlayer, float flScale = 1.f);
+    float GetSplashRadius(C_BaseEntity* pProjectile, C_TFWeaponBase* pWeapon = nullptr, C_TFPlayer* pPlayer = nullptr, float flScale = 1.f);
 
     int m_iLastTickCancel = 0;
 };

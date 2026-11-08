@@ -2,6 +2,8 @@
 
 #include "../../../SDK/SDK.h"
 
+struct PlayerPriority; // Players.h (full type included by the .cpp)
+
 class CVisualUtils
 {
 public:
@@ -9,6 +11,9 @@ public:
 
 	Color_t GetAlphaColor(Color_t base, float alpha);
 	Color_t GetEntityColor(C_TFPlayer* pLocal, C_BaseEntity* pEntity);
+	// Same tree as above, but takes the caller's cached friend/priority lookups
+	// so per-frame callers (ESP) don't re-run IsPlayerOnSteamFriendsList/GetInfo
+	Color_t GetEntityColor(C_TFPlayer* pLocal, C_TFPlayer* pPlayer, bool bIsFriend, bool bHasPriorityInfo, const PlayerPriority& tPriority);
 	Color_t GetEntityColorForOutlines(C_TFPlayer* pLocal, C_BaseEntity* pEntity);
 	Color_t GetEntityColorForMaterials(C_TFPlayer* pLocal, C_BaseEntity* pEntity);
 	Color_t GetHealthColor(int nHealth, int nMaxHealth);

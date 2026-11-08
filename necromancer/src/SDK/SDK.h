@@ -144,7 +144,11 @@ namespace SDKUtils
 			CGameTrace trace = {};
 			CTraceFilterCollideable filter = {};
 			filter.pSkip = player;
-			filter.iType = SKIP_CHECK;  // Skip player/entity collision checks, only trace world/props
+			// The redirect runs with SKIP_CHECK + MASK_SOLID: world, props and
+			// buildings (and enemy players - the mask carries CONTENTS_MONSTER
+			// and the filter falls through to the team check) redirect the
+			// flight direction, exactly like Amalgam and the server
+			filter.iType = SKIP_CHECK;
 			
 			Ray_t ray;
 			ray.Init(shoot_pos, end_pos);
@@ -341,7 +345,7 @@ namespace G
 	inline CUserCmd* CurrentUserCmd = nullptr;
 	inline CUserCmd* LastUserCmd = nullptr;  // Amalgam: previous tick's user cmd
 	inline CUserCmd OriginalCmd = {};  // Amalgam: unmodified user cmd for this tick
-	
+
 	// Smooth aimbot view angles - used to restore view when AA is active
 	inline Vec3 vSmoothAimAngles = {};
 	inline bool bUseSmoothAimAngles = false;
@@ -484,9 +488,14 @@ namespace Shifting
 	inline int nStickyDTTicksToUse = 0;       // How many ticks to use for sticky DT (set by RapidFire)
 	inline int nStickyRechargeTarget = 0;     // When > 0, stop recharging at this count instead of global max
 	inline bool bShiftingWarp = false;
+	inline float flLastWarp = 0.f;
 	inline int nCurrentShiftTick = 0;        // Current tick index during rapid fire shift (0-indexed)
 	inline int nTotalShiftTicks = 0;         // Total ticks being shifted
 	inline bool bTickbaseFixRecorded = false;
+	inline int nReleaseBacklog = 0;
+	inline int nReleaseSpent = 0;
+	inline bool bReleasePending = false;
+	inline int nShiftCooldownTicks = 0;
 
 	// Saved command state (from Amalgam)
 	inline CUserCmd SavedCmd = {};
@@ -505,6 +514,7 @@ namespace Shifting
 	// No deficit tracking, no tick-ahead tracking, no latency prediction.
 	// That stuff was causing more harm than good by artificially limiting DT.
 	inline int nMaxUsrCmdProcessTicks = 24;   // sv_maxusrcmdprocessticks (cached)
+	inline int nServerBudgetEstimate = 24;
 
 	inline int GetServerProcessBudget(int nReservedTicks = 0)
 	{
@@ -513,7 +523,7 @@ namespace Shifting
 		if (sv_maxusrcmdprocessticks)
 			nMaxUsrCmdProcessTicks = sv_maxusrcmdprocessticks->GetInt();
 
-		const int nServerMax = (std::max)(nMaxUsrCmdProcessTicks, 1);
+		const int nServerMax = std::clamp(nServerBudgetEstimate, 0, (std::max)(nMaxUsrCmdProcessTicks, 1));
 		return std::clamp(nServerMax - (std::max)(nReservedTicks, 0), 0, nServerMax);
 	}
 
@@ -532,6 +542,11 @@ namespace Shifting
 		nCurrentShiftTick = 0;
 		nTotalShiftTicks = 0;
 		bTickbaseFixRecorded = false;
+		nReleaseBacklog = 0;
+		nReleaseSpent = 0;
+		bReleasePending = false;
+		nShiftCooldownTicks = 0;
+		nServerBudgetEstimate = 24;
 		// Reset saved command state
 		bHasSavedCmd = false;
 		bSavedAngles = false;

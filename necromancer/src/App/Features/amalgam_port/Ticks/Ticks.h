@@ -23,7 +23,7 @@ public:
     {
         if (!pLocal || !pLocal->IsAlive())
             return;
-            
+
         // Use centralized duck prediction (handles CrouchWhileAirborne)
         m_vShootPos = SDK::GetPredictedShootPos(pLocal, pCmd);
     }
@@ -49,10 +49,14 @@ public:
         return nullptr; // No doubletap, no saved angle
     }
 
-    // Timing is never unsure without tick manipulation
+    // While a shift batch is executing (doubletap / rapid fire / sticky DT /
+    // warp re-run CreateMove with a manipulated tickbase) the exact cmd the
+    // server will run our attack on is unknown - Amalgam flags this as
+    // m_bTimingUnsure so the aimbot writes its angles on every batch cmd
+    // instead of only on the tick it thinks fires
     bool IsTimingUnsure()
     {
-        return false;
+        return Shifting::bShifting || Shifting::bShiftingWarp;
     }
 
     // No tick shifting without doubletap

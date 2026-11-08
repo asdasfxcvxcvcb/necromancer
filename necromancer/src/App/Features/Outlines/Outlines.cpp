@@ -21,6 +21,18 @@ void COutlines::Initialize()
 	// alt-tab, resolution change, or engine render state loss.
 	// Null invalid pointers so they get recreated below.
 	// ==================================================================
+	if (m_pRtFullFrame && m_pRenderBuffer0 && m_pRenderBuffer1)
+	{
+		const int nFullW = m_pRtFullFrame->GetActualWidth();
+		const int nFullH = m_pRtFullFrame->GetActualHeight();
+		if (m_pRenderBuffer0->GetActualWidth() != nFullW || m_pRenderBuffer0->GetActualHeight() != nFullH
+			|| m_pRenderBuffer1->GetActualWidth() != nFullW || m_pRenderBuffer1->GetActualHeight() != nFullH)
+		{
+			CleanUp();
+			return;
+		}
+	}
+
 	if (m_pMatGlowColor && m_pMatGlowColor->IsErrorMaterial())
 		m_pMatGlowColor = nullptr;
 	if (m_pMatHaloAddToScreen && m_pMatHaloAddToScreen->IsErrorMaterial())
@@ -41,6 +53,15 @@ void COutlines::Initialize()
 	{
 		m_pRenderBuffer1->DecrementReferenceCount();
 		m_pRenderBuffer1 = nullptr;
+	}
+
+	static float flNextVarRefresh = 0.0f;
+	const float flRealTime = I::GlobalVars->realtime;
+	if (flRealTime >= flNextVarRefresh)
+	{
+		flNextVarRefresh = flRealTime + 2.0f;
+		if (m_pMatBlurY)
+			m_pBloomAmount = m_pMatBlurY->FindVar("$bloomamount", nullptr);
 	}
 
 	if (!m_pMatGlowColor)
@@ -177,8 +198,6 @@ void COutlines::RunModels()
 	if (m_bCleaningUp || G::bLevelTransition)
 		return;
 
-	Initialize();
-
 	if (!m_mapDrawnEntities.empty())
 		m_mapDrawnEntities.clear();
 
@@ -194,8 +213,12 @@ void COutlines::RunModels()
 	if (!m_mapCapturedInfos.empty())
 		m_mapCapturedInfos.clear();
 
+	// gate before Initialize: its material-recovery scan ran on every world
+	// view even with the feature disabled
 	if (!CFG::Outlines_Active || I::EngineVGui->IsGameUIVisible() || F::SpyCamera->IsRendering())
 		return;
+
+	Initialize();
 
 	// Early exit if nothing is enabled - massive performance gain
 	if (!CFG::Outlines_Players_Active && !CFG::Outlines_Buildings_Active && !CFG::Outlines_World_Active)
@@ -249,6 +272,7 @@ void COutlines::RunModels()
 		const bool bIgnoreTagged = CFG::Outlines_Players_Ignore_Tagged;
 		const bool bIgnoreTaggedTeammates = CFG::Outlines_Players_Ignore_Tagged_Teammates;
 		const bool bShowTeammateMedics = CFG::Outlines_Players_Show_Teammate_Medics;
+		const bool bFriendTeammates = CFG::Outlines_Players_Friend_Teammates;
 		
 		// Get entity group once
 		const auto& vPlayers = H::Entities->GetGroup(EEntGroup::PLAYERS_ALL);
@@ -279,24 +303,35 @@ void COutlines::RunModels()
 
 			// Check if player is tagged (Cheater/RetardLegit/Ignored/Targeted/Streamer/Nigger)
 			bool bIsTagged = false;
-			if (!bIgnoreTagged)
+			bool bIsIgnoredTag = false;
+			PlayerPriority playerPriority = {};
+			if (F::Players->GetInfo(pPlayer->entindex(), playerPriority))
 			{
-				PlayerPriority playerPriority = {};
-				if (F::Players->GetInfo(pPlayer->entindex(), playerPriority))
-				{
+				bIsIgnoredTag = playerPriority.Ignored;
+				if (!bIgnoreTagged || bFriendTeammates)
 					bIsTagged = playerPriority.Cheater || playerPriority.RetardLegit || playerPriority.Ignored || playerPriority.Targeted || playerPriority.Streamer || playerPriority.Nigger;
-				}
 			}
 
 			// Check if this is a tagged teammate that should be ignored
 			const int nPlayerTeam = pPlayer->m_iTeamNum();
 			const bool bIsTeammate = nPlayerTeam == nLocalTeam;
-			
-			if (bIsTagged && bIsTeammate && bIgnoreTaggedTeammates)
+
+			if (!bIsLocal && bIsTeammate)
 			{
-				// Exception: show teammate medics if that option is enabled
-				if (!bShowTeammateMedics || pPlayer->m_iClass() != TF_CLASS_MEDIC)
-					continue;
+				if (bFriendTeammates)
+				{
+					if (!bIsFriend && !bIsIgnoredTag)
+					{
+						if (!bShowTeammateMedics || pPlayer->m_iClass() != TF_CLASS_MEDIC)
+							continue;
+					}
+				}
+				else if (bIsTagged && !bIsIgnoredTag && bIgnoreTaggedTeammates)
+				{
+					// Exception: show teammate medics if that option is enabled
+					if (!bShowTeammateMedics || pPlayer->m_iClass() != TF_CLASS_MEDIC)
+						continue;
+				}
 			}
 
 			// Skip team/enemy filtering if player is tagged (and not ignoring tagged)
@@ -438,6 +473,7 @@ void COutlines::RunModels()
 		const bool bIgnoreAmmoPacks = CFG::Outlines_World_Ignore_AmmoPacks;
 		const bool bIgnoreHalloweenGift = CFG::Outlines_World_Ignore_Halloween_Gift;
 		const bool bIgnoreMVMMoney = CFG::Outlines_World_Ignore_MVM_Money;
+		const bool bIgnoreDroppedGuns = CFG::Outlines_World_Ignore_DroppedGuns;
 		const bool bIgnoreLocalProj = CFG::Outlines_World_Ignore_LocalProjectiles;
 		const bool bIgnoreEnemyProj = CFG::Outlines_World_Ignore_EnemyProjectiles;
 		const bool bIgnoreTeammateProj = CFG::Outlines_World_Ignore_TeammateProjectiles;
@@ -507,6 +543,22 @@ void COutlines::RunModels()
 			}
 		}
 
+		if (!bIgnoreDroppedGuns)
+		{
+			for (const auto pEntity : H::Entities->GetGroup(EEntGroup::WEAPONS_DROPPED))
+			{
+				if (!pEntity || !pEntity->ShouldDraw() || !F::VisualUtils->IsOnScreen(pLocal, pEntity))
+					continue;
+
+				const auto color = F::VisualUtils->GetEntityColor(pLocal, pEntity);
+
+				m_vecOutlineEntities.emplace_back(OutlineEntity_t{pEntity, color, flWorldAlpha});
+
+				if (!F::Materials->HasDrawn(pEntity))
+					DrawEntity(pEntity, true);
+			}
+		}
+
 		const bool bIgnoringAllProjectiles = bIgnoreLocalProj && bIgnoreEnemyProj && bIgnoreTeammateProj;
 
 		if (!bIgnoringAllProjectiles)
@@ -566,6 +618,9 @@ void COutlines::Run()
 		return;
 	}
 
+	if (m_vecOutlineEntities.empty() && m_vecOutlineLagRecords.empty())
+		return;
+
 	const int w = H::Draw->GetScreenW();
 	const int h = H::Draw->GetScreenH();
 
@@ -594,9 +649,6 @@ void COutlines::Run()
 	float flOriginalColor[3] = {};
 	I::RenderView->GetColorModulation(flOriginalColor);
 	const float flOriginalBlend = I::RenderView->GetBlend();
-
-	if (m_vecOutlineEntities.empty() && m_vecOutlineLagRecords.empty())
-		return;
 
 	I::ModelRender->ForcedMaterialOverride(m_pMatGlowColor);
 
@@ -734,23 +786,10 @@ void COutlines::CleanUp()
 	m_pMatGlowColor = nullptr;
 	m_pRtFullFrame = nullptr;
 
-	// Now safe to decrement references
 	if (pMatHalo)
 	{
 		pMatHalo->DecrementReferenceCount();
 		pMatHalo->DeleteIfUnreferenced();
-	}
-
-	if (pBuffer0)
-	{
-		pBuffer0->DecrementReferenceCount();
-		pBuffer0->DeleteIfUnreferenced();
-	}
-
-	if (pBuffer1)
-	{
-		pBuffer1->DecrementReferenceCount();
-		pBuffer1->DeleteIfUnreferenced();
 	}
 
 	if (pBlurX)
@@ -763,6 +802,18 @@ void COutlines::CleanUp()
 	{
 		pBlurY->DecrementReferenceCount();
 		pBlurY->DeleteIfUnreferenced();
+	}
+
+	if (pBuffer0)
+	{
+		pBuffer0->DecrementReferenceCount();
+		pBuffer0->DeleteIfUnreferenced();
+	}
+
+	if (pBuffer1)
+	{
+		pBuffer1->DecrementReferenceCount();
+		pBuffer1->DeleteIfUnreferenced();
 	}
 
 	m_bCleaningUp = false;

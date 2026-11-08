@@ -268,12 +268,48 @@ public:
 };
 
 class CPhysConvex;
-class CPolyhedron;
 class CPhysPolysoup;
 class IConvexInfo;
 class truncatedcone_t;
 class IVPhysicsKeyParser;
 class virtualmeshparams_t;
+
+// full CPolyhedron definition - PolyhedronFromConvex output is walked by the
+// World face cache (member-for-member identical to Amalgam's)
+struct Polyhedron_IndexedLine_t
+{
+	unsigned short iPointIndices[2];
+};
+
+struct Polyhedron_IndexedLineReference_t
+{
+	unsigned short iLineIndex;
+	unsigned char iEndPointIndex;
+};
+
+struct Polyhedron_IndexedPolygon_t
+{
+	unsigned short iFirstIndex;
+	unsigned short iIndexCount;
+	Vector polyNormal;
+};
+
+class CPolyhedron
+{
+public:
+	Vector *pVertices;
+	Polyhedron_IndexedLine_t *pLines;
+	Polyhedron_IndexedLineReference_t *pIndices;
+	Polyhedron_IndexedPolygon_t *pPolygons;
+
+	unsigned short iVertexCount;
+	unsigned short iLineCount;
+	unsigned short iIndexCount;
+	unsigned short iPolygonCount;
+
+	virtual ~CPolyhedron(void) = 0;
+	virtual void Release(void) = 0;
+};
 
 struct convertconvexparams_t
 {

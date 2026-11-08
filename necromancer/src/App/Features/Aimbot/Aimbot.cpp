@@ -4,7 +4,8 @@
 #include "AimbotMelee/AimbotMelee.h"
 #include "AimbotProjectile/AimbotProjectile.h"
 #include "AimbotWrangler/AimbotWrangler.h"
-#include "../RapidFire/RapidFire.h"
+#include "../amalgam_port/AimbotProjectile/AimbotProjectileAmalgam.h"
+#include "../amalgam_port/AimbotMelee/AimbotMeleeAmalgam.h"
 
 #include "../CFG.h"
 #include "../Misc/Misc.h"
@@ -48,6 +49,8 @@ void CAimbot::RunMain(CUserCmd* pCmd)
 		|| pWeapon->m_iItemDefinitionIndex() == Soldier_m_RocketJumper || pWeapon->m_iItemDefinitionIndex() == Demoman_s_StickyJumper)
 		return;
 
+	F::AmalgamAimbotProjectile->RestoreCancel(pLocal, pCmd);
+
 	// Check for Wrangler first (it returns EWeaponType::OTHER)
 	if (F::AimbotWrangler->IsWrangler(pWeapon))
 	{
@@ -65,12 +68,20 @@ void CAimbot::RunMain(CUserCmd* pCmd)
 
 		case EWeaponType::PROJECTILE:
 		{
-			F::AimbotProjectile->Run(pCmd, pLocal, pWeapon);
+			// Amalgam port: claims every projectile weapon unconditionally
+			// (rockets, pipes, stickies, Huntsman, ...) and matches Amalgam's
+			// per-tick prediction, so the native aimbot stays a dead fallback.
+			if (!F::AmalgamAimbotProjectile->Run(pLocal, pWeapon, pCmd))
+				F::AimbotProjectile->Run(pCmd, pLocal, pWeapon);
 			break;
 		}
 
 		case EWeaponType::MELEE:
 		{
+			// the Amalgam port is bypassed entirely: its dead-tick claims and
+			// record targeting ate melee at runtime (dj: "doesn't even target").
+			// The native melee aimbot is the months-validated path - it runs
+			// alone until the port's runtime failure is diagnosed.
 			F::AimbotMelee->Run(pCmd, pLocal, pWeapon);
 			break;
 		}

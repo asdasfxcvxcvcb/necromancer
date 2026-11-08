@@ -52,6 +52,7 @@
 #define	CONTENTS_DETAIL			0x8000000	// brushes to be added after vis leafs
 #define	CONTENTS_TRANSLUCENT	0x10000000	// auto set if any surface has trans
 #define	CONTENTS_LADDER			0x20000000
+#define	CONTENTS_DISPSOLID		0x80000000	// no normal checks when tracing against displacements (custom: two-sided disp hits for swept projectiles)
 #define CONTENTS_HITBOX			0x40000000	// use accurate hitboxes on trace
 
 

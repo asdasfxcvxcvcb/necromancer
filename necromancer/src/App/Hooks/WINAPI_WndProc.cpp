@@ -8,6 +8,8 @@ LRESULT __stdcall Hooks::WINAPI_WndProc::Func(HWND hWnd, UINT uMsg, WPARAM wPara
 	{
 		if (F::Menu->m_bWantTextInput || F::Menu->m_bInKeybind)
 		{
+			if (uMsg == WM_CHAR && F::Menu->m_bWantTextInput)
+				H::Input->PushChar(static_cast<unsigned int>(wParam));
 			I::InputSystem->ResetInputState();
 			return 1;
 		}

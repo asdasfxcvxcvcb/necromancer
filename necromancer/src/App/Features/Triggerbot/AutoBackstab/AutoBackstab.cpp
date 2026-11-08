@@ -232,6 +232,11 @@ void CAutoBackstab::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* p
 					if (CFG::Triggerbot_AutoBacktab_Mode == 1)
 					{
 						pCmd->viewangles = angleTo;
+						// this triggerbot runs after CreateMove's Attacking recompute,
+						// so its stab cmds always report not-attacking and anti-aim
+						// would overwrite the stab angles - flag the cmd like the
+						// aimbots do so FakeAngle::ShouldRun skips it
+						G::bSilentAngles = true;
 
 						if (CFG::Triggerbot_AutoBacktab_Aim_Mode == 1)
 						{
@@ -240,6 +245,7 @@ void CAutoBackstab::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* p
 					}
 
 					pCmd->buttons |= IN_ATTACK;
+					m_flLastStab = I::EngineClient->Time();
 
 					if (CFG::Misc_Accuracy_Improvements)
 					{
@@ -309,6 +315,7 @@ void CAutoBackstab::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* p
 				}
 
 				pCmd->buttons |= IN_ATTACK;
+				m_flLastStab = I::EngineClient->Time();
 
 				if (CFG::Misc_Accuracy_Improvements)
 				{

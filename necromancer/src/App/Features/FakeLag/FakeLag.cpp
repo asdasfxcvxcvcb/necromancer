@@ -5,6 +5,8 @@
 #include "../FakeAngle/FakeAngle.h"
 #include "../amalgam_port/AmalgamCompat.h"
 
+constexpr int SIGHTLINE_DEADBAND_TICKS = 16;
+
 void CFakeLag::PreserveBlastJump(C_TFPlayer* pLocal)
 {
 	m_bPreservingBlast = false;
@@ -58,13 +60,14 @@ bool CFakeLag::IsAllowed(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* 
 	const int nAntiAimTicks = bAntiAimActive ? F::FakeAngle->AntiAimTicks() : 0;
 	
 	// Calculate max choke based on shifted ticks and anti-aim reservation
-	int nMaxChoke = std::min(24 - Shifting::nAvailableTicks - nAntiAimTicks, std::min(21 - nAntiAimTicks, nMaxTicks - nAntiAimTicks));
+	int nMaxChoke = std::min(nMaxTicks - Shifting::nAvailableTicks - nAntiAimTicks, std::min(21 - nAntiAimTicks, nMaxTicks - nAntiAimTicks));
 	nMaxChoke = std::min(nMaxChoke, CFG::Exploits_FakeLag_Max_Ticks);
 	
 	// Check basic conditions
 	if (!(CFG::Exploits_FakeLag_Enabled || m_bPreservingBlast || m_bUnducking)
 		|| I::ClientState->chokedcommands >= nMaxChoke
 		|| Shifting::bShifting || Shifting::bRecharging
+		|| Shifting::nServerBudgetEstimate < 1
 		|| !pLocal->IsAlive())
 		return false;
 	
@@ -280,6 +283,15 @@ EFakeLagThreatType CFakeLag::CheckSniperThreat(C_TFPlayer* pLocal, int& outMinTi
 	return eHighestThreat;
 }
 
+void CFakeLag::ResetCycleState(C_TFPlayer* pLocal)
+{
+	m_iGoal = 0;
+	m_iCurrentChokeTicks = 0;
+	m_iTargetChokeTicks = 0;
+	m_bEnabled = false;
+	m_vLastPosition = pLocal->m_vecOrigin();
+}
+
 void CFakeLag::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd, bool* pSendPacket)
 {
 	m_eCurrentThreat = EFakeLagThreatType::None;
@@ -287,31 +299,24 @@ void CFakeLag::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd, 
 	// Set goal to 22 for adaptive mode
 	if (!m_iGoal)
 		m_iGoal = 22;
-	
-	// Post-shift cooldown: after sending shifted commands, wait a few ticks before choking again
-	// This prevents overchoke when the server is still processing the burst
+
+	static int sLastSeenAvailableTicks = 0;
+	if (Shifting::nAvailableTicks > sLastSeenAvailableTicks)
+		ResetCycleState(pLocal);
+	sLastSeenAvailableTicks = Shifting::nAvailableTicks;
+
 	static int nPostShiftCooldown = 0;
-	static bool bWasShifting = false;
-	
-	if (Shifting::bShifting || Shifting::bShiftingWarp || Shifting::bRecharging)
+
+	if (Shifting::nShiftCooldownTicks > 0)
 	{
-		bWasShifting = true;
-		nPostShiftCooldown = 0;
+		nPostShiftCooldown = std::min(Shifting::nShiftCooldownTicks, 24);
+		Shifting::nShiftCooldownTicks = 0;
 	}
-	else if (bWasShifting)
-	{
-		// Just finished shifting - set cooldown based on how many ticks were shifted
-		// More ticks shifted = longer cooldown needed
-		nPostShiftCooldown = std::min(Shifting::nTotalShiftTicks, 3);
-		bWasShifting = false;
-	}
-	
-	if (nPostShiftCooldown > 0)
+
+	if (nPostShiftCooldown > 0 && !Shifting::bShifting && !Shifting::bShiftingWarp && !Shifting::bRecharging)
 	{
 		nPostShiftCooldown--;
-		m_iGoal = 0;
-		m_vLastPosition = pLocal->m_vecOrigin();
-		m_bEnabled = false;
+		ResetCycleState(pLocal);
 		return;
 	}
 	
@@ -334,9 +339,7 @@ void CFakeLag::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd, 
 	if (m_iNewEntityUnchokeTicks > 0)
 	{
 		m_iNewEntityUnchokeTicks--;
-		m_iGoal = 0;
-		m_vLastPosition = pLocal->m_vecOrigin();
-		m_bEnabled = false;
+		ResetCycleState(pLocal);
 		return;
 	}
 	
@@ -348,9 +351,16 @@ void CFakeLag::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd, 
 	{
 		if (!CFG::Exploits_FakeLag_Enabled || pLocal->deadflag())
 		{
-			m_iGoal = 0;
-			m_vLastPosition = pLocal->m_vecOrigin();
-			m_bEnabled = false;
+			ResetCycleState(pLocal);
+			return;
+		}
+
+		if (m_iSightlineDeadband > 0 && !Shifting::bRecharging && !Shifting::bShifting && !Shifting::bShiftingWarp)
+			m_iSightlineDeadband--;
+
+		if (CFG::Exploits_FakeLag_Only_Moving && pLocal->m_vecVelocity().Length2D() <= 10.0f)
+		{
+			ResetCycleState(pLocal);
 			return;
 		}
 		
@@ -359,25 +369,25 @@ void CFakeLag::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd, 
 		
 		if (I::ClientState->chokedcommands >= nMaxAllowedTicks)
 		{
-			m_iGoal = 0;
-			m_vLastPosition = pLocal->m_vecOrigin();
-			m_bEnabled = false;
+			ResetCycleState(pLocal);
 			return;
 		}
 		
 		if (Shifting::bShifting || Shifting::bRecharging)
 		{
-			m_iGoal = 0;
-			m_vLastPosition = pLocal->m_vecOrigin();
-			m_bEnabled = false;
+			ResetCycleState(pLocal);
+			return;
+		}
+
+		if (Shifting::nServerBudgetEstimate < 1)
+		{
+			ResetCycleState(pLocal);
 			return;
 		}
 		
 		if (F::Misc->m_bRJDisableFakeLag || F::Misc->IsAutoFaNRunning())
 		{
-			m_iGoal = 0;
-			m_vLastPosition = pLocal->m_vecOrigin();
-			m_bEnabled = false;
+			ResetCycleState(pLocal);
 			return;
 		}
 		
@@ -388,11 +398,16 @@ void CFakeLag::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd, 
 		
 		if (eThreat == EFakeLagThreatType::None)
 		{
-			m_iGoal = 0;
-			m_iCurrentChokeTicks = 0;
-			m_iTargetChokeTicks = 0;
-			m_vLastPosition = pLocal->m_vecOrigin();
-			m_bEnabled = false;
+			if (m_bEnabled)
+				m_iSightlineDeadband = SIGHTLINE_DEADBAND_TICKS;
+
+			ResetCycleState(pLocal);
+			return;
+		}
+
+		if (m_iSightlineDeadband > 0)
+		{
+			ResetCycleState(pLocal);
 			return;
 		}
 		
@@ -400,11 +415,7 @@ void CFakeLag::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd, 
 		// This ensures we stay fakelagged until the moment we shoot
 		if (G::Attacking == 1 || G::bFiring)
 		{
-			m_iGoal = 0;
-			m_iCurrentChokeTicks = 0;
-			m_iTargetChokeTicks = 0;
-			m_vLastPosition = pLocal->m_vecOrigin();
-			m_bEnabled = false;
+			ResetCycleState(pLocal);
 			return;
 		}
 		
@@ -426,11 +437,14 @@ void CFakeLag::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd, 
 		if (m_iCurrentChokeTicks < m_iTargetChokeTicks)
 		{
 			*pSendPacket = false;
+			m_vLastPosition = pLocal->m_vecOrigin();
+			m_iGoal = std::max(m_iTargetChokeTicks, I::ClientState->chokedcommands + 1);
 			m_iCurrentChokeTicks++;
 		}
 		else
 		{
 			m_iCurrentChokeTicks = 0;
+			m_iGoal = 0;
 		}
 		
 		m_bEnabled = true;
@@ -439,15 +453,13 @@ void CFakeLag::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd, 
 	
 	if (!IsAllowed(pLocal, pWeapon, pCmd))
 	{
-		m_iGoal = 0;
-		m_vLastPosition = pLocal->m_vecOrigin();
-		m_bEnabled = false;
+		ResetCycleState(pLocal);
 		return;
 	}
 
 	*pSendPacket = false;
 	m_bEnabled = true;
-	
+
 	// Update last position every tick while choking (for adaptive mode distance check)
 	// This prevents distance from accumulating over multiple choke cycles
 	m_vLastPosition = pLocal->m_vecOrigin();

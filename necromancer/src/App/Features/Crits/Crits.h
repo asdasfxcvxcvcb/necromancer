@@ -90,6 +90,9 @@ public:
 
 	bool WeaponCanCrit(C_TFWeaponBase* pWeapon, bool bWeaponOnly = false);
 	int PredictCmdNum(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd);
+
+	bool ShouldForceEffects(C_TFPlayer* pLocal);
+	void RunEffects(C_TFPlayer* pLocal);
 	
 	// Safe mode check - returns true if aimbot should fire, false if it should wait
 	// Call this BEFORE adding IN_ATTACK to check if safe mode would block the shot

@@ -36,6 +36,11 @@ private:
 public:
 	void InitializeAllInterfaces();
 
+	inline const std::vector<InterfaceInit_t *> &GetInterfaces() const
+	{
+		return m_vecInterfaces;
+	}
+
 	inline void AddInterface(InterfaceInit_t *pInterface)
 	{
 		m_vecInterfaces.push_back(pInterface);

@@ -1,6 +1,10 @@
 #include "Map.h"
 #include "../../../../SDK/SDK.h"
 #include "../../CFG.h"
+// G_NavEngine for the live setup-time check in AdjacentCost (gate areas are
+// impassable only while setup actually runs). Map.h does not include this
+// header, so there is no include cycle.
+#include "NavEngine.h"
 
 // Must come after SDK.h to avoid Windows min/max macro pollution
 #undef min
@@ -32,105 +36,138 @@ void CMap::AdjacentCost(void* pArea, std::vector<micropather::StateCost>* pAdjac
 		if (!pNextArea || pNextArea == pCurrentArea)
 			continue;
 
-		// Determine if this is a one-way connection
-		bool bIsOneWay = IsOneWay(pCurrentArea, pNextArea);
-
-		// Determine navigation points
-		NavPoints_t tPoints = DeterminePoints(pCurrentArea, pNextArea, bIsOneWay);
-
-		// Handle dropdown/vertical navigation
-		DropdownHint_t tDropdown = HandleDropdown(tPoints.m_vCenter, tPoints.m_vNext, bIsOneWay);
-		tPoints.m_vCenter = tDropdown.m_vAdjustedPos;
-
-		// === Ported from TF2 bot's CTFBotPathCost::operator() and IsAreaTraversable ===
-		// These checks determine if an area is completely impassable (skip it)
-		// vs. just costly (add penalty). The TF2 bot returns -1.0f for impassable,
-		// which we emulate by continuing (skipping the connection).
-
-		// TF_NAV_BLOCKED check (ported from TF2 bot's IsAreaTraversable)
-		// Areas can be blocked by doors, capture point logic, etc.
-		if (pNextArea->m_iTFAttributeFlags & TF_NAV_BLOCKED)
+		// Memoized static evaluation — points, dropdown traces, heights, gaps.
+		// Everything here only depends on the mesh, not on game state.
+		const ConnEval_t& tEval = GetConnEval(pCurrentArea, pNextArea);
+		if (tEval.m_bSkip)
 			continue;
 
-		// Enemy spawn room check (ported from TF2 bot's CTFBotPathCost)
-		// TF2 bot returns -1.0f (impassable) for enemy spawn rooms unless round is won
-		if (iTeam == TF_TEAM_RED && (pNextArea->m_iTFAttributeFlags & TF_NAV_SPAWN_ROOM_BLUE))
-			continue;
-		if (iTeam == TF_TEAM_BLUE && (pNextArea->m_iTFAttributeFlags & TF_NAV_SPAWN_ROOM_RED))
-			continue;
-
-		// Setup gate check (ported from TF2 bot's IsAreaTraversable)
-		// During setup, enemy setup gates are impassable barriers
-		if (iTeam == TF_TEAM_RED && (pNextArea->m_iTFAttributeFlags & TF_NAV_BLUE_SETUP_GATE))
-			continue;
-		if (iTeam == TF_TEAM_BLUE && (pNextArea->m_iTFAttributeFlags & TF_NAV_RED_SETUP_GATE))
+		// Corridor-blocked connection (ported from Unibox's GetAdjacent): a link
+		// that path validation or stuck detection proved impassable with real
+		// traces is excluded from the solve entirely, so repaths route around
+		// the wall instead of solving straight back into it.
+		bool bConnPassable = false;
+		if (GetConnVerdict(pCurrentArea, pNextArea, bConnPassable) && !bConnPassable)
 			continue;
 
-		// Point-capture blocked areas (ported from TF2 bot's nav mesh logic)
-		// These areas are blocked until/unless a specific point is captured
-		if (pNextArea->m_iTFAttributeFlags & TF_NAV_BLOCKED_UNTIL_POINT_CAPTURE)
+		// === Team-dependent pass rules (cheap flag tests, kept dynamic) ===
+
+		// Enemy spawn room check (ported from TF2 bot's CTFBotPathCost).
+		// TF2 bot returns -1.0f (impassable) for enemy spawn rooms unless the
+		// round has been won. EXCLUSIVE semantics: an area flagged for BOTH
+		// teams (cp_dustbowl's shared spawn room carries RED|BLUE on every
+		// room area — verified by parsing the shipped nav file) is also OUR
+		// spawn and must stay walkable. The bare flag test sealed every edge
+		// out of spawn there: area 11's three links all enter 0x6-flagged
+		// areas, its reachable set was {11}, and every solve returned
+		// "no path" until the bot was physically dragged past the door band.
+		const bool bNextRedSpawn = pNextArea->m_iTFAttributeFlags & TF_NAV_SPAWN_ROOM_RED;
+		const bool bNextBlueSpawn = pNextArea->m_iTFAttributeFlags & TF_NAV_SPAWN_ROOM_BLUE;
+		if (iTeam == TF_TEAM_RED && bNextBlueSpawn && !bNextRedSpawn)
 			continue;
-		if (pNextArea->m_iTFAttributeFlags & TF_NAV_BLOCKED_AFTER_POINT_CAPTURE)
+		if (iTeam == TF_TEAM_BLUE && bNextRedSpawn && !bNextBlueSpawn)
 			continue;
 
-		// Check height difference at the shared edge between areas (ported from TF2 bot)
-		// TF2 bot uses ComputeAdjacentConnectionHeightChange which checks the height at the
-		// boundary where you actually step, NOT center-to-center. For stairs, the edge height
-		// is much smaller than the center height — center-to-center incorrectly blocks stairs.
-		float flEdgeHeightDiff = pCurrentArea->ComputeAdjacentConnectionHeightChange(pNextArea);
+		// Setup gate check. Valve's CTFBotPathCost has NO setup-gate rule — the
+		// server blocks gate areas through the door-blocker system while the gate
+		// brush is physically closed and clears it the moment the gate opens; the
+		// static flag only marks that block "temporary" (both server call sites
+		// that check the flag do so to IGNORE the block). The old port skipped
+		// gate areas by team FOREVER, permanently sealing the spawn basin behind
+		// its gate after setup ended — every solve out of spawn returned
+		// "no path" until the bot was physically walked past the gate band.
+		// Impassable only while setup is actually running right now (a closed
+		// gate brush is solid for both teams, hence no team condition —
+		// AreSetupGatesClosed() is the team-agnostic check; IsSetupTime()
+		// holds only BLU, so RED defenders' paths would otherwise solve
+		// straight through the closed BLU gates).
+		if (G_NavEngine.AreSetupGatesClosed() &&
+			(pNextArea->m_iTFAttributeFlags & (TF_NAV_BLUE_SETUP_GATE | TF_NAV_RED_SETUP_GATE)))
+			continue;
 
-		// On stairs, skip the height block entirely — the nav mesh marks stairs as walkable,
-		// and the physics engine handles step-ups automatically (like TF2 bot's PathFollower).
-		bool bStairConnection = (pCurrentArea->m_iAttributeFlags & NAV_MESH_STAIRS) ||
-		                        (pNextArea->m_iAttributeFlags & NAV_MESH_STAIRS);
+		// === Cost: static geometric part + dynamic penalties ===
+		float flCost = tEval.m_flStaticCost;
+		const float flForwardDistance = tEval.m_flForwardDistance;
 
-		if (!bStairConnection)
+		// Spawn room penalty (ported from TF2 bot's CTFBotPathCost)
+		// Enemy spawn rooms are already blocked above; penalize own spawn to
+		// discourage loitering. Shared rooms (both flags) count as own spawn
+		// for either team.
+		if ((iTeam == TF_TEAM_RED && bNextRedSpawn) || (iTeam == TF_TEAM_BLUE && bNextBlueSpawn))
+			flCost += 100.f;
+
+		// Jump area penalty (ported from TF2 bot's CTFBotPathCost)
+		if (pNextArea->m_iAttributeFlags & NAV_MESH_JUMP)
+			flCost *= 2.0f;
+
+		// Cliff area penalty (NAV_MESH_CLIFF — adjacent to a lethal drop)
+		if (pNextArea->m_iAttributeFlags & NAV_MESH_CLIFF)
+			flCost += flForwardDistance * 3.0f;
+
+		// Sentry danger area penalty (ported from TF2 bot's CTFBotPathCost SAFEST_ROUTE)
+		if (iTeam == TF_TEAM_RED && (pNextArea->m_iTFAttributeFlags & TF_NAV_BLUE_SENTRY_DANGER))
+			flCost *= 5.0f;
+		else if (iTeam == TF_TEAM_BLUE && (pNextArea->m_iTFAttributeFlags & TF_NAV_RED_SENTRY_DANGER))
+			flCost *= 5.0f;
+
+		// AVOID flag penalty
+		if (pNextArea->m_iAttributeFlags & NAV_MESH_AVOID)
+			flCost += 100000.f;
+
+		// Crouch area penalty
+		if (pNextArea->m_iAttributeFlags & NAV_MESH_CROUCH)
+			flCost += flForwardDistance * 5.f;
+
+		// === Cover spot preference (ported from TF2 bot's hiding spot usage) ===
+		// TF2 bots use IN_COVER hiding spots to take cover from sentries and heal safely.
+		// When the local player is low on health, prefer areas that have cover spots.
+		// This makes the pathfinder route through safe spots when seeking health.
+		if (!m_mDangerBlacklist.empty() || (iTeam != 0 && pNextArea->m_uHidingSpotCount > 0))
 		{
-			// Block if the step-up at the edge exceeds max jump height
-			// TF2 bot: if deltaZ >= GetMaxJumpHeight() return -1 (impassable)
-			if (flEdgeHeightDiff > PLAYER_CROUCHED_JUMP_HEIGHT)
-				continue;
-		}
-
-		// Death drop height check (ported from TF2 bot's CTFBotPathCost)
-		// TF2 bot's GetDeathDropHeight() returns 1000.0f — drops beyond this are lethal
-		// Use edge-based height for drops too (more accurate than center-to-center)
-		if (flEdgeHeightDiff < -1000.0f)
-			continue;
-
-		// === Two-way connection reliability check ===
-		// Navmesh generation can mark two areas as two-way connected even when there's
-		// a significant horizontal gap + height difference between them that makes the
-		// connection impassable on foot (and sometimes even with jumping).
-		// If the gap between the connection points is large AND there's a height step,
-		// add a heavy penalty to make the pathfinder avoid this unreliable connection.
-		float flUnreliablePenalty = 0.0f;
-		if (!bIsOneWay)
-		{
-			Vec3 vGap = tPoints.m_vCenterNext - tPoints.m_vCenter;
-			float flGapHorizontal = Vec3(vGap.x, vGap.y, 0.0f).Length();
-			float flGapHeight = std::abs(vGap.z);
-
-			// Player can step up 18 units normally. If the gap is wider than the player
-			// AND there's a height difference beyond step height, the connection is suspect.
-			if (flGapHorizontal > PLAYER_WIDTH && flGapHeight > 18.0f)
+			// Check if this area has cover spots
+			bool bHasCover = false;
+			for (const auto& tSpot : pNextArea->m_vHidingSpots)
 			{
-				// If the gap is extremely large + height beyond jump, skip entirely (truly impassable)
-				if (flGapHorizontal > PLAYER_WIDTH * 4.0f && flGapHeight > PLAYER_JUMP_HEIGHT)
-					continue;
-
-				// Scale penalty with gap size — wider gaps with more height are worse
-				flUnreliablePenalty = flGapHorizontal * flGapHeight * 0.5f;
-				flUnreliablePenalty = (std::max)(flUnreliablePenalty, 5000.0f);
+				if (tSpot.HasGoodCover())
+				{
+					bHasCover = true;
+					break;
+				}
 			}
-		}
 
-		// Calculate cost using advanced cost function
-		float flCost = EvaluateConnectionCost(pCurrentArea, pNextArea, tPoints, tDropdown, iTeam);
+			if (bHasCover)
+			{
+				// Discount for areas with cover — makes pathfinder prefer routes through cover
+				// Larger discount when in danger (escaping), smaller discount otherwise
+				bool bInDanger = false;
+				if (auto itDanger = m_mDangerBlacklist.find(pNextArea); itDanger != m_mDangerBlacklist.end())
+					bInDanger = false; // This area IS in danger, no discount
+				else
+					bInDanger = !m_mDangerBlacklist.empty(); // Other areas are in danger
+
+				if (bInDanger)
+					flCost -= flForwardDistance * 0.5f; // Strong preference when escaping
+				else
+					flCost -= flForwardDistance * 0.15f; // Mild preference otherwise
+			}
+
+			// Penalty for exposed spots — avoid walking through the open when in danger
+			bool bHasExposed = false;
+			for (const auto& tSpot : pNextArea->m_vHidingSpots)
+			{
+				if (tSpot.IsExposed())
+				{
+					bHasExposed = true;
+					break;
+				}
+			}
+			if (bHasExposed && !m_mDangerBlacklist.empty())
+				flCost += flForwardDistance * 0.3f; // Avoid exposed areas when in danger
+		}
 
 		// Apply unreliable connection penalty
-		if (flUnreliablePenalty > 0.0f)
-			flCost += flUnreliablePenalty;
+		if (tEval.m_flUnreliablePenalty > 0.0f)
+			flCost += tEval.m_flUnreliablePenalty;
 
 		// Stuck blacklist penalty (ported from Amalgam)
 		// If this area is blacklisted due to being stuck, add a massive penalty
@@ -185,11 +222,17 @@ void CMap::AdjacentCost(void* pArea, std::vector<micropather::StateCost>* pAdjac
 			// Hash the area pointer for a stable per-area value
 			auto nAreaID = reinterpret_cast<uintptr_t>(pNextArea);
 			nAreaID = (nAreaID >> 4) ^ (nAreaID & 0xF);  // Mix bits
-			float flPreference = 1.0f + 50.0f * (1.0f + cosf(static_cast<float>(iLocalPlayerIndex * nAreaID * iTimeMod)));
+			// Strength-scaled multiplier: at strength 0.5 costs vary between 1x and 2x,
+			// which shifts the choice between near-equal routes without producing wild
+			// detours. (The old fixed 50x factor made costs range 1x-101x and regularly
+			// picked paths much longer than necessary.)
+			float flPreference = 1.0f + CFG::NavBot_RouteVarietyStrength *
+				(1.0f + cosf(static_cast<float>(iLocalPlayerIndex * nAreaID * iTimeMod)));
 			flCost *= flPreference;
 		}
 
 		// Skip if cost is invalid
+		flCost = (std::max)(flCost, 1.f);
 		if (!std::isfinite(flCost) || flCost <= 0.f)
 			continue;
 
@@ -377,8 +420,190 @@ bool CMap::IsOneWay(CNavArea* pFrom, CNavArea* pTo) const
 	return true;
 }
 
-float CMap::EvaluateConnectionCost(CNavArea* pCurrentArea, CNavArea* pNextArea, const NavPoints_t& tPoints, const DropdownHint_t& tDropdown, int iTeam) const
+const ConnEval_t& CMap::GetConnEval(CNavArea* pFrom, CNavArea* pTo)
 {
+	if (!pFrom || !pTo)
+	{
+		static ConnEval_t tInvalid;
+		return tInvalid;
+	}
+
+	// SafePathing changes the connection points — rebuild the whole cache on toggle
+	if (m_bConnCacheSafePathing != CFG::NavBot_SafePathing)
+	{
+		m_mConnEvalCache.clear();
+		m_bConnCacheSafePathing = CFG::NavBot_SafePathing;
+	}
+
+	const uint64_t uKey = (static_cast<uint64_t>(pFrom->m_uId) << 32) | static_cast<uint64_t>(pTo->m_uId);
+	auto it = m_mConnEvalCache.find(uKey);
+	if (it != m_mConnEvalCache.end())
+		return it->second;
+
+	ConnEval_t tEval = BuildConnEval(pFrom, pTo);
+	return m_mConnEvalCache.emplace(uKey, tEval).first->second;
+}
+
+ConnEval_t CMap::BuildConnEval(CNavArea* pCurrentArea, CNavArea* pNextArea)
+{
+	ConnEval_t tEval;
+
+	// Determine if this is a one-way connection
+	tEval.m_bIsOneWay = IsOneWay(pCurrentArea, pNextArea);
+
+	// Determine navigation points
+	tEval.m_tPoints = DeterminePoints(pCurrentArea, pNextArea, tEval.m_bIsOneWay);
+
+	// Handle dropdown/vertical navigation
+	tEval.m_tDropdown = HandleDropdown(tEval.m_tPoints.m_vCenter, tEval.m_tPoints.m_vNext, tEval.m_bIsOneWay);
+	tEval.m_tPoints.m_vCenter = tEval.m_tDropdown.m_vAdjustedPos;
+
+	// === Ported from TF2 bot's CTFBotPathCost::operator() and IsAreaTraversable ===
+	// These checks determine if an area is completely impassable (skip it)
+	// vs. just costly (add penalty). The TF2 bot returns -1.0f for impassable,
+	// which we emulate by skipping the connection.
+
+	// TF_NAV_BLOCKED check (ported from TF2 bot's IsAreaTraversable)
+	// Areas can be blocked by doors, capture point logic, etc.
+	if (pNextArea->m_iTFAttributeFlags & TF_NAV_BLOCKED)
+	{
+		if (CFG::NavBot_Debug)
+			NavDebug("conn %u->%u skipped: dest area flagged TF_NAV_BLOCKED",
+				pCurrentArea->m_uId, pNextArea->m_uId);
+		tEval.m_bSkip = true;
+		return tEval;
+	}
+
+	// Point-capture gated areas (TF2 marks these on the mesh; the server opens
+	// and closes them as points are captured). The FILE flag alone says neither
+	// which point gates the area nor whether that cap already happened, so
+	// skipping on the flag alone can permanently seal map regions — the same
+	// failure class as the setup-gate skip. Penalize instead: UNTIL areas sit
+	// behind a closed door early round (avoided unless they are the only route —
+	// the approach phase stands and waits at the door if they truly are), and
+	// AFTER areas are open until a capture closes them, where the door wait plus
+	// blacklist self-heals.
+	if (pNextArea->m_iTFAttributeFlags & TF_NAV_BLOCKED_UNTIL_POINT_CAPTURE)
+		tEval.m_flUnreliablePenalty += 20000.0f;
+	if (pNextArea->m_iTFAttributeFlags & TF_NAV_BLOCKED_AFTER_POINT_CAPTURE)
+		tEval.m_flUnreliablePenalty += 100.0f;
+
+	// Check height difference at the shared edge between areas (ported from TF2 bot)
+	// TF2 bot uses ComputeAdjacentConnectionHeightChange which checks the height at the
+	// boundary where you actually step, NOT center-to-center. For stairs, the edge height
+	// is much smaller than the center height — center-to-center incorrectly blocks stairs.
+	tEval.m_flHeightDiff = pCurrentArea->ComputeAdjacentConnectionHeightChange(pNextArea);
+
+	// On stairs, skip the height block entirely — the nav mesh marks stairs as walkable,
+	// and the physics engine handles step-ups automatically (like TF2 bot's PathFollower).
+	bool bStairConnection = (pCurrentArea->m_iAttributeFlags & NAV_MESH_STAIRS) ||
+	                        (pNextArea->m_iAttributeFlags & NAV_MESH_STAIRS);
+
+	if (!bStairConnection)
+	{
+		// Block if the step-up at the edge exceeds max jump height
+		// TF2 bot: if deltaZ >= GetMaxJumpHeight() return -1 (impassable)
+		if (tEval.m_flHeightDiff > PLAYER_CROUCHED_JUMP_HEIGHT)
+		{
+			tEval.m_bSkip = true;
+			return tEval;
+		}
+	}
+
+	// Death drop height check (ported from TF2 bot's CTFBotPathCost)
+	// TF2 bot's GetDeathDropHeight() returns 1000.0f — drops beyond this are lethal
+	if (tEval.m_flHeightDiff < -1000.0f)
+	{
+		tEval.m_bSkip = true;
+		return tEval;
+	}
+
+	// === Connection walk validation ===
+	// The mesh generator only marks areas ADJACENT; it says nothing about the
+	// straight walk between them. DeterminePoints lands the transition crumb on
+	// the area edge nearest the next center, and that point can sit on a walled
+	// stretch of the shared boundary (door frames, L-joints, off-center doors).
+	// A path through such a connection aims the bot at a crumb behind a wall —
+	// the "walking into walls" report. Hull-trace the actual walk (center → edge,
+	// edge → next center) and penalize blocked connections hard so the pather
+	// only uses them when no clean route exists. Memoized like everything else
+	// here, so each connection pays the traces once per map.
+	// Stair connections skip validation: the mesh vouches for them and a straight
+	// probe cuts across every riser (the first version of this check flagged
+	// whole stairwells as blocked).
+	if (!bStairConnection)
+	{
+		const Vec3 vHullMin(-NAV_HULL_HALF_WIDTH, -NAV_HULL_HALF_WIDTH, 0.0f);
+		const Vec3 vHullMax(NAV_HULL_HALF_WIDTH, NAV_HULL_HALF_WIDTH, 62.0f);
+		CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
+		CGameTrace trace = {};
+
+		// Probe the straight walk at one height. 1 = blocked by static world,
+		// 0 = clear, -1 = no usable signal (started inside geometry, or the
+		// blocker is a mover that will open later).
+		auto TraceBlockedAt = [&vHullMin, &vHullMax, &filter, &trace](const Vec3& vFrom, const Vec3& vTo, float flProbeZ) -> int
+		{
+			const Vec3 vOffset(0.0f, 0.0f, flProbeZ);
+			H::AimUtils->TraceHull(vFrom + vOffset, vTo + vOffset, vHullMin, vHullMax, MASK_PLAYERSOLID_BRUSHONLY, &filter, &trace);
+			if (trace.startsolid)
+				return -1;   // mesh imprecision — no usable signal
+			if (trace.fraction >= 0.9f)
+				return 0;
+			// Only STATIC world geometry counts. This evaluation is memoized for
+			// the whole map, and brush-entity blockers (setup gates, doors) open
+			// later — baking their closed state in would permanently penalize the
+			// main spawn exit. Same world-vs-entity rule as the approach blocker.
+			if (trace.m_pEnt && trace.m_pEnt->entindex() != 0)
+				return -1;
+			return 1;
+		};
+
+		// A low probe alone is not evidence of a wall: on stairs and ramps the
+		// straight line clips the next riser even though the walk is fine. Probe
+		// at step height, then near chest height — only geometry that blocks
+		// BOTH probes is a real wall, and real walls are taller than 48.
+		auto IsWalkBlocked = [&TraceBlockedAt](const Vec3& vFrom, const Vec3& vTo) -> bool
+		{
+			if ((vTo - vFrom).Length2D() < 1.0f)
+				return false;
+			if (TraceBlockedAt(vFrom, vTo, 18.0f) != 1)
+				return false;
+			return TraceBlockedAt(vFrom, vTo, 48.0f) == 1;
+		};
+
+		if (IsWalkBlocked(tEval.m_tPoints.m_vCurrent, tEval.m_tPoints.m_vCenter))
+			tEval.m_flUnreliablePenalty += 4000.0f;
+		if (IsWalkBlocked(tEval.m_tPoints.m_vCenter, tEval.m_tPoints.m_vNext))
+			tEval.m_flUnreliablePenalty += 4000.0f;
+
+		if (tEval.m_flUnreliablePenalty > 0.0f && CFG::NavBot_Debug)
+			NavDebug("conn %u->%u blocked walk (penalty %.0f)", pCurrentArea->m_uId, pNextArea->m_uId, tEval.m_flUnreliablePenalty);
+	}
+
+	// === Two-way connection reliability check ===
+	// Navmesh generation can mark two areas as two-way connected even when there's
+	// a significant horizontal gap + height difference between them that makes the
+	// connection impassable on foot (and sometimes even with jumping).
+	// If the gap between the connection points is large AND there's a height step,
+	// add a heavy penalty to make the pathfinder avoid this unreliable connection.
+	if (!tEval.m_bIsOneWay)
+	{
+		Vec3 vGap = tEval.m_tPoints.m_vCenterNext - tEval.m_tPoints.m_vCenter;
+		float flGapHorizontal = Vec3(vGap.x, vGap.y, 0.0f).Length();
+		float flGapHeight = std::abs(vGap.z);
+
+		// Player can step up 18 units normally. If the gap is wider than the player
+		// AND there's a height difference beyond step height, the connection is suspect.
+		// Penalty-only, never a skip: the mesh generator marks two-way links it
+		// vouches for, and long steep ramps read as wide-gap-with-height from the
+		// transition point to the next center. The old skip branch could disconnect
+		// whole ramp routes out of spawn, and the old assignment also OVERWROTE any
+		// walk-block penalty accumulated above instead of adding to it.
+		if (flGapHorizontal > PLAYER_WIDTH && flGapHeight > 18.0f)
+			tEval.m_flUnreliablePenalty += (std::max)(flGapHorizontal * flGapHeight * 0.5f, 5000.0f);
+	}
+
+	// === Static geometric cost (ported from TF2 bot's CTFBotPathCost) ===
 	auto HorizontalDistance = [](const Vec3& vStart, const Vec3& vEnd) -> float
 	{
 		Vec3 vFlat = vEnd - vStart;
@@ -387,45 +612,40 @@ float CMap::EvaluateConnectionCost(CNavArea* pCurrentArea, CNavArea* pNextArea, 
 		return flLen > 0.f ? flLen : 0.f;
 	};
 
-	float flForwardDistance = (std::max)(HorizontalDistance(tPoints.m_vCurrent, tPoints.m_vNext), 1.f);
-	float flDeviationStart = HorizontalDistance(tPoints.m_vCurrent, tPoints.m_vCenter);
-	float flDeviationEnd = HorizontalDistance(tPoints.m_vCenter, tPoints.m_vNext);
-
-	// Use edge-based height difference (ported from TF2 bot's ComputeAdjacentConnectionHeightChange)
-	// Center-to-center height is inaccurate for stairs — the edge where you step is much lower
-	float flHeightDiff = pCurrentArea->ComputeAdjacentConnectionHeightChange(pNextArea);
+	float flForwardDistance = (std::max)(HorizontalDistance(tEval.m_tPoints.m_vCurrent, tEval.m_tPoints.m_vNext), 1.f);
+	tEval.m_flForwardDistance = flForwardDistance;
+	float flDeviationStart = HorizontalDistance(tEval.m_tPoints.m_vCurrent, tEval.m_tPoints.m_vCenter);
+	float flDeviationEnd = HorizontalDistance(tEval.m_tPoints.m_vCenter, tEval.m_tPoints.m_vNext);
 
 	// Base cost is forward distance
 	float flCost = flForwardDistance;
-	
+
 	// Add deviation penalties (SafePathing cost)
 	flCost += flDeviationStart * 0.3f;
 	flCost += flDeviationEnd * 0.2f;
 
 	// Height penalties — reduced for stairs (physics engine handles step-ups automatically)
-	bool bStairConnection = (pCurrentArea->m_iAttributeFlags & NAV_MESH_STAIRS) ||
-	                        (pNextArea->m_iAttributeFlags & NAV_MESH_STAIRS);
-	if (flHeightDiff > 0.f)
+	if (tEval.m_flHeightDiff > 0.f)
 	{
 		// On stairs, height penalty is minimal — just walking up steps
 		float flHeightMultiplier = bStairConnection ? 0.2f : 1.8f;
-		flCost += flHeightDiff * flHeightMultiplier;
+		flCost += tEval.m_flHeightDiff * flHeightMultiplier;
 	}
-	else if (flHeightDiff < -8.f)
-		flCost += std::abs(flHeightDiff) * 0.9f;
+	else if (tEval.m_flHeightDiff < -8.f)
+		flCost += std::abs(tEval.m_flHeightDiff) * 0.9f;
 
 	// Dropdown penalties
-	if (tDropdown.m_bRequiresDrop)
+	if (tEval.m_tDropdown.m_bRequiresDrop)
 	{
-		flCost += tDropdown.m_flDropHeight * 2.2f;
-		flCost += tDropdown.m_flApproachDistance * 0.45f;
+		flCost += tEval.m_tDropdown.m_flDropHeight * 2.2f;
+		flCost += tEval.m_tDropdown.m_flApproachDistance * 0.45f;
 	}
-	else if (tDropdown.m_flApproachDistance > 0.f)
-		flCost += tDropdown.m_flApproachDistance * 0.25f;
+	else if (tEval.m_tDropdown.m_flApproachDistance > 0.f)
+		flCost += tEval.m_tDropdown.m_flApproachDistance * 0.25f;
 
 	// Turn penalty - prefer straighter paths
-	Vec3 vForward = tPoints.m_vCenter - tPoints.m_vCurrent;
-	Vec3 vForwardNext = tPoints.m_vNext - tPoints.m_vCenter;
+	Vec3 vForward = tEval.m_tPoints.m_vCenter - tEval.m_tPoints.m_vCurrent;
+	Vec3 vForwardNext = tEval.m_tPoints.m_vNext - tEval.m_tPoints.m_vCenter;
 	vForward.z = 0.f;
 	vForwardNext.z = 0.f;
 	float flLen1 = vForward.Length();
@@ -446,172 +666,134 @@ float CMap::EvaluateConnectionCost(CNavArea* pCurrentArea, CNavArea* pNextArea, 
 	if (flAreaSize > 0.f)
 		flCost -= (std::clamp)(flAreaSize * 0.01f, 0.f, 12.f);
 
-	// Spawn room penalty (ported from TF2 bot's CTFBotPathCost)
-	// Enemy spawn rooms are already blocked in AdjacentCost (impassable),
-	// so here we only penalize own-team spawn rooms to discourage loitering
-	const bool bRedSpawn = pNextArea->m_iTFAttributeFlags & TF_NAV_SPAWN_ROOM_RED;
-	const bool bBlueSpawn = pNextArea->m_iTFAttributeFlags & TF_NAV_SPAWN_ROOM_BLUE;
-	if (bRedSpawn || bBlueSpawn)
-	{
-		// Penalty for own spawn — don't loiter near spawn
-		if ((iTeam == TF_TEAM_RED && bRedSpawn) || (iTeam == TF_TEAM_BLUE && bBlueSpawn))
-			flCost += 100.f;
-	}
-
-	// Jump area penalty (ported from TF2 bot's CTFBotPathCost)
-	// TF2 bot: "jumping is slower than flat ground" — dist *= 2.0f
-	if (pNextArea->m_iAttributeFlags & NAV_MESH_JUMP)
-		flCost *= 2.0f;
-
-	// Cliff area penalty (NAV_MESH_CLIFF — adjacent to a lethal drop)
-	// Penalize heavily to discourage walking near cliff edges
-	if (pNextArea->m_iAttributeFlags & NAV_MESH_CLIFF)
-		flCost += flForwardDistance * 3.0f;
-
-	// Sentry danger area penalty (ported from TF2 bot's CTFBotPathCost SAFEST_ROUTE)
-	// TF2 bot: sentryDangerCost = 5.0f, applied when enemy sentry can fire on this area
-	if (iTeam == TF_TEAM_RED && (pNextArea->m_iTFAttributeFlags & TF_NAV_BLUE_SENTRY_DANGER))
-		flCost *= 5.0f;
-	else if (iTeam == TF_TEAM_BLUE && (pNextArea->m_iTFAttributeFlags & TF_NAV_RED_SENTRY_DANGER))
-		flCost *= 5.0f;
-
-	// AVOID flag penalty
-	if (pNextArea->m_iAttributeFlags & NAV_MESH_AVOID)
-		flCost += 100000.f;
-
-	// Crouch area penalty
-	if (pNextArea->m_iAttributeFlags & NAV_MESH_CROUCH)
-		flCost += flForwardDistance * 5.f;
-
-	// === Cover spot preference (ported from TF2 bot's hiding spot usage) ===
-	// TF2 bots use IN_COVER hiding spots to take cover from sentries and heal safely.
-	// When the local player is low on health, prefer areas that have cover spots.
-	// This makes the pathfinder route through safe spots when seeking health.
-	if (!m_mDangerBlacklist.empty() || (iTeam != 0 && pNextArea->m_uHidingSpotCount > 0))
-	{
-		// Check if this area has cover spots
-		bool bHasCover = false;
-		for (const auto& tSpot : pNextArea->m_vHidingSpots)
-		{
-			if (tSpot.HasGoodCover())
-			{
-				bHasCover = true;
-				break;
-			}
-		}
-
-		if (bHasCover)
-		{
-			// Discount for areas with cover — makes pathfinder prefer routes through cover
-			// Larger discount when in danger (escaping), smaller discount otherwise
-			bool bInDanger = false;
-			if (auto itDanger = m_mDangerBlacklist.find(pNextArea); itDanger != m_mDangerBlacklist.end())
-				bInDanger = false; // This area IS in danger, no discount
-			else
-				bInDanger = !m_mDangerBlacklist.empty(); // Other areas are in danger
-
-			if (bInDanger)
-				flCost -= flForwardDistance * 0.5f; // Strong preference when escaping
-			else
-				flCost -= flForwardDistance * 0.15f; // Mild preference otherwise
-		}
-
-		// Penalty for exposed spots — avoid walking through the open when in danger
-		bool bHasExposed = false;
-		for (const auto& tSpot : pNextArea->m_vHidingSpots)
-		{
-			if (tSpot.IsExposed())
-			{
-				bHasExposed = true;
-				break;
-			}
-		}
-		if (bHasExposed && !m_mDangerBlacklist.empty())
-			flCost += flForwardDistance * 0.3f; // Avoid exposed areas when in danger
-	}
-
-	return (std::max)(flCost, 1.f);
+	tEval.m_flStaticCost = flCost;
+	return tEval;
 }
 
-// Simple cost calculation (fallback, not used with new system)
-float CMap::EvaluateConnectionCost(CNavArea* pCurrentArea, CNavArea* pNextArea) const
+std::vector<CNavArea*> CMap::FindClosestNavAreas(const Vec3& vPos, int nCount, float flMaxDist)
 {
-	// Simple cost calculation based on distance
-	float flDistance = pCurrentArea->m_vCenter.DistTo(pNextArea->m_vCenter);
-	float flCost = flDistance;
+	// Like TF2 NextBot's GetNearestNavArea: prefer areas the position is actually inside
+	// (IsOverlapping), falling back to closest center distance on the same floor.
+	// Returns up to nCount areas, best-first.
 
-	// Add penalty for height differences
-	float flHeightDiff = pNextArea->m_vCenter.z - pCurrentArea->m_vCenter.z;
-	if (flHeightDiff > 0.f)
+	std::vector<CNavArea*> vResult;
+	if (nCount <= 0)
+		return vResult;
+
+	const float flMaxDistSqr = flMaxDist * flMaxDist;
+
+	// Overlapping areas always rank before non-overlapping ones regardless of distance
+	// (standing inside an area beats any area you're merely near).
+	struct Candidate_t
 	{
-		// Going up costs more
-		flCost += flHeightDiff * 2.0f;
-	}
-	else if (flHeightDiff < -8.f)
+		CNavArea* m_pArea = nullptr;
+		float m_flScore = 0.0f;
+		bool m_bOverlapping = false;
+	};
+	std::vector<Candidate_t> vCandidates;
+	vCandidates.reserve(64);
+
+	for (auto& tArea : m_navfile.m_vAreas)
 	{
-		// Going down costs a bit
-		flCost += std::abs(flHeightDiff) * 0.5f;
+		bool bOverlapping = tArea.IsOverlapping(vPos) &&
+			vPos.z >= tArea.m_flMinZ && vPos.z <= tArea.m_flMaxZ + 100.0f;
+
+		// The center-distance cap only applies to fallback (non-overlapping)
+		// candidates. An area the position stands ON must never be excluded by how
+		// far away its center is: spawn rooms are meshed as a few huge rectangles,
+		// and a bot at a spawn point can be 600+ units from the area center. With
+		// the cap applied there, the local area came back null at spawn, every
+		// NavTo failed, and the bot froze in place (gone once nudged off the mesh).
+		if (!bOverlapping)
+		{
+			float flDist = tArea.m_vCenter.DistToSqr(vPos);
+			if (flDist > flMaxDistSqr)
+				continue;
+
+			// Fallback candidates must be on the same floor. Without this Z check the
+			// fallback picks areas on different floors or across gaps, causing the bot
+			// to path through non-navmesh space or oscillate between areas.
+			float flHeightDiff = std::abs(tArea.m_vCenter.z - vPos.z);
+			if (flHeightDiff >= 100.0f)
+				continue;
+		}
+
+		vCandidates.push_back({ &tArea, tArea.m_vCenter.DistToSqr(vPos), bOverlapping });
 	}
 
-	// Add penalty for areas that should be avoided
-	if (pNextArea->m_iAttributeFlags & NAV_MESH_AVOID)
-		flCost += 10000.f;
+	size_t uTake = (std::min)(static_cast<size_t>(nCount), vCandidates.size());
+	std::partial_sort(vCandidates.begin(), vCandidates.begin() + uTake, vCandidates.end(),
+		[](const Candidate_t& a, const Candidate_t& b)
+		{
+			if (a.m_bOverlapping != b.m_bOverlapping)
+				return a.m_bOverlapping;
+			return a.m_flScore < b.m_flScore;
+		});
 
-	// Add penalty for crouch areas
-	if (pNextArea->m_iAttributeFlags & NAV_MESH_CROUCH)
-		flCost += flDistance * 2.0f;
+	for (size_t i = 0; i < uTake; i++)
+		vResult.push_back(vCandidates[i].m_pArea);
 
-	// Sniper spot area discount (ported from TF2 bot's CTFBotPathCost)
-	// TF2 bot: areas with TF_NAV_SNIPER_SPOT are preferred when pathing as sniper
-	if (pNextArea->m_iTFAttributeFlags & TF_NAV_SNIPER_SPOT)
-		flCost -= flDistance * 0.3f;
-
-	return (std::max)(flCost, 1.f);
+	return vResult;
 }
 
 CNavArea* CMap::FindClosestNavArea(const Vec3& vPos, float flMaxDist)
 {
-	// Like TF2 NextBot's GetNearestNavArea: prefer areas the position is actually inside (IsOverlapping),
-	// falling back to closest center distance if no overlapping area is found.
-	// Returns nullptr if no area is within flMaxDist of the position.
-	// TF2 uses 500.0f as the default max search distance.
+	auto vAreas = FindClosestNavAreas(vPos, 1, flMaxDist);
+	return vAreas.empty() ? nullptr : vAreas[0];
+}
 
-	const float flMaxDistSqr = flMaxDist * flMaxDist;
-	float flBestDist = FLT_MAX;
-	CNavArea* pBestArea = nullptr;        // Best overlapping area
-	CNavArea* pBestFallbackArea = nullptr; // Fallback: closest center distance (with Z check)
+bool CMap::HasUsableOutgoing(CNavArea* pArea)
+{
+	if (!pArea || pArea->m_vConnections.empty())
+		return false;
 
-	for (auto& tArea : m_navfile.m_vAreas)
+	// Static connection evaluations are memoized, so this is cheap after the
+	// first call per connection. Team/setup-gate rules are deliberately NOT
+	// considered — graph connectivity is what matters for choosing a start area.
+	// Dynamic corridor blocks count too: a start area whose every exit is
+	// currently marked blocked can't produce a solve, and picking it anyway
+	// starts paths in a world the bot hasn't physically reached (stuck marks
+	// then rotate over its out-edges forever instead of converging).
+	for (auto& tConnection : pArea->m_vConnections)
 	{
-		float flDist = tArea.m_vCenter.DistToSqr(vPos);
-
-		// Skip areas too far away
-		if (flDist > flMaxDistSqr)
+		CNavArea* pNextArea = tConnection.m_pArea;
+		if (!pNextArea || pNextArea == pArea)
 			continue;
 
-		// Check if position is actually inside this area's 2D bounds
-		if (tArea.IsOverlapping(vPos) && vPos.z >= tArea.m_flMinZ && vPos.z <= tArea.m_flMaxZ + 100.0f)
-		{
-			// Prefer the overlapping area that's closest by center
-			if (!pBestArea || flDist < pBestArea->m_vCenter.DistToSqr(vPos))
-			{
-				pBestArea = &tArea;
-			}
-		}
+		if (GetConnEval(pArea, pNextArea).m_bSkip)
+			continue;
 
-		// Track closest by center (fallback) — but ONLY if the area is on the same floor.
-		// Without this Z check, the fallback can pick areas on different floors or across gaps,
-		// causing the bot to path through non-navmesh space or oscillate between areas.
-		float flHeightDiff = std::abs(tArea.m_vCenter.z - vPos.z);
-		if (flHeightDiff < 100.0f && flDist < flBestDist)
-		{
-			flBestDist = flDist;
-			pBestFallbackArea = &tArea;
-		}
+		bool bPassable = false;
+		if (GetConnVerdict(pArea, pNextArea, bPassable) && !bPassable)
+			continue;
+
+		return true;
 	}
 
-	// Prefer overlapping area, fall back to closest center on same floor
-	return pBestArea ? pBestArea : pBestFallbackArea;
+	return false;
+}
+
+// Ported from Unibox (Map.cpp:615): a directed mesh link with sane height
+// deltas. Upward steps beyond jump height and lethal drops disqualify the link
+// even though the connection list contains it.
+bool CMap::HasDirectConnection(CNavArea* pFrom, CNavArea* pTo) const
+{
+	if (!pFrom || !pTo)
+		return false;
+	if (pFrom == pTo)
+		return true;
+
+	for (auto& tConnection : pFrom->m_vConnections)
+	{
+		if (tConnection.m_pArea != pTo)
+			continue;
+		if (pTo->m_flMinZ - pFrom->m_flMaxZ > PLAYER_JUMP_HEIGHT)
+			return false;
+		if (pFrom->m_flMinZ - pTo->m_flMaxZ > PLAYER_DEATH_DROP_HEIGHT)
+			return false;
+		return true;
+	}
+	return false;
 }
 
 Vec3 CMap::FindHidingSpot(const Vec3& vFrom, float flMaxDist, unsigned char uRequiredFlags, int iTeam)
@@ -701,4 +883,70 @@ Vec3 CMap::FindSniperSpot(const Vec3& vFrom, float flMaxDist, int iTeam)
 	// Fall back to good sniper spots
 	vResult = FindHidingSpot(vFrom, flMaxDist, CHidingSpot::GOOD_SNIPER_SPOT, iTeam);
 	return vResult;
+}
+
+Vec3 CMap::FindDefendSpot(const Vec3& vAnchor, const Vec3& vThreatPos, bool bHasThreat,
+	float flMaxDist, int iTeam)
+{
+	// Same exclusions as FindHidingSpot (spawn rooms, blocked, active danger,
+	// DONT_HIDE), but spots are measured from the defend ANCHOR and a spot that
+	// can see the threat is rejected — "in cover" means the enemy's line is broken.
+	float flBestDist = flMaxDist;
+	Vec3 vBestSpot = Vec3(0, 0, 0);
+
+	float flCurTime = I::GlobalVars->curtime;
+
+	for (auto& tArea : m_navfile.m_vAreas)
+	{
+		if (iTeam == TF_TEAM_RED && (tArea.m_iTFAttributeFlags & TF_NAV_SPAWN_ROOM_BLUE))
+			continue;
+		if (iTeam == TF_TEAM_BLUE && (tArea.m_iTFAttributeFlags & TF_NAV_SPAWN_ROOM_RED))
+			continue;
+		if (tArea.m_iTFAttributeFlags & TF_NAV_BLOCKED)
+			continue;
+
+		if (auto itDanger = m_mDangerBlacklist.find(&tArea); itDanger != m_mDangerBlacklist.end())
+		{
+			auto& entry = itDanger->second;
+			bool bExpired = false;
+			if (entry.m_iExpireTick > 0 && I::GlobalVars->tickcount > entry.m_iExpireTick)
+				bExpired = true;
+			if (entry.m_flExpireTime > 0.0f && flCurTime > entry.m_flExpireTime)
+				bExpired = true;
+			if (!bExpired)
+				continue;
+		}
+
+		if (tArea.m_iAttributeFlags & NAV_MESH_DONT_HIDE)
+			continue;
+
+		// Areas bigger than the search ring can still hold valid spots near their
+		// edge; the spot distance below is the real filter.
+		if (tArea.m_vCenter.DistTo(vAnchor) > flMaxDist + 400.0f)
+			continue;
+
+		for (auto& tSpot : tArea.m_vHidingSpots)
+		{
+			if (!(tSpot.m_fFlags & CHidingSpot::IN_COVER))
+				continue;
+
+			const float flSpotDist = tSpot.m_vPos.DistTo(vAnchor);
+			if (flSpotDist >= flBestDist)
+				continue;
+
+			if (bHasThreat)
+			{
+				Vec3 vEye = tSpot.m_vPos; vEye.z += PLAYER_CROUCHED_JUMP_HEIGHT;
+				Vec3 vThreat = vThreatPos; vThreat.z += PLAYER_CROUCHED_JUMP_HEIGHT;
+				// True = clear line of sight = the threat sees this spot
+				if (H::AimUtils->TracePositionWorld(vEye, vThreat))
+					continue;
+			}
+
+			flBestDist = flSpotDist;
+			vBestSpot = tSpot.m_vPos;
+		}
+	}
+
+	return vBestSpot;
 }

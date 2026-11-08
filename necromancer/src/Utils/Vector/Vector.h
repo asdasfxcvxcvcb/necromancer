@@ -143,6 +143,12 @@ public:
 		return sqrtf(x * x + y * y + z * z);
 	}
 
+	// linear interpolation between this and v by t (Amalgam's Vec3::Lerp)
+	Vec3 Lerp(const Vec3 &v, float t) const
+	{
+		return Vec3(x + (v.x - x) * t, y + (v.y - y) * t, z + (v.z - z) * t);
+	}
+
 	float LengthSqr(void) const
 	{
 		return (x * x + y * y + z * z);

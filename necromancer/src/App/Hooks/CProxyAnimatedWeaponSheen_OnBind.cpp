@@ -4,9 +4,10 @@
 #include "../Features/Players/Players.h"
 
 // Signature for CProxyAnimatedWeaponSheen::OnBind from client.dll
-// May need updating after TF2 patches — verify with a sig scanner if it breaks
+// Oct 5 2026 TF2 update changed the prologue to the r11 frame style. Derived
+// via the class RTTI vtable (slot 1 = OnBind, saves the entity param in rdx).
 MAKE_SIGNATURE(CProxyAnimatedWeaponSheen_OnBind, "client.dll",
-	"48 89 54 24 ? 55 57 41 54 48 8D 6C 24", 0x0);
+	"4C 8B DC 49 89 53 10 55 57 41 54 49 8D 6B ? 48 81 EC ? ? ? ? 48 8B 41 08", 0x0);
 
 // From the TF2 Source SDK (c_tf_player.cpp):
 //

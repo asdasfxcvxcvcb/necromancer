@@ -7,6 +7,7 @@ public:
 	bool bSendPacket = false;
 	void CL_Sendmove();
 	int get_latest_command_number();
+
 };
 
 MAKE_SINGLETON_SCOPED(CNetworking, Networking, F);

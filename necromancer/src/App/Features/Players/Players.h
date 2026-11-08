@@ -46,6 +46,7 @@ public:
 	void Parse();
 	void ParseStats();
 	void SaveStats();
+	void ShutdownStatsWriter();
 	void MarkStatsDirty();
 	void CheckDeferredSave(); // Call this every frame
 	void ImportLegacyPlayers(); // Import players.json from old seonwdde folder

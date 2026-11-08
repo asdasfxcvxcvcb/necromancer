@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <ClCompile Include="include\MinHook\buffer.c" />
@@ -14,11 +14,19 @@
     <ClCompile Include="src\App\Features\Aimbot\Aimbot.cpp" />
     <ClCompile Include="src\App\Features\amalgam_port\AimbotGlobal\AimbotGlobal.cpp" />
     <ClCompile Include="src\App\Features\amalgam_port\AimbotProjectile\AimbotProjectileAmalgam.cpp" />
+    <ClCompile Include="src\App\Features\amalgam_port\AimbotMelee\AimbotMeleeAmalgam.cpp" />
     <ClCompile Include="src\App\Features\amalgam_port\EnginePrediction\AmalgamEnginePred.cpp" />
     <ClCompile Include="src\App\Features\amalgam_port\ProjectileSimulation\ProjectileSimulation.cpp" />
+    <ClCompile Include="src\App\Features\amalgam_port\World\World.cpp" />
     <ClCompile Include="src\App\Features\amalgam_port\Ticks\Ticks.cpp" />
+    <ClCompile Include="src\App\Features\amalgam_port\MoveSim\MoveSimAmalgam.cpp" />
+    <ClCompile Include="src\App\Features\AntiBackstab\AntiBackstab.cpp" />
+    <ClCompile Include="src\App\Features\AutoUberPop\AutoUberPop.cpp" />
     <ClCompile Include="src\App\Features\AutoQueue\AutoQueue.cpp" />
+    <ClCompile Include="src\App\Features\AutoVote\AutoVote.cpp" />
+    <ClCompile Include="src\App\Features\PacMan\PacMan.cpp" />
     <ClCompile Include="src\App\Features\Chat\AutoMathSolver.cpp" />
+    <ClCompile Include="src\App\Features\Achievements\Achievements.cpp" />
     <ClCompile Include="src\App\Features\Chat\Chat.cpp" />
     <ClCompile Include="src\App\Features\ChatESP\ChatESP.cpp" />
     <ClCompile Include="src\App\Features\Crits\Crits.cpp" />
@@ -33,15 +41,26 @@
     <ClCompile Include="src\App\Features\Menu\LateRenderer\LateRenderer.cpp" />
     <ClCompile Include="src\App\Features\Menu\Menu.cpp" />
     <ClCompile Include="src\App\Features\Misc\AntiCheatCompat\AntiCheatCompat.cpp" />
+    <ClCompile Include="src\App\Features\Misc\IgnoreVAC\IgnoreVAC.cpp" />
     <ClCompile Include="src\App\Features\Misc\Misc.cpp" />
+    <ClCompile Include="src\App\Features\Misc\SkinChanger\SkinChanger.cpp" />
     <ClCompile Include="src\App\Features\MiscVisuals\MiscVisuals.cpp" />
     <ClCompile Include="src\App\Features\MovementSimulation\MovementSimulation.cpp" />
+    <ClCompile Include="src\App\Features\MoveSimDebug\MoveSimDebug.cpp" />
     <ClCompile Include="src\App\Features\NavBot\NavEngine\MicroPather\micropather.cpp" />
     <ClCompile Include="src\App\Features\NavBot\NavEngine\Map.cpp" />
     <ClCompile Include="src\App\Features\NavBot\NavEngine\NavEngine.cpp" />
     <ClCompile Include="src\App\Features\NavBot\NavBot.cpp" />
+    <ClCompile Include="src\App\Features\NecroNet\NecroNet.cpp" />
+    <ClCompile Include="src\App\Features\NecroNet\NetAvatar.cpp" />
+    <ClCompile Include="src\App\Features\NecroNet\NetClient.cpp" />
+    <ClCompile Include="src\App\Features\NecroNet\NetCrypto.cpp" />
+    <ClCompile Include="src\App\Features\NecroNet\NetJson.cpp" />
+    <ClCompile Include="src\App\Features\NecroNet\NetSteam.cpp" />
+    <ClCompile Include="src\App\Features\NecroNet\NetStore.cpp" />
     <ClCompile Include="src\App\Features\NetworkFix\NetworkFix.cpp" />
     <ClCompile Include="src\App\Features\Networking\Networking.cpp" />
+    <ClCompile Include="src\App\Features\NoSpread\NoSpreadProjectile\NoSpreadProjectile.cpp" />
     <ClCompile Include="src\App\Features\Outlines\Outlines.cpp" />
     <ClCompile Include="src\App\Features\Paint\Paint.cpp" />
     <ClCompile Include="src\App\Features\Players\Players.cpp" />
@@ -51,6 +70,7 @@
     <ClCompile Include="src\App\Features\RapidFire\RapidFire.cpp" />
     <ClCompile Include="src\App\Features\SeedPred\SeedPred.cpp" />
     <ClCompile Include="src\App\Features\SpectatorList\SpectatorList.cpp" />
+    <ClCompile Include="src\App\Features\StatusWindow\StatusWindow.cpp" />
     <ClCompile Include="src\App\Features\SpyCamera\SpyCamera.cpp" />
     <ClCompile Include="src\App\Features\SpyWarning\SpyWarning.cpp" />
     <ClCompile Include="src\App\Features\StreamerMode\StreamerMode.cpp" />
@@ -66,6 +86,7 @@
     <ClCompile Include="src\App\Features\VisualUtils\VisualUtils.cpp" />
     <ClCompile Include="src\App\Features\Weather\Weather.cpp" />
     <ClCompile Include="src\App\Features\WorldModulation\WorldModulation.cpp" />
+    <ClCompile Include="src\App\Hooks\CAchievementMgr_CheckAchievementsEnabled.cpp" />
     <ClCompile Include="src\App\Hooks\CBaseAnimating_Interpolate.cpp" />
     <ClCompile Include="src\App\Hooks\CBaseAnimating_SetupBones.cpp" />
     <ClCompile Include="src\App\Hooks\CBaseEntity_AddVar.cpp" />
@@ -86,10 +107,14 @@
     <ClCompile Include="src\App\Hooks\CHudTFCrosshair_ShouldDraw.cpp" />
     <ClCompile Include="src\App\Hooks\CInventoryManager_ShowItemsPickedUp.cpp" />
     <ClCompile Include="src\App\Hooks\CL_CheckForPureServerWhitelist.cpp" />
+    <ClCompile Include="src\App\Hooks\CL_ProcessConnectionlessPacket.cpp" />
+    <ClCompile Include="src\App\Hooks\CL_SendConnectPacket.cpp" />
+    <ClCompile Include="src\App\Hooks\INetChannel_ProcessPacket.cpp" />
     <ClCompile Include="src\App\Hooks\CL_Move.cpp" />
     <ClCompile Include="src\App\Hooks\ClientModeShared_DoPostScreenSpaceEffects.cpp" />
     <ClCompile Include="src\App\Hooks\ClientModeShared_OverrideView.cpp" />
     <ClCompile Include="src\App\Hooks\CMatchInviteNotification_OnTick.cpp" />
+    <ClCompile Include="src\App\Hooks\CM_TraceToDispTree.cpp" />
     <ClCompile Include="src\App\Hooks\CMaterial_Uncache.cpp" />
     <ClCompile Include="src\App\Hooks\CMultiPlayerAnimState_ResetGestureSlot.cpp" />
     <ClCompile Include="src\App\Hooks\COPRenderSprites_RenderSpriteCard.cpp" />
@@ -118,6 +143,7 @@
     <ClCompile Include="src\App\Hooks\CTFPlayerShared_InCond.cpp" />
     <ClCompile Include="src\App\Hooks\CTFPlayerShared_IsPlayerDominated.cpp" />
     <ClCompile Include="src\App\Hooks\CTFPlayerShared_ShouldSuppressPrediction.cpp" />
+    <ClCompile Include="src\App\Hooks\CTFPlayerShared_IsCritBoosted.cpp" />
     <ClCompile Include="src\App\Hooks\CTFRagdoll_CreateTFRagdoll.cpp" />
     <ClCompile Include="src\App\Hooks\CTFViewModel_CalcViewModelView.cpp" />
     <ClCompile Include="src\App\Hooks\CTFWeapon_ShouldDraw.cpp" />
@@ -183,7 +209,7 @@
     <ClCompile Include="src\App\Hooks\CTFDroppedWeapon.cpp" />
     <ClCompile Include="src\App\Hooks\Engine_DisconnectReasonCategorizer.cpp" />
     <ClCompile Include="src\App\Hooks\KeyValues_SetString.cpp" />
-    <ClCompile Include="src\App\Features\PredictionLog\PredictionLog.cpp" />
+    <ClCompile Include="src\App\Features\Misc\SkinChanger\SkinChanger.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\nlohmann\json_fwd.hpp" />
@@ -203,12 +229,24 @@
     <ClInclude Include="src\App\Features\Aimbot\Aimbot.h" />
     <ClInclude Include="src\App\Features\amalgam_port\AimbotGlobal\AimbotGlobal.h" />
     <ClInclude Include="src\App\Features\amalgam_port\AimbotProjectile\AimbotProjectileAmalgam.h" />
+    <ClInclude Include="src\App\Features\amalgam_port\AimbotMelee\AimbotMeleeAmalgam.h" />
     <ClInclude Include="src\App\Features\amalgam_port\EnginePrediction\AmalgamEnginePred.h" />
     <ClInclude Include="src\App\Features\amalgam_port\ProjectileSimulation\ProjectileSimulation.h" />
+    <ClInclude Include="src\App\Features\amalgam_port\World\World.h" />
+    <ClInclude Include="src\SDK\TF2\collisionbspdata.h" />
+    <ClInclude Include="src\SDK\TF2\dispcolltree.h" />
+    <ClInclude Include="src\SDK\TF2\icollideable.h" />
     <ClInclude Include="src\App\Features\amalgam_port\Ticks\Ticks.h" />
     <ClInclude Include="src\App\Features\amalgam_port\AmalgamCompat.h" />
+    <ClInclude Include="src\App\Features\amalgam_port\MoveSim\MoveSimAmalgam.h" />
+    <ClInclude Include="src\App\Features\AntiBackstab\AntiBackstab.h" />
+    <ClInclude Include="src\App\Features\AutoUberPop\AutoUberPop.h" />
     <ClInclude Include="src\App\Features\AutoQueue\AutoQueue.h" />
+    <ClInclude Include="src\App\Features\AutoVote\AutoVote.h" />
+    <ClInclude Include="src\App\Features\PacMan\PacMan.h" />
+    <ClInclude Include="src\App\Features\PacMan\PacManSoundsData.h" />
     <ClInclude Include="src\App\Features\Chat\AutoMathSolver.h" />
+    <ClInclude Include="src\App\Features\Achievements\Achievements.h" />
     <ClInclude Include="src\App\Features\Chat\Chat.h" />
     <ClInclude Include="src\App\Features\ChatESP\ChatESP.h" />
     <ClInclude Include="src\App\Features\Crits\Crits.h" />
@@ -225,17 +263,28 @@
     <ClInclude Include="src\App\Features\Menu\MenuAnimations.h" />
     <ClInclude Include="src\App\Features\Misc\AntiCheatCompat\AntiCheatCompat.h" />
     <ClInclude Include="src\App\Features\Misc\Misc.h" />
+    <ClInclude Include="src\App\Features\Misc\SkinChanger\SkinChanger.h" />
     <ClInclude Include="src\App\Features\MiscVisuals\MiscVisuals.h" />
     <ClInclude Include="src\App\Features\MovementSimulation\MovementSimulation.h" />
+    <ClInclude Include="src\App\Features\MoveSimDebug\MoveSimDebug.h" />
     <ClInclude Include="src\App\Features\NavBot\NavEngine\FileReader\CNavFile.h" />
     <ClInclude Include="src\App\Features\NavBot\NavEngine\FileReader\nav.h" />
     <ClInclude Include="src\App\Features\NavBot\NavEngine\MicroPather\micropather.h" />
     <ClInclude Include="src\App\Features\NavBot\NavEngine\Map.h" />
     <ClInclude Include="src\App\Features\NavBot\NavEngine\NavEngine.h" />
     <ClInclude Include="src\App\Features\NavBot\NavBot.h" />
+    <ClInclude Include="src\App\Features\NecroNet\NecroNet.h" />
+    <ClInclude Include="src\App\Features\NecroNet\NetAvatar.h" />
+    <ClInclude Include="src\App\Features\NecroNet\NetClient.h" />
+    <ClInclude Include="src\App\Features\NecroNet\NetCrypto.h" />
+    <ClInclude Include="src\App\Features\NecroNet\NetJson.h" />
+    <ClInclude Include="src\App\Features\NecroNet\NetSteam.h" />
+    <ClInclude Include="src\App\Features\NecroNet\NetStore.h" />
+    <ClInclude Include="src\App\Features\NecroNet\NetworkShared.h" />
     <ClInclude Include="src\App\Features\NetworkFix\NetworkFix.h" />
     <ClInclude Include="src\App\Features\Networking\Networking.h" />
     <ClInclude Include="src\App\Features\Outlines\Outlines.h" />
+    <ClInclude Include="src\App\Features\NoSpread\NoSpreadProjectile\NoSpreadProjectile.h" />
     <ClInclude Include="src\App\Features\Paint\Paint.h" />
     <ClInclude Include="src\App\Features\Players\Players.h" />
     <ClInclude Include="src\App\Features\ProjectileDodge\ProjectileDodge.h" />
@@ -244,6 +293,7 @@
     <ClInclude Include="src\App\Features\RapidFire\RapidFire.h" />
     <ClInclude Include="src\App\Features\SeedPred\SeedPred.h" />
     <ClInclude Include="src\App\Features\SpectatorList\SpectatorList.h" />
+    <ClInclude Include="src\App\Features\StatusWindow\StatusWindow.h" />
     <ClInclude Include="src\App\Features\SpyCamera\SpyCamera.h" />
     <ClInclude Include="src\App\Features\SpyWarning\SpyWarning.h" />
     <ClInclude Include="src\App\Features\StreamerMode\StreamerMode.h" />
@@ -415,6 +465,6 @@
     <ClInclude Include="src\App\Features\Chat\AutoVoteLifted.h" />
     <ClInclude Include="src\SDK\TF2\demo.h" />
     <ClInclude Include="src\App\Features\Menu\stb_image.h" />
-    <ClInclude Include="src\App\Features\PredictionLog\PredictionLog.h" />
+    <ClInclude Include="src\App\Features\Misc\SkinChanger\SkinChanger.h" />
   </ItemGroup>
 </Project>

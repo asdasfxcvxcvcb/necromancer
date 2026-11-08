@@ -10,6 +10,8 @@ void CFontManager::Reload()
 	m_mapFonts[EFonts::ChatESP_Large] = { "Small Fonts", 14, FONTFLAG_OUTLINE, 0 };  // Close range
 	m_mapFonts[EFonts::ChatESP_Medium] = { "Small Fonts", 12, FONTFLAG_OUTLINE, 0 };  // Medium range
 	m_mapFonts[EFonts::ChatESP_Small] = { "Small Fonts", 10, FONTFLAG_OUTLINE, 0 };   // Far range
+	m_mapFonts[EFonts::StatusAnnounce] = { "Verdana", 15, FONTFLAG_OUTLINE | FONTFLAG_ANTIALIAS, 0 };
+	m_mapFonts[EFonts::NecroNet] = { "Verdana", 14, FONTFLAG_ANTIALIAS, 0 };
 
 	for (auto &v : m_mapFonts)
 	{

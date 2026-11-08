@@ -173,6 +173,7 @@ bool CAimbotMelee::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, MeleeT
 	// Separate vector for friendly buildings - these bypass the target max limit
 	std::vector<MeleeTarget_t> vecFriendlyBuildings;
 
+
 	// Find player targets
 	if (CFG::Aimbot_Target_Players)
 	{
@@ -481,6 +482,7 @@ bool CAimbotMelee::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, MeleeT
 	// Sort main targets by priority
 	if (!m_vecTargets.empty())
 		F::AimbotCommon->Sort(m_vecTargets, CFG::Aimbot_Melee_Sort);
+
 	
 	// Sort friendly buildings by distance (closest first for repair priority)
 	if (!vecFriendlyBuildings.empty())
@@ -636,8 +638,7 @@ void CAimbotMelee::CrouchWhileAirborne(CUserCmd* pCmd, C_TFPlayer* pLocal)
 		}
 		
 		int iTicksToLand = static_cast<int>(flTimeToLand / I::GlobalVars->interval_per_tick);
-		
-		// Uncrouch 2 ticks before landing to land standing, otherwise crouch
+
 		if (iTicksToLand > 2)
 			pCmd->buttons |= IN_DUCK;
 		else

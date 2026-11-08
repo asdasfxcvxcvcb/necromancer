@@ -123,9 +123,12 @@ void RunChatSpammer()
 	if (!I::EngineClient->IsConnected() || !I::EngineClient->IsInGame())
 		return;
 
-	// Load messages if not loaded
-	if (g_vecChatSpammerMessages.empty())
+	// Load messages if not loaded - retry at most every 5s so a missing or
+	// blank chatspammer file doesn't cause a disk read every frame
+	static float s_flNextLoadAttempt = 0.0f;
+	if (g_vecChatSpammerMessages.empty() && I::GlobalVars->realtime >= s_flNextLoadAttempt)
 	{
+		s_flNextLoadAttempt = I::GlobalVars->realtime + 5.0f;
 		ReloadChatSpammerMessages();
 		if (g_vecChatSpammerMessages.empty())
 			return;
@@ -163,9 +166,10 @@ void OnKill(const char* victimName, int victimEntIndex)
 			return; // Not tagged, skip
 	}
 
-	// Load messages if not loaded
-	if (g_vecKillsayMessages.empty())
+	static float s_flNextLoadAttempt = 0.0f;
+	if (g_vecKillsayMessages.empty() && I::GlobalVars->realtime >= s_flNextLoadAttempt)
 	{
+		s_flNextLoadAttempt = I::GlobalVars->realtime + 5.0f;
 		ReloadKillsayMessages();
 		if (g_vecKillsayMessages.empty())
 			return;

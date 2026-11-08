@@ -22,11 +22,13 @@ private:
 	
 	// Calculate max allowed fakelag ticks considering stored ticks, anti-aim, and menu settings
 	int CalculateMaxAllowedTicks(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd);
+	void ResetCycleState(C_TFPlayer* pLocal);
 
 	Vec3 m_vLastPosition = {};
 	int m_iNewEntityUnchokeTicks = 0;
 	int m_iCurrentChokeTicks = 0;
 	int m_iTargetChokeTicks = 0;
+	int m_iSightlineDeadband = 0;
 	
 	// Amalgam-style flags
 	bool m_bPreservingBlast = false;

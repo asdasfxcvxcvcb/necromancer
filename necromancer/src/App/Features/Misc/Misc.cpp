@@ -18,6 +18,7 @@ void CMisc::Bunnyhop(CUserCmd* pCmd)
 
 		static bool bJumpState = false;
 		static bool bLastGrounded = false;
+		static bool bLastSentJump = false;
 		static int iBhopCount = 0;
 
 		const bool bGrounded = (pLocal->m_fFlags() & FL_ONGROUND) != 0;
@@ -30,26 +31,28 @@ void CMisc::Bunnyhop(CUserCmd* pCmd)
 
 			else if (bJumpState)
 				bJumpState = false;
-		}
 
+			else if (bLastGrounded && bGrounded && bLastSentJump)
+				pCmd->buttons &= ~IN_JUMP;
+		}
 		else if (!bJumpState)
 		{
 			bJumpState = true;
 		}
 
-		// Anti-cheat compatibility: limit consecutive bhops to 9
 		if (CFG::Misc_AntiCheat_Enabled && F::AntiCheatCompat->ShouldLimitBhop(iBhopCount, bGrounded, bLastGrounded, bJumping))
 		{
 			pCmd->buttons &= ~IN_JUMP;
 		}
 
+		bLastSentJump = (pCmd->buttons & IN_JUMP) != 0;
 		bLastGrounded = bGrounded;
 	}
 }
 
 void CMisc::CrouchWhileAirborne(CUserCmd* pCmd)
 {
-	if (!CFG::Misc_Crouch_While_Airborne)
+	if (!CFG::Misc_Crouch_While_Airborne || m_bJumpbugEngaged)
 		return;
 
 	if (const auto pLocal = H::Entities->GetLocal())
@@ -62,6 +65,36 @@ void CMisc::CrouchWhileAirborne(CUserCmd* pCmd)
 		// the duck-adjusted shoot position when IN_DUCK is set while airborne)
 		F::AimbotMelee->CrouchWhileAirborne(pCmd, pLocal);
 	}
+}
+
+void CMisc::AutoJumpbug(C_TFPlayer* pLocal, CUserCmd* pCmd)
+{
+	m_bJumpbugEngaged = false;
+
+	if (!CFG::Misc_AutoJumpbug || !pLocal || pLocal->deadflag())
+		return;
+
+	if (pLocal->m_hGroundEntity() || pLocal->m_vecVelocity().z > -650.f)
+		return;
+
+	if (!(pCmd->buttons & IN_DUCK) && !CFG::Misc_Crouch_While_Airborne)
+		return;
+
+	const float flUnduckHeight = 20 * pLocal->m_flModelScale();
+	const float flTraceDistance = flUnduckHeight + 2;
+
+	trace_t trace = {};
+	CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
+
+	const Vec3 vOrigin = pLocal->m_vecOrigin();
+	H::AimUtils->TraceHull(vOrigin, vOrigin - Vec3(0, 0, flTraceDistance), pLocal->m_vecMins(), pLocal->m_vecMaxs(), MASK_PLAYERSOLID, &filter, &trace);
+	if (!trace.DidHit() || trace.fraction * flTraceDistance < flUnduckHeight)
+		return;
+
+	pCmd->buttons &= ~IN_DUCK;
+	pCmd->buttons |= IN_JUMP;
+	m_bJumpbugEngaged = true;
+	m_flLastJumpbug = I::EngineClient->Time();
 }
 
 void CMisc::AutoStrafer(CUserCmd* pCmd)
@@ -805,7 +838,7 @@ void CMisc::AutoMedigun(CUserCmd* cmd)
 	if (!CFG::AutoUber_AutoHeal_Active)
 		return;
 
-	if (!CFG::AutoUber_Always_On && !H::Input->IsDown(CFG::Triggerbot_Key))
+	if (!CFG::AutoHeal_Always_On && !H::Input->IsDown(CFG::Triggerbot_Key))
 		return;
 
 	if (I::EngineVGui->IsGameUIVisible() || I::MatSystemSurface->IsCursorVisible() || SDKUtils::BInEndOfMatch())
@@ -874,96 +907,110 @@ void CMisc::AutoMedigun(CUserCmd* cmd)
 	const bool bBeamAttached = pCurrentHealPlayer && medigun->m_bHealing();
 	const bool bUberActive = medigun->m_bChargeRelease();
 
-	// If beam is attached, check if we should keep it or switch
-	if (bBeamAttached)
+	auto traceToTarget = [&](C_TFPlayer* pl, const Vec3& vFrom, bool& bPlayerBlocked) -> bool
+	{
+		bPlayerBlocked = false;
+
+		CTraceFilterHitscan filter{};
+		trace_t tr{};
+		H::AimUtils->Trace(vFrom, pl->GetCenter(), (MASK_SHOT & ~CONTENTS_HITBOX), &filter, &tr);
+
+		if (tr.fraction > 0.99f || tr.m_pEnt == pl)
+			return true;
+
+		const int nEntIndex = tr.m_pEnt ? tr.m_pEnt->entindex() : 0;
+		bPlayerBlocked = nEntIndex > 0 && nEntIndex <= I::EngineClient->GetMaxClients();
+		return false;
+	};
+
+	auto aimAt = [&](C_TFPlayer* pl)
+	{
+		const auto angle = Math::CalcAngle(local->GetShootPos(), pl->GetCenter());
+		H::AimUtils->FixMovement(cmd, angle);
+		cmd->viewangles = angle;
+
+		if (CFG::Misc_Accuracy_Improvements)
+			cmd->tick_count = TIME_TO_TICKS(pl->m_flSimulationTime() + SDKUtils::GetLerp());
+
+		G::bSilentAngles = true;
+	};
+
+	auto wouldAttach = [&](C_TFPlayer* pGoalTarget) -> bool
+	{
+		const Vec3 vFrom = local->GetShootPos();
+		Vec3 vAimDir = pGoalTarget->GetCenter() - vFrom;
+		if (vAimDir.IsZero())
+			return false;
+		vAimDir.Normalize();
+
+		C_TFPlayer* pBest = nullptr;
+		float flBestDist = FL_CONNECT_RANGE;
+
+		const int nMaxClients = I::EngineClient->GetMaxClients();
+		for (int n = 1; n <= nMaxClients; n++)
+		{
+			auto pClientEntity = I::ClientEntityList->GetClientEntity(n);
+			if (!pClientEntity || pClientEntity->IsDormant())
+				continue;
+
+			auto pl = pClientEntity->As<C_TFPlayer>();
+			if (!pl || pl->deadflag() || pl == local)
+				continue;
+
+			if (pl->m_iTeamNum() != local->m_iTeamNum())
+				continue;
+
+			if (pl->InCond(TF_COND_STEALTHED))
+				continue;
+
+			const Vec3 vCenter = pl->GetCenter();
+			const float flDist = vCenter.DistTo(vFrom);
+			if (flDist > flBestDist)
+				continue;
+
+			Vec3 vToTarget = vCenter - vFrom;
+			if (vToTarget.IsZero())
+				continue;
+			vToTarget.Normalize();
+			if (vAimDir.Dot(vToTarget) < 0.93f)
+				continue;
+
+			CTraceFilterHitscan filter{};
+			trace_t tr{};
+			H::AimUtils->Trace(vFrom, vCenter, MASK_SOLID, &filter, &tr);
+			if (!(tr.fraction > 0.99f || tr.m_pEnt == pl))
+				continue;
+
+			pBest = pl;
+			flBestDist = flDist;
+		}
+
+		return pBest == pGoalTarget;
+	};
+
+	if (bUberActive && bBeamAttached)
 	{
 		const float flDist = pCurrentHealPlayer->GetCenter().DistTo(local->GetShootPos());
-
-		// Only release beam if target is out of range
-		// DON'T release for invulnerability during uber — that caused the heal/unheal loop
-		// For non-uber invuln (Bonk etc), we still keep beam to build charge
 		if (flDist > FL_STICK_RANGE)
-		{
 			cmd->buttons &= ~IN_ATTACK;
-		}
 		else
-		{
-			// Beam is valid — hold IN_ATTACK to maintain it (no angle change needed)
 			cmd->buttons |= IN_ATTACK;
-
-			// Search for better targets while beam is attached
-			// Always look — don't wait for current target to be high health
-			const float flCurrentHealth = getHealthPercent(pCurrentHealPlayer);
-
-			// Don't switch during uber
-			if (!bUberActive)
-			{
-				C_TFPlayer* pBetterTarget = nullptr;
-				float flBetterHealth = flCurrentHealth - 0.1f; // Must be 10% lower to switch
-
-				const int nMaxClients = I::EngineClient->GetMaxClients();
-				for (int n = 1; n <= nMaxClients; n++)
-				{
-					auto pClientEntity = I::ClientEntityList->GetClientEntity(n);
-					if (!pClientEntity || pClientEntity->IsDormant())
-						continue;
-
-					auto pl = pClientEntity->As<C_TFPlayer>();
-					if (!pl || pl->deadflag() || pl == local || pl == pCurrentHealPlayer)
-						continue;
-
-					if (pl->m_iTeamNum() != local->m_iTeamNum())
-						continue;
-
-					const float flPlDist = pl->GetCenter().DistTo(local->GetShootPos());
-					if (flPlDist > FL_CONNECT_RANGE)
-						continue;
-
-					if (pl->InCond(TF_COND_STEALTHED) || pl->IsInvulnerable())
-						continue;
-
-					if (CFG::AutoUber_AutoHeal_Friends_Only && !isFriend(pl))
-						continue;
-
-					const float flPercent = getHealthPercent(pl);
-					if (flPercent < flBetterHealth)
-					{
-						CTraceFilterHitscan filter{};
-						trace_t tr{};
-						H::AimUtils->Trace(local->GetShootPos(), pl->GetCenter(), (MASK_SHOT & ~CONTENTS_HITBOX), &filter, &tr);
-
-						if (tr.fraction > 0.99f || tr.m_pEnt == pl)
-						{
-							pBetterTarget = pl;
-							flBetterHealth = flPercent;
-						}
-					}
-				}
-
-				if (pBetterTarget)
-				{
-					// Switch to better target — aim at them
-					const auto angle = Math::CalcAngle(local->GetShootPos(), pBetterTarget->GetCenter());
-					H::AimUtils->FixMovement(cmd, angle);
-					cmd->viewangles = angle;
-					// IN_ATTACK already set above, beam will detach from old and lock to new
-
-					if (CFG::Misc_Accuracy_Improvements)
-						cmd->tick_count = TIME_TO_TICKS(pBetterTarget->m_flSimulationTime() + SDKUtils::GetLerp());
-
-					// Use bSilentAngles (view restore only) — NOT bPSilentAngles which chokes packets
-					G::bSilentAngles = true;
-				}
-			}
-		}
 		return;
 	}
 
-	// No beam attached — find the best target
-	C_TFPlayer* pBestTarget = nullptr;
-	C_TFPlayer* pBestTargetNeedsHealing = nullptr;
-	float flLowestHealth = 1.0f;
-	float flBestDist = FLT_MAX;
+	C_TFPlayer* pGoal = nullptr;
+	float flThreshold = 1.0f;
+
+	if (bBeamAttached
+		&& pCurrentHealPlayer->GetCenter().DistTo(local->GetShootPos()) <= FL_STICK_RANGE
+		&& (!CFG::AutoHeal_Friends_Only || isFriend(pCurrentHealPlayer)))
+	{
+		pGoal = pCurrentHealPlayer;
+		flThreshold = getHealthPercent(pCurrentHealPlayer) - 0.02f;
+	}
+
+	C_TFPlayer* pClosestClear = nullptr;
+	float flClosestDist = FLT_MAX;
 
 	const int nMaxClients = I::EngineClient->GetMaxClients();
 	for (int n = 1; n <= nMaxClients; n++)
@@ -973,7 +1020,7 @@ void CMisc::AutoMedigun(CUserCmd* cmd)
 			continue;
 
 		auto pl = pClientEntity->As<C_TFPlayer>();
-		if (!pl || pl->deadflag() || pl == local)
+		if (!pl || pl->deadflag() || pl == local || pl == pGoal)
 			continue;
 
 		if (pl->m_iTeamNum() != local->m_iTeamNum())
@@ -986,55 +1033,60 @@ void CMisc::AutoMedigun(CUserCmd* cmd)
 		if (pl->InCond(TF_COND_STEALTHED) || pl->IsInvulnerable())
 			continue;
 
-		if (CFG::AutoUber_AutoHeal_Friends_Only && !isFriend(pl))
+		if (CFG::AutoHeal_Friends_Only && !isFriend(pl))
 			continue;
 
 		const float flPercent = getHealthPercent(pl);
 
-		CTraceFilterHitscan filter{};
-		trace_t tr{};
-		H::AimUtils->Trace(local->GetShootPos(), pl->GetCenter(), (MASK_SHOT & ~CONTENTS_HITBOX), &filter, &tr);
+		bool bPlayerBlocked = false;
+		const bool bClear = traceToTarget(pl, local->GetShootPos(), bPlayerBlocked);
 
-		if (tr.fraction <= 0.99f && tr.m_pEnt != pl)
-			continue;
-
-		// Track best target that NEEDS healing (not full health)
-		if (flPercent < 0.99f && flPercent < flLowestHealth)
+		if (bClear && flDist < flClosestDist)
 		{
-			pBestTargetNeedsHealing = pl;
-			flLowestHealth = flPercent;
-			flBestDist = flDist;
+			pClosestClear = pl;
+			flClosestDist = flDist;
 		}
 
-		// Also track closest target as fallback (even if full health)
-		if (!pBestTarget || flDist < flBestDist)
+		if (flPercent < 0.99f && flPercent < flThreshold && (bClear || bPlayerBlocked))
 		{
-			pBestTarget = pl;
-			flBestDist = flDist;
+			pGoal = pl;
+			flThreshold = flPercent - 0.02f;
 		}
 	}
 
-	// Prioritize targets that need healing over full health targets
-	C_TFPlayer* pFinalTarget = pBestTargetNeedsHealing ? pBestTargetNeedsHealing : pBestTarget;
+	if (!pGoal)
+		pGoal = pClosestClear;
 
-	if (pFinalTarget)
+	if (!pGoal)
 	{
-		// Aim at target to acquire beam lock
-		const auto angle = Math::CalcAngle(local->GetShootPos(), pFinalTarget->GetCenter());
-		H::AimUtils->FixMovement(cmd, angle);
-		cmd->viewangles = angle;
+		cmd->buttons &= ~IN_ATTACK;
+		return;
+	}
+
+	static int nSwitchCooldown = 0;
+	if (nSwitchCooldown > 0)
+		nSwitchCooldown--;
+
+	if (bBeamAttached && pGoal != pCurrentHealPlayer)
+	{
+		aimAt(pGoal);
+
+		if (nSwitchCooldown > 0 || !wouldAttach(pGoal))
+			cmd->buttons |= IN_ATTACK;
+		else
+		{
+			cmd->buttons &= ~IN_ATTACK;
+			nSwitchCooldown = 60;
+		}
+	}
+	else if (!bBeamAttached)
+	{
+		aimAt(pGoal);
 		cmd->buttons |= IN_ATTACK;
-
-		if (CFG::Misc_Accuracy_Improvements)
-			cmd->tick_count = TIME_TO_TICKS(pFinalTarget->m_flSimulationTime() + SDKUtils::GetLerp());
-
-		// Use bSilentAngles (view restore only) — NOT bPSilentAngles which chokes packets
-		G::bSilentAngles = true;
 	}
 	else
 	{
-		// No target found — release attack to detach any stale beam
-		cmd->buttons &= ~IN_ATTACK;
+		cmd->buttons |= IN_ATTACK;
 	}
 }
 
@@ -1202,534 +1254,6 @@ void CMisc::PDAExploit(CUserCmd* pCmd)
 		iState = 0;
 	}
 }
-
-void CMisc::AutoUber(CUserCmd* cmd)
-{
-    if (!CFG::AutoUber_Active)
-        return;
-
-    // Check if enabled: Always On OR triggerbot master switch is active
-    if (!CFG::AutoUber_Always_On && !H::Input->IsDown(CFG::Triggerbot_Key))
-        return;
-
-    if (I::EngineVGui->IsGameUIVisible() || I::MatSystemSurface->IsCursorVisible() || SDKUtils::BInEndOfMatch())
-        return;
-
-    const auto pLocal = H::Entities->GetLocal();
-    if (!pLocal || pLocal->deadflag() || pLocal->m_iClass() != TF_CLASS_MEDIC)
-        return;
-
-    const auto pWeapon = H::Entities->GetWeapon();
-    if (!pWeapon || pWeapon->GetWeaponID() != TF_WEAPON_MEDIGUN)
-        return;
-
-    const auto medigun = pWeapon->As<C_WeaponMedigun>();
-    if (!medigun)
-        return;
-
-    // Only stock Uber (invulnerability) medigun - it's the only one that can pop uber
-    if (medigun->GetChargeType() != MEDIGUN_CHARGE_INVULN)
-        return;
-
-    auto healTargetEnt = medigun->m_hHealingTarget().Get();
-    C_TFPlayer* pHealTarget = healTargetEnt ? healTargetEnt->As<C_TFPlayer>() : nullptr;
-
-    const int hpLocal = pLocal->m_iHealth();
-    const int hpTarget = pHealTarget ? pHealTarget->m_iHealth() : 0;
-
-    auto canPop = [&]() -> bool {
-        return medigun->m_flChargeLevel() >= 1.0f && !medigun->m_bChargeRelease();
-    };
-
-    // TF2 damage falloff calculation
-    // At 512 units (optimal range): 100% damage
-    // At 0 units (point blank): 150% damage  
-    // At 1024 units (max range): 50% damage
-    auto calcDamageFalloff = [](float flBaseDamage, float flDistance) -> float {
-        constexpr float kOptimalRange = 512.0f;
-        constexpr float kMaxFalloffRange = 1024.0f;
-        
-        if (flDistance <= 0.0f)
-            return flBaseDamage * 1.5f; // Point blank = 150%
-        
-        if (flDistance <= kOptimalRange)
-        {
-            // Ramp up: 150% at 0 -> 100% at 512
-            float flRampUp = 1.5f - (0.5f * (flDistance / kOptimalRange));
-            return flBaseDamage * flRampUp;
-        }
-        else if (flDistance <= kMaxFalloffRange)
-        {
-            // Falloff: 100% at 512 -> 50% at 1024
-            float flFalloff = 1.0f - (0.5f * ((flDistance - kOptimalRange) / (kMaxFalloffRange - kOptimalRange)));
-            return flBaseDamage * flFalloff;
-        }
-        else
-        {
-            // Beyond max range: 50%
-            return flBaseDamage * 0.5f;
-        }
-    };
-
-    // Helper to check if a weapon is hitscan
-    auto isHitscanWeapon = [](int weaponID) -> bool {
-        switch (weaponID)
-        {
-        case TF_WEAPON_SHOTGUN_PRIMARY:
-        case TF_WEAPON_SHOTGUN_SOLDIER:
-        case TF_WEAPON_SHOTGUN_HWG:
-        case TF_WEAPON_SHOTGUN_PYRO:
-        case TF_WEAPON_SCATTERGUN:
-        case TF_WEAPON_SNIPERRIFLE:
-        case TF_WEAPON_MINIGUN:
-        case TF_WEAPON_SMG:
-        case TF_WEAPON_PISTOL:
-        case TF_WEAPON_PISTOL_SCOUT:
-        case TF_WEAPON_REVOLVER:
-        case TF_WEAPON_SENTRY_REVENGE:
-        case TF_WEAPON_HANDGUN_SCOUT_PRIMARY:
-        case TF_WEAPON_HANDGUN_SCOUT_SECONDARY:
-        case TF_WEAPON_SODA_POPPER:
-        case TF_WEAPON_SNIPERRIFLE_DECAP:
-        case TF_WEAPON_PEP_BRAWLER_BLASTER:
-        case TF_WEAPON_CHARGED_SMG:
-        case TF_WEAPON_SNIPERRIFLE_CLASSIC:
-        case TF_WEAPON_SHOTGUN_BUILDING_RESCUE:
-            return true;
-        default:
-            return false;
-        }
-    };
-
-    // Get base damage for hitscan weapons
-    auto getHitscanBaseDamage = [](int weaponID) -> float {
-        switch (weaponID)
-        {
-        case TF_WEAPON_SCATTERGUN:
-        case TF_WEAPON_SODA_POPPER:
-        case TF_WEAPON_PEP_BRAWLER_BLASTER:
-            return 60.0f; // 6 pellets * 10 damage (assuming most hit)
-        case TF_WEAPON_SHOTGUN_PRIMARY:
-        case TF_WEAPON_SHOTGUN_SOLDIER:
-        case TF_WEAPON_SHOTGUN_HWG:
-        case TF_WEAPON_SHOTGUN_PYRO:
-        case TF_WEAPON_SENTRY_REVENGE:
-        case TF_WEAPON_SHOTGUN_BUILDING_RESCUE:
-            return 60.0f; // 10 pellets * 6 damage
-        case TF_WEAPON_MINIGUN:
-            return 50.0f; // ~5 bullets in quick succession
-        case TF_WEAPON_PISTOL:
-        case TF_WEAPON_PISTOL_SCOUT:
-            return 15.0f;
-        case TF_WEAPON_SMG:
-        case TF_WEAPON_CHARGED_SMG:
-            return 12.0f;
-        case TF_WEAPON_REVOLVER:
-            return 40.0f;
-        case TF_WEAPON_HANDGUN_SCOUT_PRIMARY: // Shortstop
-            return 48.0f; // 4 pellets * 12
-        case TF_WEAPON_HANDGUN_SCOUT_SECONDARY: // Winger/Pretty Boy's
-            return 15.0f;
-        default:
-            return 40.0f;
-        }
-    };
-
-    // Check if a projectile is actually heading towards the player and will hit soon
-    // Returns estimated damage if lethal threat, 0 otherwise
-    // Now includes proper TF2 damage falloff calculation
-    auto getLethalProjectileThreat = [&](C_TFPlayer* who) -> float {
-        if (!who) return 0.0f;
-
-        float flTotalLethalDamage = 0.0f;
-        
-        // Splash radii
-        constexpr float kRocketSplashRadius = 146.0f;
-        constexpr float kStickySplashRadius = 146.0f; // Stickies have same splash as rockets
-        constexpr float kBaseRocketDamage = 90.0f;
-        constexpr float kBasePipeDamage = 100.0f;
-        constexpr float kBaseStickyDamage = 117.0f; // Stickies do 100 damage, 300 crit
-        
-        // Only react to projectiles that will hit within this time (in seconds)
-        // Increased to 0.25s to catch faster projectiles and give more reaction time
-        constexpr float kMaxTimeToImpact = 0.25f;
-
-        for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PROJECTILES_ENEMIES))
-        {
-            if (!pEntity)
-                continue;
-
-            const auto nClassID = pEntity->GetClassId();
-            
-            const bool bIsRocket = (nClassID == ETFClassIds::CTFProjectile_Rocket || 
-                                    nClassID == ETFClassIds::CTFProjectile_SentryRocket ||
-                                    nClassID == ETFClassIds::CTFProjectile_EnergyBall);
-            const bool bIsPipebomb = (nClassID == ETFClassIds::CTFGrenadePipebombProjectile);
-            
-            if (!bIsRocket && !bIsPipebomb)
-                continue;
-            
-            // Check if it's a sticky (has sticky effects) vs regular pipe
-            bool bIsSticky = false;
-            if (bIsPipebomb)
-            {
-                if (const auto pipe = pEntity->As<C_TFGrenadePipebombProjectile>())
-                    bIsSticky = pipe->HasStickyEffects();
-            }
-
-            Vec3 vel{};
-            pEntity->EstimateAbsVelocity(vel);
-            const float flSpeed = vel.Length();
-            
-            // Skip stationary projectiles (stickies on ground) - handled separately
-            if (flSpeed < 100.0f)
-                continue;
-
-            const Vec3 projPos = pEntity->m_vecOrigin();
-            const Vec3 playerPos = who->GetCenter();
-            const float flCurrentDist = projPos.DistTo(playerPos);
-            
-            // Calculate if projectile is heading towards player
-            Vec3 toPlayer = playerPos - projPos;
-            toPlayer.Normalize();
-            
-            Vec3 projDir = vel;
-            projDir.Normalize();
-            
-            // Dot product: 1.0 = heading directly at player, 0 = perpendicular, -1 = away
-            float flDotToPlayer = projDir.Dot(toPlayer);
-            
-            // Only consider projectiles heading towards us (dot > 0.5 means within ~60 degree cone)
-            if (flDotToPlayer < 0.5f)
-                continue;
-            
-            // Calculate time to impact (approximate - assumes straight line)
-            float flTimeToImpact = flCurrentDist / flSpeed;
-            
-            // Only react to imminent threats
-            if (flTimeToImpact > kMaxTimeToImpact)
-                continue;
-            
-            // Visibility check
-            const auto visibleFromCenter = H::AimUtils->TraceEntityAutoDet(pEntity, playerPos, pEntity->GetCenter());
-            if (!visibleFromCenter)
-                continue;
-
-            // Calculate base damage based on projectile type
-            float flBaseDamage = kBasePipeDamage;
-            if (bIsRocket)
-                flBaseDamage = kBaseRocketDamage;
-            else if (bIsSticky)
-                flBaseDamage = kBaseStickyDamage;
-            
-            bool isCrit = false;
-
-            if (bIsRocket)
-            {
-                if (CFG::AutoUber_CritProjectile_Check)
-                {
-                    if (const auto rocket = pEntity->As<C_TFProjectile_Rocket>())
-                        isCrit = rocket->m_bCritical();
-                }
-            }
-            else if (bIsPipebomb)
-            {
-                if (const auto pipe = pEntity->As<C_TFGrenadePipebombProjectile>())
-                {
-                    if (CFG::AutoUber_CritProjectile_Check)
-                        isCrit = pipe->m_bCritical();
-                }
-            }
-
-            // Apply TF2 damage falloff based on distance from shooter
-            // For projectiles, we use current distance as approximation
-            float flDamage = calcDamageFalloff(flBaseDamage, flCurrentDist);
-            
-            // Apply crit multiplier after falloff (crits ignore falloff in TF2, but we apply it for safety)
-            if (isCrit)
-                flDamage = flBaseDamage * TF_DAMAGE_CRIT_MULTIPLIER; // Crits do full damage
-            
-            // Use appropriate splash radius
-            float flSplashRadius = bIsRocket ? kRocketSplashRadius : kStickySplashRadius;
-            
-            // If very close (< splash radius), it's a serious threat
-            if (flCurrentDist < flSplashRadius)
-            {
-                flTotalLethalDamage += flDamage;
-            }
-        }
-
-        return flTotalLethalDamage;
-    };
-
-    // Check for sticky trap (multiple stickies nearby that could detonate)
-    // Simplified: 100 damage per sticky, crit = 300 damage per sticky
-    auto getStickyTrapThreat = [&](C_TFPlayer* who) -> float {
-        if (!who) return 0.0f;
-
-        float flTotalDamage = 0.0f;
-        int nNearbyStickies = 0;
-        constexpr float kStickyDetectRadius = 150.0f; // Slightly larger than splash radius
-        constexpr float kBaseStickyDamage = 100.0f;   // Simplified: 100 damage per sticky
-
-        for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PROJECTILES_ENEMIES))
-        {
-            if (!pEntity)
-                continue;
-
-            if (pEntity->GetClassId() != ETFClassIds::CTFGrenadePipebombProjectile)
-                continue;
-
-            const auto pipe = pEntity->As<C_TFGrenadePipebombProjectile>();
-            if (!pipe || !pipe->HasStickyEffects())
-                continue;
-
-            Vec3 vel{};
-            pEntity->EstimateAbsVelocity(vel);
-            
-            // Only count stationary stickies (on ground)
-            if (vel.Length() > 50.0f)
-                continue;
-
-            const float flDist = pEntity->m_vecOrigin().DistTo(who->GetCenter());
-            if (flDist > kStickyDetectRadius)
-                continue;
-
-            // Visibility check
-            const auto visible = H::AimUtils->TraceEntityAutoDet(pEntity, who->GetCenter(), pEntity->GetCenter());
-            if (!visible)
-                continue;
-
-            bool isCrit = false;
-            if (CFG::AutoUber_CritProjectile_Check)
-                isCrit = pipe->m_bCritical();
-
-            // Simple calculation: 100 damage per sticky, 300 if crit
-            float flDamage = isCrit ? (kBaseStickyDamage * TF_DAMAGE_CRIT_MULTIPLIER) : kBaseStickyDamage;
-
-            flTotalDamage += flDamage;
-            nNearbyStickies++;
-        }
-
-        return (nNearbyStickies >= 2) ? flTotalDamage : 0.0f;
-    };
-
-    // Check for nearby enemies with hitscan weapons aiming at us
-    // Only considers close-range enemies where damage falloff is minimal
-    auto getHitscanThreat = [&](C_TFPlayer* who) -> float {
-        if (!who) return 0.0f;
-        if (who->IsInvulnerable()) return 0.0f;
-
-        float flTotalDamage = 0.0f;
-        
-        // Only consider enemies within this range (close enough that falloff doesn't help much)
-        constexpr float kMaxThreatRange = 400.0f;
-
-        for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PLAYERS_ENEMIES))
-        {
-            if (!pEntity)
-                continue;
-
-            const auto enemy = pEntity->As<C_TFPlayer>();
-            if (!enemy || enemy->deadflag())
-                continue;
-
-            // Skip snipers - they're handled separately
-            if (enemy->m_iClass() == TF_CLASS_SNIPER)
-                continue;
-
-            const auto pWpnBase = enemy->m_hActiveWeapon().Get();
-            if (!pWpnBase)
-                continue;
-
-            const auto pWeaponBase = pWpnBase->As<C_TFWeaponBase>();
-            if (!pWeaponBase)
-                continue;
-
-            const int weaponID = pWeaponBase->GetWeaponID();
-            
-            // Only check hitscan weapons
-            if (!isHitscanWeapon(weaponID))
-                continue;
-
-            const float flDist = enemy->GetShootPos().DistTo(who->GetCenter());
-            
-            // Only consider close-range threats (falloff is minimal at close range)
-            if (flDist > kMaxThreatRange)
-                continue;
-
-            // Check if enemy is aiming at us
-            auto mins = who->m_vecMins();
-            auto maxs = who->m_vecMaxs();
-            // Expand hitbox slightly for prediction
-            mins.x *= 1.5f; mins.y *= 1.5f; mins.z *= 1.2f;
-            maxs.x *= 1.5f; maxs.y *= 1.5f; maxs.z *= 1.2f;
-
-            Vec3 fwd{};
-            Math::AngleVectors(enemy->GetEyeAngles(), &fwd);
-            
-            if (!Math::RayToOBB(enemy->GetShootPos(), fwd, who->m_vecOrigin(), mins, maxs, who->RenderableToWorldTransform()))
-                continue;
-
-            // LOS check
-            const bool visible = H::AimUtils->TraceEntityAutoDet(pEntity, who->GetCenter(), enemy->GetShootPos());
-            if (!visible)
-                continue;
-
-            // Calculate damage with falloff
-            float flBaseDamage = getHitscanBaseDamage(weaponID);
-            float flDamage = calcDamageFalloff(flBaseDamage, flDist);
-
-            // Check for crits/minicrits
-            if (enemy->IsCritBoosted())
-                flDamage = flBaseDamage * TF_DAMAGE_CRIT_MULTIPLIER;
-            else if (enemy->IsMiniCritBoosted())
-                flDamage = flBaseDamage * TF_DAMAGE_MINICRIT_MULTIPLIER;
-
-            flTotalDamage += flDamage;
-        }
-
-        return flTotalDamage;
-    };
-
-    // Throttle expensive threat scans to every 10 ticks (~167ms at 60tick)
-    // Threat situation doesn't change significantly between scans
-    static int nLastThreatTick = 0;
-    static bool bCachedShouldPop = false;
-    static int nCachedLocalHP = 0;
-    static int nCachedTargetHP = 0;
-
-    const int nCurrentTick = I::GlobalVars->tickcount;
-    const bool bShouldRescan = (nCurrentTick - nLastThreatTick >= 10) || (nLastThreatTick == 0);
-
-    // Cheap fast path: if health dropped suddenly since last scan, pop immediately
-    const bool bLocalHPDrop = (hpLocal < nCachedLocalHP - 30);
-    const bool bTargetHPDrop = pHealTarget && (hpTarget < nCachedTargetHP - 30);
-
-    if (bShouldRescan)
-    {
-        nLastThreatTick = nCurrentTick;
-        nCachedLocalHP = hpLocal;
-        nCachedTargetHP = hpTarget;
-
-        bool bShouldPop = false;
-    auto isSniperSightlineDanger = [&](C_TFPlayer* who) -> bool
-    {
-        if (!CFG::AutoUber_SniperSightline_Check || !who)
-            return false;
-
-        if (who->IsInvulnerable())
-            return false;
-
-        for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PLAYERS_ENEMIES))
-        {
-            if (!pEntity)
-                continue;
-
-            const auto enemy = pEntity->As<C_TFPlayer>();
-            if (!enemy || enemy->deadflag() || enemy->m_iClass() != TF_CLASS_SNIPER)
-                continue;
-
-            const auto pWpnBase = enemy->m_hActiveWeapon().Get()->As<C_TFWeaponBase>();
-            if (!pWpnBase || pWpnBase->GetSlot() != WEAPON_SLOT_PRIMARY || pWpnBase->GetWeaponID() == TF_WEAPON_COMPOUND_BOW)
-                continue;
-
-            bool bZoomed = enemy->InCond(TF_COND_ZOOMED);
-            if (pWpnBase->GetWeaponID() == TF_WEAPON_SNIPERRIFLE_CLASSIC)
-            {
-                if (const auto pClassic = pWpnBase->As<C_TFSniperRifleClassic>())
-                    bZoomed = pClassic->m_bCharging();
-            }
-
-            if (!bZoomed)
-                continue;
-
-            // Sightline check
-            auto mins = who->m_vecMins();
-            auto maxs = who->m_vecMaxs();
-            mins.x *= 2.0f; mins.y *= 2.0f; mins.z *= 1.2f;
-            maxs.x *= 2.0f; maxs.y *= 2.0f; maxs.z *= 1.2f;
-
-            Vec3 fwd{}; Math::AngleVectors(enemy->GetEyeAngles(), &fwd);
-            if (!Math::RayToOBB(enemy->GetShootPos(), fwd, who->m_vecOrigin(), mins, maxs, who->RenderableToWorldTransform()))
-                continue;
-
-            // LOS check
-            const bool visible = H::AimUtils->TraceEntityAutoDet(pEntity, who->GetCenter(), enemy->GetShootPos());
-            if (!visible)
-                continue;
-
-            const auto pSniperRifle = pWpnBase->As<C_TFSniperRifle>();
-            if (!pSniperRifle)
-                continue;
-
-            const bool bSydneySleeper = (pWpnBase->m_iItemDefinitionIndex() == Sniper_m_TheSydneySleeper);
-            float flCharge = std::min(150.0f, pSniperRifle->m_flChargedDamage() * 1.15f);
-            const float flBase = std::max(flCharge, 50.0f);
-            const float flMult = bSydneySleeper ? TF_DAMAGE_MINICRIT_MULTIPLIER : TF_DAMAGE_CRIT_MULTIPLIER;
-            const float flHsDmg = std::min(450.0f, flBase * flMult);
-
-            // Only pop if it would actually kill us
-            if (static_cast<float>(who->m_iHealth()) <= flHsDmg)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    };
-
-    // Evaluate threats for a player
-    auto shouldPopFor = [&](C_TFPlayer* who, int hp) -> bool
-    {
-        if (!who || who->IsInvulnerable())
-            return false;
-
-        const float flHP = static_cast<float>(hp);
-
-        // Check for incoming lethal projectiles
-        float flProjectileDamage = getLethalProjectileThreat(who);
-        if (flProjectileDamage > 0.0f && flHP <= flProjectileDamage + 10.0f)
-            return true;
-
-        // Check for sticky traps
-        float flStickyDamage = getStickyTrapThreat(who);
-        if (flStickyDamage > 0.0f && flHP <= flStickyDamage + 20.0f)
-            return true;
-
-        // Check for nearby hitscan threats
-        float flHitscanDamage = getHitscanThreat(who);
-        if (flHitscanDamage > 0.0f && flHP <= flHitscanDamage + 10.0f)
-            return true;
-
-        return false;
-    };
-
-    if (shouldPopFor(pLocal, hpLocal) || (pHealTarget && shouldPopFor(pHealTarget, hpTarget)))
-    {
-        bShouldPop = true;
-    }
-
-    // Sniper sightline lethal check last (non-invasive with previous logic)
-    if (!bShouldPop && CFG::AutoUber_SniperSightline_Check)
-    {
-        if (isSniperSightlineDanger(pLocal) || (pHealTarget && isSniperSightlineDanger(pHealTarget)))
-            bShouldPop = true;
-    }
-
-        bCachedShouldPop = bShouldPop;
-    }
-
-    // Use cached threat result + cheap HP drop fast path
-    const bool bShouldPop = bCachedShouldPop || bLocalHPDrop || bTargetHPDrop;
-
-    if (bShouldPop && canPop())
-    {
-        cmd->buttons |= IN_ATTACK2;
-    }
-}
-
-
 
 
 int CMisc::GetHPThresholdForClass(int nClass)
@@ -1948,8 +1472,8 @@ void CMisc::AutoFaN(CUserCmd* pCmd)
 	while (vShootAngles.y < -180.0f)
 		vShootAngles.y += 360.0f;
 
-	// Mark FaN as running so AntiCheatCompat and other features skip this tick
 	m_bFaNRunning = true;
+	m_flLastFaN = I::EngineClient->Time();
 	
 	// Execute the FaN jump
 	pCmd->buttons |= IN_JUMP;

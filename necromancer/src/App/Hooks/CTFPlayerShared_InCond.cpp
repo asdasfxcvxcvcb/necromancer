@@ -15,16 +15,26 @@ MAKE_HOOK(CTFPlayerShared_InCond, Signatures::CTFPlayerShared_InCond.Get(), bool
 	{
 		if (CFG::Misc_Accuracy_Improvements)
 		{
-			static const auto dwShared = NetVars::GetNetVar("CTFPlayer", "m_Shared");
-			static const auto dwBombHeadStage = NetVars::GetNetVar("CTFPlayer", "m_nHalloweenBombHeadStage");
-			static const auto dwOff = (dwBombHeadStage - dwShared) + 0x4;
+			static int dwShared = 0;
+			static int dwBombHeadStage = 0;
 
-			if (C_TFPlayer* pOuter = *reinterpret_cast<C_TFPlayer**>(reinterpret_cast<std::uintptr_t>(ecx) + dwOff))
+			if (!dwShared || !dwBombHeadStage)
 			{
-				if (const auto pLocal = H::Entities->GetLocal())
+				dwShared = NetVars::GetNetVar("CTFPlayer", "m_Shared");
+				dwBombHeadStage = NetVars::GetNetVar("CTFPlayer", "m_nHalloweenBombHeadStage");
+			}
+
+			if (dwShared && dwBombHeadStage)
+			{
+				const auto dwOff = (dwBombHeadStage - dwShared) + 0x4;
+
+				if (C_TFPlayer* pOuter = *reinterpret_cast<C_TFPlayer**>(reinterpret_cast<std::uintptr_t>(ecx) + dwOff))
 				{
-					if (pOuter->m_iTeamNum() != pLocal->m_iTeamNum())
-						return false;
+					if (const auto pLocal = H::Entities->GetLocal())
+					{
+						if (pOuter->m_iTeamNum() != pLocal->m_iTeamNum())
+							return false;
+					}
 				}
 			}
 		}

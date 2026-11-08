@@ -442,7 +442,7 @@ void FetchSourcebans(uint64_t steamID64)
 	FetchSourcebansBatch({ steamID64 });
 }
 
-void CheckAllPlayersSourcebans()
+void CheckAllPlayersSourcebans(uint64_t nLocalSteamId)
 {
 	if (!I::EngineClient->IsConnected())
 	{
@@ -453,10 +453,38 @@ void CheckAllPlayersSourcebans()
 			g_setCheckedPlayers.clear();
 			F::Players->ClearCurrentSession();
 		}
+
+		if (nLocalSteamId && CFG::Visuals_Chat_Ban_Alerts)
+		{
+			if (!IsVerobayDatabaseLoaded())
+				FetchVerobayDatabase();
+
+			bool bNeedFetch = false;
+			{
+				std::lock_guard<std::mutex> lock(g_mtxSourcebans);
+				if (g_setCheckedPlayers.count(nLocalSteamId) == 0)
+				{
+					g_setCheckedPlayers.insert(nLocalSteamId);
+					const auto it = g_mapSourcebans.find(nLocalSteamId);
+					bNeedFetch = it == g_mapSourcebans.end() || (!it->second.m_bFetched && !it->second.m_bFetching);
+				}
+			}
+			if (bNeedFetch)
+				FetchSourcebansBatch({ nLocalSteamId });
+		}
 		return;
 	}
 
 	g_bWasConnected = true;
+
+	// this runs from the paint hook every frame - once everyone on the server
+	// is checked the sweep is pure waste (an engine GetPlayerInfo per slot and
+	// a sourceban mutex lock per real player), so throttle it to every 2s. The
+	// disconnected reset above must stay per-frame.
+	static float s_flNextSweepTime = 0.0f;
+	if (I::GlobalVars->realtime < s_flNextSweepTime)
+		return;
+	s_flNextSweepTime = I::GlobalVars->realtime + 2.0f;
 
 	if (!IsVerobayDatabaseLoaded())
 		FetchVerobayDatabase();
@@ -465,8 +493,7 @@ void CheckAllPlayersSourcebans()
 
 	for (int n = 1; n < I::EngineClient->GetMaxClients() + 1; n++)
 	{
-		if (n == I::EngineClient->GetLocalPlayer())
-			continue;
+		const bool bIsLocal = (n == I::EngineClient->GetLocalPlayer());
 
 		player_info_t player_info{};
 		if (!I::EngineClient->GetPlayerInfo(n, &player_info) || player_info.fakeplayer)
@@ -489,7 +516,8 @@ void CheckAllPlayersSourcebans()
 			g_setCheckedPlayers.insert(steamID64);
 		}
 
-		F::Players->RecordEncounter(steamID64);
+		if (!bIsLocal)
+			F::Players->RecordEncounter(steamID64);
 		steamIDsToCheck.push_back(steamID64);
 	}
 

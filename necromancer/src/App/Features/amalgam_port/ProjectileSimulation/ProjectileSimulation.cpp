@@ -1,8 +1,13 @@
 #include "ProjectileSimulation.h"
 
 #include "../../EnginePrediction/EnginePrediction.h"
-#include "../../Crits/Crits.h"
+#include <algorithm>
 #include "../Ticks/Ticks.h"
+#include "../../CFG.h"
+
+#ifndef GRENADE_CHECK_INTERVAL
+	#define GRENADE_CHECK_INTERVAL 0.195f
+#endif
 
 bool CAmalgamProjectileSimulation::GetInfoMain(C_TFPlayer* pPlayer, C_TFWeaponBase* pWeapon, Vec3 vAngles, ProjectileInfo& tProjInfo, int iFlags, float flAutoCharge)
 {
@@ -25,7 +30,6 @@ bool CAmalgamProjectileSimulation::GetInfoMain(C_TFPlayer* pPlayer, C_TFWeaponBa
 	bool bTrace = iFlags & ProjSimEnum::Trace;
 	bool bQuick = iFlags & ProjSimEnum::Quick;
 	bool bMaxSpeed = iFlags & ProjSimEnum::MaxSpeed;
-	bool bPredictCmdNum = iFlags & ProjSimEnum::PredictCmdNum;
 	bool bNoRandomAngles = iFlags & ProjSimEnum::NoRandomAngles;
 
 	Vec3 vPos, vAngle;
@@ -61,7 +65,7 @@ bool CAmalgamProjectileSimulation::GetInfoMain(C_TFPlayer* pPlayer, C_TFWeaponBa
 			float flOldCurrentTime = I::GlobalVars->curtime;
 			I::GlobalVars->curtime = TICKS_TO_TIME(pPlayer->m_nTickBase());
 
-			int iCmdNum = bPredictCmdNum ? F::CritHack->PredictCmdNum(pPlayer, pWeapon, G::CurrentUserCmd) : G::CurrentUserCmd->command_number;
+			int iCmdNum = G::CurrentUserCmd->command_number;
 			SDK::RandomSeed(SDK::SeedFileLineHash(MD5_PseudoRandom(iCmdNum) & 0x7FFFFFFF, "SelectWeightedSequence", 0));
 			for (int i = 0; i < 6; ++i)
 				SDK::RandomFloat();
@@ -121,7 +125,9 @@ bool CAmalgamProjectileSimulation::GetInfoMain(C_TFPlayer* pPlayer, C_TFWeaponBa
 			? pWeapon->As<CTFGrenadeLauncher>()->m_flDetonateTime() > 0.f ? pWeapon->As<CTFGrenadeLauncher>()->m_flDetonateTime() - I::GlobalVars->curtime : flMortar
 			: SDK::AttribHookValue(2.f, "fuse_mult", pWeapon);
 		auto uType = bCannon ? FNV1A::Hash32Const("models/weapons/w_models/w_cannonball.mdl") : FNV1A::Hash32Const("models/weapons/w_models/w_grenade_grenadelauncher.mdl");
-		tProjInfo = { pPlayer, pWeapon, uType, vPos, vAngle, { 6.f, 6.f, 6.f }, flSpeed, 1.f, floorf(flLifetime / 0.195f + 1) * 0.195f };
+		// hull: cannon 6, spinning grenade 5, no-spin grenade 4 (Amalgam's GetInfo)
+		const Vec3 vHull = bCannon ? Vec3(6.f, 6.f, 6.f) : !SDK::AttribHookValue(0.f, "grenade_no_spin", pWeapon) ? Vec3(5.f, 5.f, 5.f) : Vec3(4.f, 4.f, 4.f);
+		tProjInfo = { pPlayer, pWeapon, uType, vPos, vAngle, vHull, flSpeed, 1.f, ceilf(flLifetime / GRENADE_CHECK_INTERVAL) * GRENADE_CHECK_INTERVAL + GetDesync() };
 		return true;
 	}
 	case TF_WEAPON_PIPEBOMBLAUNCHER:
@@ -132,8 +138,9 @@ bool CAmalgamProjectileSimulation::GetInfoMain(C_TFPlayer* pPlayer, C_TFWeaponBa
 			? SDK::AttribHookValue(4.f, "stickybomb_charge_rate", pWeapon) * flAutoCharge
 			: (pWeapon->As<CTFPipebombLauncher>()->m_flChargeBeginTime() > 0.f ? I::GlobalVars->curtime - pWeapon->As<CTFPipebombLauncher>()->m_flChargeBeginTime() : 0.f);
 		float flSpeed = SDK::AttribHookValue(bMaxSpeed ? 2400.f : Math::RemapVal(flCharge, 0.f, SDK::AttribHookValue(4.f, "stickybomb_charge_rate", pWeapon), 900.f, 2400.f), "mult_projectile_range", pWeapon);
-		// Stickies don't have a fuse time but we need a reasonable lifetime for simulation (5 seconds max)
-		tProjInfo = { pPlayer, pWeapon, FNV1A::Hash32Const("models/weapons/w_models/w_stickybomb.mdl"), vPos, vAngle, { 6.f, 6.f, 6.f }, flSpeed, 1.f, 5.f };
+		// Stickies have no fuse - Amalgam leaves ProjectileInfo's 60s default so the
+		// horizon is set by Max Simulation Time, not by this field
+		tProjInfo = { pPlayer, pWeapon, FNV1A::Hash32Const("models/weapons/w_models/w_stickybomb.mdl"), vPos, vAngle, { 5.f, 5.f, 5.f }, flSpeed, 1.f, 60.f };
 		return true;
 	}
 	case TF_WEAPON_FLAREGUN:
@@ -152,8 +159,11 @@ bool CAmalgamProjectileSimulation::GetInfoMain(C_TFPlayer* pPlayer, C_TFWeaponBa
 	}
 	case TF_WEAPON_COMPOUND_BOW:
 	{
-		if (!bQuick && G::CurrentUserCmd &&
-			I::GlobalVars->curtime - pWeapon->As<CTFPipebombLauncher>()->m_flChargeBeginTime() >= TF_ARROW_MAX_CHARGE_TIME)
+		// Amalgam gates the wobble on an actual charge being in progress: with
+		// m_flChargeBeginTime == 0 the elapsed time is just curtime, which would
+		// wobble every uncharged (tap) shot the real game fires clean
+		if (!bQuick && G::CurrentUserCmd && pWeapon->As<CTFPipebombLauncher>()->m_flChargeBeginTime() > 0.f
+			&& I::GlobalVars->curtime - pWeapon->As<CTFPipebombLauncher>()->m_flChargeBeginTime() >= TF_ARROW_MAX_CHARGE_TIME)
 		{
 			float flAddX = float(SDK::RandomInt()) / VALVE_RAND_MAX * 12.f - 6.f;
 			float flAddY = float(SDK::RandomInt()) / VALVE_RAND_MAX * 12.f - 6.f;
@@ -320,7 +330,10 @@ bool CAmalgamProjectileSimulation::GetInfo(C_TFPlayer* pPlayer, C_TFWeaponBase* 
 	Vec3 vEnd = tProjInfo.m_vPos;
 
 	SDK::TraceHull(vStart, vEnd, tProjInfo.m_vHull * -1.f, tProjInfo.m_vHull, MASK_SOLID, &filter, &trace);
-	return !trace.DidHit();
+	// Amalgam clamps the spawn to the trace end so point-blank shots into walls
+	// still simulate (from the pulled-back position) instead of being rejected
+	tProjInfo.m_vPos = trace.endpos;
+	return !trace.allsolid;
 }
 
 void CAmalgamProjectileSimulation::GetInfo(C_BaseEntity* pProjectile, ProjectileInfo& tProjInfo)
@@ -331,6 +344,21 @@ void CAmalgamProjectileSimulation::GetInfo(C_BaseEntity* pProjectile, Projectile
 	tProjInfo.m_pOwner = paEntities.second;
 	tProjInfo.m_pWeapon = paEntities.first;
 	tProjInfo.m_uType = FNV1A::Hash32(I::ModelInfoClient->GetModelName(pProjectile->GetModel()));
+
+	// grenade-class projectiles must land on the stock drag/bounce table even
+	// when the equipped launcher fires a differently-named projectile model
+	// (Iron Bomber, Loch-n-Load...) - their real per-model drag differences
+	// are second-order next to flying with none at all
+	if (pProjectile->GetClassId() == ETFClassIds::CTFGrenadePipebombProjectile)
+	{
+		const char* szModel = I::ModelInfoClient->GetModelName(pProjectile->GetModel());
+		if (pProjectile->As<C_TFGrenadePipebombProjectile>()->HasStickyEffects())
+			tProjInfo.m_uType = FNV1A::Hash32Const("models/weapons/w_models/w_stickybomb.mdl");
+		else if (szModel && strstr(szModel, "cannonball"))
+			tProjInfo.m_uType = FNV1A::Hash32Const("models/weapons/w_models/w_cannonball.mdl");
+		else
+			tProjInfo.m_uType = FNV1A::Hash32Const("models/weapons/w_models/w_grenade_grenadelauncher.mdl");
+	}
 
 	tProjInfo.m_vPos = pProjectile->m_vecOrigin();
 	tProjInfo.m_vAng = Math::VectorAngles(vVelocity);
@@ -370,6 +398,12 @@ bool CAmalgamProjectileSimulation::Initialize(ProjectileInfo& tProjInfo, bool bS
 	if (!m_pEnv || !m_pObj)
 		return false;
 
+	// vphysics objects ignore gravity/drag while asleep and GetOrigin() stops
+	// advancing - validation traces then hit nothing at all. Amalgam only wakes
+	// the object at creation, but Necro's native ProjectileSim (known to work
+	// on this build) wakes it every Init - do the same.
+	m_pObj->Wake();
+
 	//set drag
 	{
 		float flDrag = 0.f;
@@ -401,12 +435,12 @@ bool CAmalgamProjectileSimulation::Initialize(ProjectileInfo& tProjInfo, bool bS
 			vDragBasis = { 0.007394f, 0.007394f, 0.007100f };
 			vAngDragBasis = { 0.002654f, 0.002717f, 0.002708f };
 			break;
-		case FNV1A::Hash32Const("models/weapons/w_models/w_cannonball.mdl"):
+			case FNV1A::Hash32Const("models/weapons/w_models/w_cannonball.mdl"):
 			flDrag = 1.f;
 			vDragBasis = { 0.020971f, 0.019420f, 0.020971f };
 			vAngDragBasis = { 0.012997f, 0.013496f, 0.013714f };
 			break;
-		case FNV1A::Hash32Const("models/workshop_partner/weapons/c_models/c_sd_cleaver/c_sd_cleaver.mdl"):
+			case FNV1A::Hash32Const("models/workshop_partner/weapons/c_models/c_sd_cleaver/c_sd_cleaver.mdl"):
 			flDrag = 1.f;
 			vDragBasis = { 0.022287f, 0.005208f, 0.110697f };
 			vAngDragBasis = { 0.013982f, 0.043243f, 0.003465f };
@@ -447,10 +481,18 @@ bool CAmalgamProjectileSimulation::Initialize(ProjectileInfo& tProjInfo, bool bS
 			vAngDragBasis = { 0.035050f, 0.031199f, 0.022922f };
 		}
 
-		m_pObj->SetDragCoefficient(&flDrag, &flDrag);
+		m_bPhysics = flDrag != 0.f && (vDragBasis.x != 0.f || vDragBasis.y != 0.f || vDragBasis.z != 0.f);
 
-		m_pObj->m_dragBasis = vDragBasis;
-		m_pObj->m_angDragBasis = vAngDragBasis;
+		m_bDragSim = m_bPhysics;
+		m_tObj.m_vDragBasis = vDragBasis;
+
+		if (!m_bDragSim)
+		{
+			m_pObj->SetDragCoefficient(&flDrag, &flDrag);
+
+			m_pObj->m_dragBasis = vDragBasis;
+			m_pObj->m_angDragBasis = vAngDragBasis;
+		}
 	}
 
 	//set position and velocity
@@ -488,7 +530,8 @@ bool CAmalgamProjectileSimulation::Initialize(ProjectileInfo& tProjInfo, bool bS
 						vAngularVelocity = { 600.f, float(SDK::RandomInt(-1200, 1200)), 0.f };
 					break;
 				}
-				vAngularVelocity = { 600.f, -1200.f, 0.f };
+				if (!tProjInfo.m_pWeapon || !SDK::AttribHookValue(0, "grenade_no_spin", tProjInfo.m_pWeapon))
+					vAngularVelocity = { 600.f, -1200.f, 0.f };
 				break;
 			case FNV1A::Hash32Const("models/workshop_partner/weapons/c_models/c_sd_cleaver/c_sd_cleaver.mdl"):
 				vVelocity = vForward * 10 + vUp;
@@ -537,7 +580,8 @@ bool CAmalgamProjectileSimulation::Initialize(ProjectileInfo& tProjInfo, bool bS
 			case FNV1A::Hash32Const("models/weapons/w_models/w_stickybomb.mdl"):
 			case FNV1A::Hash32Const("models/weapons/w_models/w_stickybomb2.mdl"):
 			case FNV1A::Hash32Const("models/weapons/w_models/w_cannonball.mdl"):
-				vAngularVelocity = { 600.f, -1200.f, 0.f };
+				if (!tProjInfo.m_pWeapon || !SDK::AttribHookValue(0, "grenade_no_spin", tProjInfo.m_pWeapon))
+					vAngularVelocity = { 600.f, -1200.f, 0.f };
 				break;
 			case FNV1A::Hash32Const("models/workshop_partner/weapons/c_models/c_sd_cleaver/c_sd_cleaver.mdl"):
 				vAngularVelocity = { 0.f, 500.f, 0.f };
@@ -556,11 +600,33 @@ bool CAmalgamProjectileSimulation::Initialize(ProjectileInfo& tProjInfo, bool bS
 			}
 		}
 
-		if (bSimulate && !F::ProjSim.m_pObj->IsDragEnabled() && m_pObj->m_dragBasis.IsZero()) // don't include vphysics projectiles
+		if (bSimulate && !m_bPhysics) // don't include vphysics projectiles
 			vVelocity.z += 400.f * tProjInfo.m_flGravity * TICK_INTERVAL; // i don't know why this makes it more accurate but it does
 
-		m_pObj->SetPosition(tProjInfo.m_vPos, tProjInfo.m_vAng, true);
-		m_pObj->SetVelocity(&vVelocity, &vAngularVelocity);
+		if (m_bPhysics && !m_bDragSim)
+		{
+			m_pObj->SetPosition(tProjInfo.m_vPos, tProjInfo.m_vAng, true);
+			m_pObj->SetVelocity(&vVelocity, &vAngularVelocity);
+		}
+		else
+		{	// drag-free projectiles simulate on the exact manual integrator -
+			// vphysics (object damping, integrator order) lands them a fraction
+			// of a tick short at range and the splash point tests (zero timing
+			// tolerance) reject every such point as nohit
+			m_tObj.m_vOrigin = tProjInfo.m_vPos;
+			m_tObj.m_vVelocity = vVelocity;
+			m_tObj.m_bDrag = false;
+
+			if (m_bDragSim)
+			{
+				Vec3 vFwd, vRight, vUp; Math::AngleVectors(tProjInfo.m_vAng, &vFwd, &vRight, &vUp);
+				m_tObj.m_vOrientFwd = vFwd;
+				m_tObj.m_vOrientRight = vRight;
+				m_tObj.m_vOrientUp = vUp;
+				m_tObj.m_vAngVel = vAngularVelocity;
+				m_tObj.m_bDrag = true;
+			}
+		}
 	}
 
 	//set m_pEnv params
@@ -581,8 +647,8 @@ bool CAmalgamProjectileSimulation::Initialize(ProjectileInfo& tProjInfo, bool bS
 		case FNV1A::Hash32Const("models/workshop/weapons/c_models/c_quadball/w_quadball_grenade.mdl"):
 		case FNV1A::Hash32Const("models/weapons/w_models/w_stickybomb.mdl"):
 		case FNV1A::Hash32Const("models/weapons/w_models/w_stickybomb2.mdl"):
-		case FNV1A::Hash32Const("models/weapons/w_models/w_cannonball.mdl"):
-		case FNV1A::Hash32Const("models/workshop_partner/weapons/c_models/c_sd_cleaver/c_sd_cleaver.mdl"):
+			case FNV1A::Hash32Const("models/weapons/w_models/w_cannonball.mdl"):
+			case FNV1A::Hash32Const("models/workshop_partner/weapons/c_models/c_sd_cleaver/c_sd_cleaver.mdl"):
 		case FNV1A::Hash32Const("models/weapons/w_models/w_baseball.mdl"):
 		case FNV1A::Hash32Const("models/weapons/c_models/c_xms_festive_ornament.mdl"):
 			flMaxVelocity = k_flMaxVelocity;
@@ -600,27 +666,98 @@ bool CAmalgamProjectileSimulation::Initialize(ProjectileInfo& tProjInfo, bool bS
 		m_pEnv->ResetSimulationClock();
 	}
 
-	RunTick(tProjInfo, false); // simulate an initial time because dumb
+	// Amalgam only pre-ticks physics projectiles; a pre-tick on the manual path
+	// would start every no-drag projectile (rockets) one tick ahead of the muzzle
+	if (m_bPhysics)
+		RunTick(tProjInfo, false); // simulate an initial time because dumb
 
 	return true;
 }
 
 void CAmalgamProjectileSimulation::RunTick(ProjectileInfo& tProjInfo, bool bPath) // bug: per frame projectile trace can cause inconsistencies?
 {
-	if (!m_pEnv || !m_pObj)
-		return;
-
-	// Limit path size to prevent memory issues (max ~5 seconds of simulation at 66 tick = ~330 points)
-	// Also cap at reasonable size to prevent crashes
 	if (bPath)
-	{
-		if (tProjInfo.m_vPath.size() < 400)
-			tProjInfo.m_vPath.push_back(GetOrigin());
-		else
-			return; // Stop simulation if path is too long
-	}
+		tProjInfo.m_vPath.push_back(GetOrigin());
 
-	m_pEnv->Simulate(TICK_INTERVAL);
+	if (m_bPhysics && !m_bDragSim)
+	{
+		if (!m_pEnv || !m_pObj)
+			return;
+
+		m_pEnv->Simulate(TICK_INTERVAL);
+	}
+	else
+	{
+		Vec3& vOrigin = m_tObj.m_vOrigin;
+		Vec3& vVelocity = m_tObj.m_vVelocity;
+
+		// gravity is stored relative to 800 u/s^2 (see CanHit's conversion)
+		if (tProjInfo.m_flGravity)
+			vVelocity.z -= 800.f * tProjInfo.m_flGravity * TICK_INTERVAL;
+
+		if (m_tObj.m_bDrag)
+		{	// the engine's per-tick drag (vphysics CDragController): speed is
+			// scaled by 1 - 0.5 * airDensity * dt * sum(|v_objspace * basis|),
+			// with the velocity decomposed in the spinning object frame (m/s)
+			auto fRotate = [](Vec3& vAxisA, Vec3& vAxisB, const Vec3& vAround, float flAngle)
+			{
+				const float flCos = cosf(flAngle), flSin = sinf(flAngle);
+				const Vec3 vA = vAxisA, vB = vAxisB;
+				vAxisA = vA * flCos + vAround.Cross(vA) * flSin + vAround * vAround.Dot(vA) * (1.f - flCos);
+				vAxisB = vB * flCos + vAround.Cross(vB) * flSin + vAround * vAround.Dot(vB) * (1.f - flCos);
+			};
+
+			fRotate(m_tObj.m_vOrientRight, m_tObj.m_vOrientUp, m_tObj.m_vOrientFwd, DEG2RAD(m_tObj.m_vAngVel.x) * TICK_INTERVAL);
+			fRotate(m_tObj.m_vOrientFwd, m_tObj.m_vOrientUp, m_tObj.m_vOrientRight, DEG2RAD(m_tObj.m_vAngVel.y) * TICK_INTERVAL);
+
+			const float flVx = m_tObj.m_vOrientFwd.Dot(vVelocity) * 0.0254f;
+			const float flVy = m_tObj.m_vOrientUp.Dot(vVelocity) * 0.0254f;
+			const float flVz = m_tObj.m_vOrientRight.Dot(vVelocity) * 0.0254f;
+			float flDrag = 0.5f * (fabsf(flVx * m_tObj.m_vDragBasis.x) + fabsf(flVy * m_tObj.m_vDragBasis.y) + fabsf(flVz * m_tObj.m_vDragBasis.z)) * 2.f * TICK_INTERVAL;
+			flDrag = std::min(flDrag, 1.f);
+			vVelocity *= 1.f - flDrag;
+		}
+
+		if (m_bDragSim)
+		{	// the server resolves grenade movement with a swept collision:
+			// pipes ricochet (elasticity 0.45, friction 0.2), grenade_no_bounce
+			// launchers kill the rebound to 10%, stickies stick to the world
+			CGameTrace trace = {};
+			CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
+			Ray_t ray; ray.Init(vOrigin, vOrigin + vVelocity * TICK_INTERVAL);
+			I::EngineTrace->TraceRay(ray, MASK_SOLID, &filter, &trace);
+
+			if (trace.DidHit() && trace.fraction < 1.f)
+			{
+				const Vec3 vNormal = trace.plane.normal;
+				const float flInto = vVelocity.Dot(vNormal);
+				if (flInto < 0.f)
+				{
+					vVelocity -= vNormal * flInto * 1.45f;
+					const float flOut = vVelocity.Dot(vNormal);
+					vVelocity -= vNormal * flOut * 0.2f;
+
+					switch (tProjInfo.m_uType)
+					{
+					case FNV1A::Hash32Const("models/weapons/w_models/w_stickybomb.mdl"):
+					case FNV1A::Hash32Const("models/workshop/weapons/c_models/c_kingmaker_sticky/w_kingmaker_stickybomb.mdl"):
+					case FNV1A::Hash32Const("models/weapons/w_models/w_stickybomb_d.mdl"):
+					case FNV1A::Hash32Const("models/weapons/w_models/w_stickybomb2.mdl"):
+						vVelocity = {};
+						break;
+					default:
+						if (tProjInfo.m_pWeapon && SDK::AttribHookValue(0.f, "grenade_no_bounce", tProjInfo.m_pWeapon) != 0.f)
+							vVelocity *= 0.1f;
+					}
+				}
+
+				vOrigin = trace.endpos + vNormal * 0.5f;
+				return;
+			}
+		}
+
+		vOrigin += vVelocity * TICK_INTERVAL;
+	}
 
 	/* // params.maxVelocity limits velocity uniformly
 	Vec3 vVelocity, vAngular;
@@ -637,6 +774,9 @@ Vec3 CAmalgamProjectileSimulation::GetOrigin()
 	if (!m_pObj)
 		return {};
 
+	if (!m_bPhysics || m_bDragSim)
+		return m_tObj.m_vOrigin;
+
 	Vec3 vOut;
 	m_pObj->GetPosition(&vOut, nullptr);
 	return vOut;
@@ -647,9 +787,20 @@ Vec3 CAmalgamProjectileSimulation::GetVelocity()
 	if (!m_pObj)
 		return {};
 
+	if (!m_bPhysics || m_bDragSim)
+		return m_tObj.m_vVelocity;
+
 	Vec3 vOut;
 	m_pObj->GetVelocity(&vOut, nullptr);
 	return vOut;
+}
+
+float CAmalgamProjectileSimulation::GetDesync()
+{
+	if (!I::ClientState || I::EngineClient->IsPlayingDemo())
+		return 0.f;
+
+	return I::GlobalVars->curtime - TICKS_TO_TIME(I::ClientState->m_ClockDriftMgr.m_nServerTick) - F::Backtrack.GetReal();
 }
 
 void CAmalgamProjectileSimulation::SetupTrace(CTraceFilterCollideable& filter, int& nMask, C_TFWeaponBase* pWeapon, int nTick, bool bQuick)
@@ -686,6 +837,14 @@ void CAmalgamProjectileSimulation::SetupTrace(CTraceFilterCollideable& filter, i
 			}
 		}
 	}
+
+	// drag projectiles (pipes/stickies/cannon) also collide with displacement
+	// terrain - our custom CONTENTS_DISPSOLID bit makes those triangles
+	// two-sided through the CM_TraceToDispTree hooks, like Amalgam
+	// (m_bPhysics is set exactly for the drag-table projectiles, matching
+	// Amalgam's drag-coefficient/drag-basis read-back)
+	if (m_bPhysics)
+		nMask |= CONTENTS_DISPSOLID;
 }
 
 void CAmalgamProjectileSimulation::SetupTrace(CTraceFilterCollideable& filter, int& nMask, C_BaseEntity* pProjectile)

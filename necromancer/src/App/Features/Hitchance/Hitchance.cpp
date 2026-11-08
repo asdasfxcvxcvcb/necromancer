@@ -3,6 +3,8 @@
 #include "../SeedPred/SeedPred.h"
 #include "../RapidFire/RapidFire.h"
 
+constexpr int MINIGUN_MAX_HITCHANCE = 83;
+
 // Fixed spread patterns from tf_fx_shared.cpp (competitive mode)
 // 10 pellets - Square pattern
 static const Vec3 g_vecFixedWpnSpreadPellets[] = {
@@ -275,7 +277,8 @@ float CHitchance::GetMinigunOptimalTapfireDelay(C_TFWeaponBase* pWeapon, C_TFPla
 	// 100% hitchance = 0.3s max delay
 	// 50% hitchance = 0.15s max delay
 	// 0% hitchance = 0s max delay (no tapfire, spam)
-	const float flMaxDelay = 0.3f * (static_cast<float>(CFG::Aimbot_Hitscan_Hitchance) / 100.0f);
+	const float flHitchance = static_cast<float>((std::min)(CFG::Aimbot_Hitscan_Hitchance, MINIGUN_MAX_HITCHANCE));
+	const float flMaxDelay = 0.3f * (flHitchance / 100.0f);
 	
 	if (flMaxDelay <= 0.0f)
 		return 0.0f;

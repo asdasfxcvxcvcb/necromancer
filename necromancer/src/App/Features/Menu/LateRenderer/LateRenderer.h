@@ -13,7 +13,7 @@ private:
 		int m_nX, m_nY;
 		Color_t m_Color;
 		short m_nAlign;
-		const char *m_pwszString;
+		std::string m_strString;
 		ClipRegion_t m_Clip;
 	};
 

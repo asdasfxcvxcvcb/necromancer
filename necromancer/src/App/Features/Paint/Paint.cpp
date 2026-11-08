@@ -6,17 +6,64 @@
 
 void CPaint::Initialize()
 {
+	if (m_pRtFullFrame && m_pRenderBuffer0 && m_pRenderBuffer1)
+	{
+		const int nFullW = m_pRtFullFrame->GetActualWidth();
+		const int nFullH = m_pRtFullFrame->GetActualHeight();
+		if (m_pRenderBuffer0->GetActualWidth() != nFullW || m_pRenderBuffer0->GetActualHeight() != nFullH
+			|| m_pRenderBuffer1->GetActualWidth() != nFullW || m_pRenderBuffer1->GetActualHeight() != nFullH)
+		{
+			CleanUp();
+			return;
+		}
+	}
+
+	if (m_pMatGlowColor && m_pMatGlowColor->IsErrorMaterial())
+		m_pMatGlowColor = nullptr;
+	if (m_pMatHaloAddToScreen && m_pMatHaloAddToScreen->IsErrorMaterial())
+		m_pMatHaloAddToScreen = nullptr;
+	if (m_pMatBlurX && m_pMatBlurX->IsErrorMaterial())
+		m_pMatBlurX = nullptr;
+	if (m_pMatBlurY && m_pMatBlurY->IsErrorMaterial())
+	{
+		m_pMatBlurY = nullptr;
+		m_pBloomAmount = nullptr;
+	}
+	if (m_pRenderBuffer0 && m_pRenderBuffer0->IsError())
+	{
+		m_pRenderBuffer0->DecrementReferenceCount();
+		m_pRenderBuffer0 = nullptr;
+	}
+	if (m_pRenderBuffer1 && m_pRenderBuffer1->IsError())
+	{
+		m_pRenderBuffer1->DecrementReferenceCount();
+		m_pRenderBuffer1 = nullptr;
+	}
+
+	static float flNextVarRefresh = 0.0f;
+	const float flRealTime = I::GlobalVars->realtime;
+	if (flRealTime >= flNextVarRefresh)
+	{
+		flNextVarRefresh = flRealTime + 2.0f;
+		if (m_pMatBlurY)
+			m_pBloomAmount = m_pMatBlurY->FindVar("$bloomamount", nullptr);
+	}
+
 	if (!m_pMatGlowColor)
 	{
 		m_pMatGlowColor = I::MaterialSystem->FindMaterial("dev/glow_color", TEXTURE_GROUP_OTHER);
+		if (m_pMatGlowColor && m_pMatGlowColor->IsErrorMaterial())
+			m_pMatGlowColor = nullptr;
 	}
 
 	if (!m_pRtFullFrame)
 	{
 		m_pRtFullFrame = I::MaterialSystem->FindTexture("_rt_FullFrameFB", TEXTURE_GROUP_RENDER_TARGET);
+		if (m_pRtFullFrame && m_pRtFullFrame->IsError())
+			m_pRtFullFrame = nullptr;
 	}
 
-	if (!m_pRenderBuffer0)
+	if (!m_pRenderBuffer0 && m_pRtFullFrame)
 	{
 		m_pRenderBuffer0 = I::MaterialSystem->CreateNamedRenderTargetTextureEx(
 			"seo_paint_buffer0",
@@ -29,10 +76,11 @@ void CPaint::Initialize()
 			CREATERENDERTARGETFLAGS_HDR
 		);
 
-		m_pRenderBuffer0->IncrementReferenceCount();
+		if (m_pRenderBuffer0)
+			m_pRenderBuffer0->IncrementReferenceCount();
 	}
 
-	if (!m_pRenderBuffer1)
+	if (!m_pRenderBuffer1 && m_pRtFullFrame)
 	{
 		m_pRenderBuffer1 = I::MaterialSystem->CreateNamedRenderTargetTextureEx(
 			"seo_paint_buffer1",
@@ -45,7 +93,8 @@ void CPaint::Initialize()
 			CREATERENDERTARGETFLAGS_HDR
 		);
 
-		m_pRenderBuffer1->IncrementReferenceCount();
+		if (m_pRenderBuffer1)
+			m_pRenderBuffer1->IncrementReferenceCount();
 	}
 
 	if (!m_pMatHaloAddToScreen)
@@ -54,6 +103,8 @@ void CPaint::Initialize()
 		kv->SetString("$basetexture", "seo_paint_buffer0");
 		kv->SetString("$additive", "1");
 		m_pMatHaloAddToScreen = I::MaterialSystem->CreateMaterial("seo_paint_material", kv);
+		if (m_pMatHaloAddToScreen && m_pMatHaloAddToScreen->IsErrorMaterial())
+			m_pMatHaloAddToScreen = nullptr;
 	}
 
 	if (!m_pMatBlurX)
@@ -61,6 +112,8 @@ void CPaint::Initialize()
 		const auto kv = new KeyValues("BlurFilterX");
 		kv->SetString("$basetexture", "seo_paint_buffer0");
 		m_pMatBlurX = I::MaterialSystem->CreateMaterial("seo_paint_material_blurx", kv);
+		if (m_pMatBlurX && m_pMatBlurX->IsErrorMaterial())
+			m_pMatBlurX = nullptr;
 	}
 
 	if (!m_pMatBlurY)
@@ -68,7 +121,11 @@ void CPaint::Initialize()
 		const auto kv = new KeyValues("BlurFilterY");
 		kv->SetString("$basetexture", "seo_paint_buffer1");
 		m_pMatBlurY = I::MaterialSystem->CreateMaterial("seo_paint_material_blury", kv);
-		m_pBloomAmount = m_pMatBlurY->FindVar("$bloomamount", nullptr);
+		if (m_pMatBlurY && m_pMatBlurY->IsErrorMaterial())
+			m_pMatBlurY = nullptr;
+
+		if (m_pMatBlurY)
+			m_pBloomAmount = m_pMatBlurY->FindVar("$bloomamount", nullptr);
 	}
 }
 
@@ -115,7 +172,8 @@ void CPaint::Run()
 		return;
 	}
 
-	m_pBloomAmount->SetIntValue(CFG::Visuals_Paint_Bloom_Amount);
+	if (m_pBloomAmount)
+		m_pBloomAmount->SetIntValue(CFG::Visuals_Paint_Bloom_Amount);
 
 	if (!pLocal->deadflag() && !I::EngineVGui->IsGameUIVisible() && !I::MatSystemSurface->IsCursorVisible() && !SDKUtils::BInEndOfMatch())
 	{
@@ -255,20 +313,6 @@ void CPaint::CleanUp()
 		m_pMatHaloAddToScreen = nullptr;
 	}
 
-	if (m_pRenderBuffer0)
-	{
-		m_pRenderBuffer0->DecrementReferenceCount();
-		m_pRenderBuffer0->DeleteIfUnreferenced();
-		m_pRenderBuffer0 = nullptr;
-	}
-
-	if (m_pRenderBuffer1)
-	{
-		m_pRenderBuffer1->DecrementReferenceCount();
-		m_pRenderBuffer1->DeleteIfUnreferenced();
-		m_pRenderBuffer1 = nullptr;
-	}
-
 	if (m_pMatBlurX)
 	{
 		m_pMatBlurX->DecrementReferenceCount();
@@ -281,5 +325,19 @@ void CPaint::CleanUp()
 		m_pMatBlurY->DecrementReferenceCount();
 		m_pMatBlurY->DeleteIfUnreferenced();
 		m_pMatBlurY = nullptr;
+	}
+
+	if (m_pRenderBuffer0)
+	{
+		m_pRenderBuffer0->DecrementReferenceCount();
+		m_pRenderBuffer0->DeleteIfUnreferenced();
+		m_pRenderBuffer0 = nullptr;
+	}
+
+	if (m_pRenderBuffer1)
+	{
+		m_pRenderBuffer1->DecrementReferenceCount();
+		m_pRenderBuffer1->DeleteIfUnreferenced();
+		m_pRenderBuffer1 = nullptr;
 	}
 }

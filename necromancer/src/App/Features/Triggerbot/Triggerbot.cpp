@@ -25,6 +25,7 @@ void CTriggerbot::Run(CUserCmd* pCmd)
 	// Cache "Always On" states to avoid repeated config reads
 	const bool bAutoDetAlwaysOn = CFG::Triggerbot_AutoDetonate_Always_On;
 	const bool bAutoBackstabAlwaysOn = CFG::Triggerbot_AutoBackstab_Always_On;
+	const bool bAutoAirblastAlwaysOn = CFG::Triggerbot_AutoAirblast_Always_On;
 	const bool bAutoSapperAlwaysOn = CFG::Triggerbot_AutoSapper_Always_On;
 	const bool bAutoVaccAlwaysOn = CFG::Triggerbot_AutoVaccinator_Always_On;
 
@@ -40,11 +41,17 @@ void CTriggerbot::Run(CUserCmd* pCmd)
 	if (bAutoSapperAlwaysOn)
 		F::AutoSapper->Run(pLocal, pWeapon, pCmd);
 
+	// Auto Airblast can run independently if "Always On" is enabled
+	if (bAutoAirblastAlwaysOn)
+		F::AutoAirblast->Run(pLocal, pWeapon, pCmd);
+
 	// Other triggerbot features require master switch
 	if (!CFG::Triggerbot_Active || (CFG::Triggerbot_Key && !H::Input->IsDown(CFG::Triggerbot_Key)))
 		return;
 
-	F::AutoAirblast->Run(pLocal, pWeapon, pCmd);
+	// Auto Airblast also runs with master triggerbot (if not already run above)
+	if (!bAutoAirblastAlwaysOn)
+		F::AutoAirblast->Run(pLocal, pWeapon, pCmd);
 	
 	// Auto Backstab also runs with master triggerbot (if not already run above)
 	if (!bAutoBackstabAlwaysOn)

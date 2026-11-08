@@ -41,9 +41,14 @@ float CSeedPred::CalcMantissaStep(float val) const
 	return std::powf(2.0f, static_cast<float>(e) - 150.0f);
 }
 
+bool CSeedPred::IsLoopback() const
+{
+	return I::ClientState->m_NetChannel && I::ClientState->m_NetChannel->IsLoopback();
+}
+
 void CSeedPred::AskForPlayerPerf()
 {
-	if (!CFG::Exploits_SeedPred_Active)
+	if (!IsAllowed())
 	{
 		Reset();
 		return;
@@ -52,7 +57,8 @@ void CSeedPred::AskForPlayerPerf()
 	// Initialize spread LUT on first call
 	InitSpreadLUT();
 
-	// Does the current weapon have spread?
+	m_bLoopback = IsLoopback();
+
 	const auto weapon = H::Entities->GetWeapon();
 	if (!weapon || H::AimUtils->GetWeaponType(weapon) != EWeaponType::HITSCAN || weapon->GetWeaponSpread() <= 0.0f)
 	{
@@ -60,7 +66,6 @@ void CSeedPred::AskForPlayerPerf()
 		return;
 	}
 
-	// Are we dead?
 	if (const auto local = H::Entities->GetLocal())
 	{
 		if (local->deadflag())
@@ -70,16 +75,23 @@ void CSeedPred::AskForPlayerPerf()
 		}
 	}
 
+	const double flNow = static_cast<double>(Plat_FloatTime());
+
 	// Already waiting for response?
 	if (m_WaitingForPP)
-		return;
+	{
+		if (flNow - m_WaitingSince < REPLY_TIMEOUT)
+			return;
+
+		m_WaitingForPP = false;
+	}
 
 	// Adaptive resync based on mantissa step
 	// Lower step = less reliable = resync more often
-	if (m_ServerTime > 0.0f)
+	if (m_ServerTime > 0.0)
 	{
-		const float timeSinceRecv = static_cast<float>(Plat_FloatTime()) - m_RecvTime;
-		
+		const double timeSinceRecv = flNow - m_RecvTime;
+
 		// Adaptive interval: resync more frequently when precision is low
 		float interval = RESYNC_INTERVAL;
 		if (m_MantissaStep < 1.0f)
@@ -97,13 +109,14 @@ void CSeedPred::AskForPlayerPerf()
 
 	// Request perf data
 	I::ClientState->SendStringCmd("playerperf");
-	m_AskTime = static_cast<float>(Plat_FloatTime());
+	m_AskTime = flNow;
+	m_WaitingSince = flNow;
 	m_WaitingForPP = true;
 }
 
 bool CSeedPred::ParsePlayerPerf(bf_read& msgData)
 {
-	if (!CFG::Exploits_SeedPred_Active)
+	if (!IsAllowed())
 		return false;
 
 	char rawMsg[256]{};
@@ -122,56 +135,52 @@ bool CSeedPred::ParsePlayerPerf(bf_read& msgData)
 	if (matches.size() == 2)
 	{
 		m_WaitingForPP = false;
-		m_RecvTime = static_cast<float>(Plat_FloatTime());
+		m_RecvTime = static_cast<double>(Plat_FloatTime());
 
-		const float newServerTime = std::stof(matches[1].str());
+		const double newServerTime = std::stod(matches[1].str());
 
 		if (newServerTime > m_ServerTime)
 		{
 			m_PrevServerTime = m_ServerTime;
 			m_ServerTime = newServerTime;
 
-			// Calculate round-trip time and estimate one-way latency
-			const float rtt = m_RecvTime - m_AskTime;
-			
-			// Server time was recorded when processing our command, so we need to account for:
-			// 1. Time for our request to reach server (~rtt/2)
-			// 2. Server processing time (~1 tick)
-			// Delta = ServerTime - ClientTimeWhenServerProcessed
-			// ClientTimeWhenServerProcessed ≈ AskTime + rtt/2
-			// So: Delta ≈ ServerTime - (AskTime + rtt/2) = ServerTime - AskTime - rtt/2
-			// But we want: PredictedServerTime = ClientTime + Delta
-			// Which means: Delta = ServerTime - AskTime + rtt/2 (to predict future server time)
-			
-			const double measuredDelta = static_cast<double>(m_ServerTime - m_AskTime) + 
-			                             static_cast<double>(rtt * 0.5f) + 
-			                             static_cast<double>(TICK_INTERVAL);
-			
-			// Average deltas to reduce jitter from network variance
-			// Use weighted average - recent samples matter more
-			m_TimeDeltas.push_back(measuredDelta);
-			while (m_TimeDeltas.size() > 30)
-				m_TimeDeltas.pop_front();
-
-			// Weighted average: newer samples have more weight
-			double weightedSum = 0.0;
-			double totalWeight = 0.0;
-			size_t idx = 0;
-			for (const auto& delta : m_TimeDeltas)
+			if (m_bLoopback)
 			{
-				const double weight = static_cast<double>(idx + 1); // 1, 2, 3, ... n
-				weightedSum += delta * weight;
-				totalWeight += weight;
-				idx++;
+				// Local server: client and server share one clock, the offset is exactly zero
+				m_SyncOffset = 0.0;
+				m_TimeDeltas.clear();
 			}
-			const double avgDelta = totalWeight > 0.0 ? (weightedSum / totalWeight) : measuredDelta;
-			m_SyncOffset = static_cast<float>(avgDelta);
+			else
+			{
+				// The server stamps the time it last simulated us, so the sample lags our request
+				// by one tick. Everything else is the clock offset plus the one way latency.
+				const double measuredDelta = (m_ServerTime - m_AskTime) + static_cast<double>(TICK_INTERVAL);
+
+				// Average deltas to reduce jitter from network variance
+				// Use weighted average - recent samples matter more
+				m_TimeDeltas.push_back(measuredDelta);
+				while (m_TimeDeltas.size() > 30)
+					m_TimeDeltas.pop_front();
+
+				// Weighted average: newer samples have more weight
+				double weightedSum = 0.0;
+				double totalWeight = 0.0;
+				size_t idx = 0;
+				for (const auto& delta : m_TimeDeltas)
+				{
+					const double weight = static_cast<double>(idx + 1); // 1, 2, 3, ... n
+					weightedSum += delta * weight;
+					totalWeight += weight;
+					idx++;
+				}
+				m_SyncOffset = totalWeight > 0.0 ? (weightedSum / totalWeight) : measuredDelta;
+			}
 
 			// Calculate mantissa step - higher = more reliable prediction
 			// Step >= 1.0 means seed changes at most once per millisecond
 			// Step >= 4.0 means seed changes at most once per 4ms (very reliable)
-			m_MantissaStep = CalcMantissaStep(m_ServerTime);
-			m_Synced = (m_MantissaStep >= 1.0f);
+			m_MantissaStep = CalcMantissaStep(static_cast<float>(m_ServerTime));
+			m_Synced = (m_MantissaStep >= 1.0f) || m_bLoopback;
 		}
 
 		return true;
@@ -205,15 +214,27 @@ int CSeedPred::GetSeedForCmd(const CUserCmd* cmd)
 	return cmd ? (cmd->random_seed & 255) : GetSeed();
 }
 
+bool CSeedPred::IsAllowed() const
+{
+	// Anti-cheat compatibility blocks NoSpread by default because playerperf
+	// probing and seed correction are the detectable parts. The explicit
+	// override keeps the old behavior available when the user accepts that risk.
+	if (!CFG::Exploits_SeedPred_Active)
+		return false;
+
+	return !CFG::Misc_AntiCheat_Enabled || CFG::Misc_AntiCheat_IgnoreNoSpreadDetection;
+}
+
 void CSeedPred::Reset()
 {
 	m_Synced = false;
-	m_ServerTime = 0.0f;
-	m_PrevServerTime = 0.0f;
-	m_AskTime = 0.0f;
-	m_RecvTime = 0.0f;
-	m_SyncOffset = 0.0f;
+	m_ServerTime = 0.0;
+	m_PrevServerTime = 0.0;
+	m_AskTime = 0.0;
+	m_RecvTime = 0.0;
+	m_SyncOffset = 0.0;
 	m_WaitingForPP = false;
+	m_WaitingSince = 0.0;
 	m_MantissaStep = 0.0f;
 	m_TimeDeltas.clear();
 }
@@ -488,7 +509,7 @@ void CSeedPred::AdjustAngles(CUserCmd* cmd)
 	const bool bTimeBased = sv_usercmd_custom_random_seed && sv_usercmd_custom_random_seed->GetBool();
 
 	// For time-based seeding we need sync; for MD5-per-cmd we don't
-	if (!CFG::Exploits_SeedPred_Active || !cmd || !G::bFiring || (bTimeBased && !m_Synced))
+	if (!IsAllowed() || !cmd || !G::bFiring || (bTimeBased && !m_Synced))
 		return;
 
 	const auto local = H::Entities->GetLocal();
@@ -583,68 +604,38 @@ void CSeedPred::AdjustAngles(CUserCmd* cmd)
 
 	// === MULTI-BULLET WEAPONS (SHOTGUNS, SCATTERGUNS, ETC.) ===
 	// Find bullet closest to center for maximum damage potential
-	// Also consider neighboring seeds (±1) to account for timing jitter
 	std::vector<Vec3> bulletDirections{};
 	Vec3 averageDir{};
 
-	// Try current seed and neighbors if mantissa step is low (unreliable timing)
-	const int seedOffset = (m_MantissaStep < 4.0f) ? 1 : 0;
-	int bestSeedOffset = 0;
-	float bestSpreadScore = std::numeric_limits<float>::max();
-
-	for (int tryOffset = -seedOffset; tryOffset <= seedOffset; tryOffset++)
+	for (int bullet = 0; bullet < bulletsPerShot; bullet++)
 	{
-		std::vector<Vec3> tryDirections{};
-		Vec3 tryAverage{};
-		const int trySeed = (seed + tryOffset + 256) % 256;
+		Vec2 multiplier;
 
-		// TF2 uses sequential random calls for each pellet
-		SDKUtils::RandomSeed(trySeed);
+		// The server reseeds the random stream for every pellet and bumps the seed after it
+		SDKUtils::RandomSeed(seed + bullet);
 
-		for (int bullet = 0; bullet < bulletsPerShot; bullet++)
+		// First pellet of perfect shot goes center
+		if (bullet == 0 && perfectShot)
 		{
-			Vec2 multiplier;
-			
-			// First pellet of perfect shot goes center
-			if (bullet == 0 && perfectShot)
-			{
-				multiplier = {0.0f, 0.0f};
-			}
-			else
-			{
-				// TF2 calls RandomFloat 4 times per pellet (x1, x2, y1, y2)
-				multiplier.x = SDKUtils::RandomFloat(-0.5f, 0.5f) + SDKUtils::RandomFloat(-0.5f, 0.5f);
-				multiplier.y = SDKUtils::RandomFloat(-0.5f, 0.5f) + SDKUtils::RandomFloat(-0.5f, 0.5f);
-			}
-
-			Vec3 forward{}, right{}, up{};
-			Math::AngleVectors(cmd->viewangles, &forward, &right, &up);
-
-			Vec3 bulletDir = forward + (right * multiplier.x * spread) + (up * multiplier.y * spread);
-			bulletDir.NormalizeInPlace();
-			tryAverage += bulletDir;
-			tryDirections.push_back(bulletDir);
+			multiplier = {0.0f, 0.0f};
+		}
+		else
+		{
+			// TF2 calls RandomFloat 4 times per pellet (x1, x2, y1, y2)
+			multiplier.x = SDKUtils::RandomFloat(-0.5f, 0.5f) + SDKUtils::RandomFloat(-0.5f, 0.5f);
+			multiplier.y = SDKUtils::RandomFloat(-0.5f, 0.5f) + SDKUtils::RandomFloat(-0.5f, 0.5f);
 		}
 
-		tryAverage /= static_cast<float>(bulletsPerShot);
+		Vec3 forward{}, right{}, up{};
+		Math::AngleVectors(cmd->viewangles, &forward, &right, &up);
 
-		// Score this seed by how tight the spread is (lower = better)
-		float spreadScore = 0.0f;
-		for (const auto& dir : tryDirections)
-			spreadScore += dir.DistTo(tryAverage);
-
-		if (spreadScore < bestSpreadScore)
-		{
-			bestSpreadScore = spreadScore;
-			bestSeedOffset = tryOffset;
-			bulletDirections = std::move(tryDirections);
-			averageDir = tryAverage;
-		}
+		Vec3 bulletDir = forward + (right * multiplier.x * spread) + (up * multiplier.y * spread);
+		bulletDir.NormalizeInPlace();
+		averageDir += bulletDir;
+		bulletDirections.push_back(bulletDir);
 	}
 
-	// Update cached seed if we picked a neighbor
-	if (bestSeedOffset != 0)
-		m_CachedSeed = (seed + bestSeedOffset + 256) % 256;
+	averageDir /= static_cast<float>(bulletsPerShot);
 
 	// Find the bullet closest to center - this maximizes damage potential
 	const auto bestBullet = std::ranges::min_element(bulletDirections,
@@ -672,7 +663,7 @@ void CSeedPred::AdjustAngles(CUserCmd* cmd)
 
 void CSeedPred::Paint()
 {
-	if (!CFG::Exploits_SeedPred_Active || I::EngineVGui->IsGameUIVisible() || SDKUtils::BInEndOfMatch() || m_ServerTime <= 0.0f)
+	if (!IsAllowed() || I::EngineVGui->IsGameUIVisible() || SDKUtils::BInEndOfMatch() || m_ServerTime <= 0.0f)
 		return;
 
 	// Anti-Screenshot

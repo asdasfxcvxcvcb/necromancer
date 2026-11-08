@@ -140,7 +140,22 @@ MAKE_HOOK(CBaseHudChatLine_InsertAndColorizeText, Signatures::CBaseHudChatLine_I
 
 		if (!sTag.empty())
 		{
-			sMessage.insert(0, std::format("\x8{}[{}] \x1", cColor, sTag));
+			if (!sMessage.empty() && sMessage[0] == '\x2')
+				sMessage.erase(0, 1);
+
+			const std::string sPrefix = std::format("\x8{}[{}] \x1", cColor, sTag);
+			sMessage.insert(0, sPrefix);
+
+			const char* sPlayerName = pResource->GetName(clientIndex);
+			if (sPlayerName && *sPlayerName)
+			{
+				size_t iName = sMessage.find(sPlayerName, sPrefix.length());
+				if (iName != std::string::npos)
+				{
+					sMessage.insert(iName + strlen(sPlayerName), "\x1");
+					sMessage.insert(iName, "\x3");
+				}
+			}
 		}
 	}
 

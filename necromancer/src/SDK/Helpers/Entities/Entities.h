@@ -23,6 +23,7 @@ enum class EEntGroup
 	AMMOPACKS,
 	HALLOWEEN_GIFT,
 	MVM_MONEY,
+	WEAPONS_DROPPED,
 
 	COUNT // Must be last - used for array sizing
 };
@@ -109,6 +110,7 @@ public:
 	void UpdateCache();
 	void UpdateModelIndexes();
 	void ClearCache();
+	void ValidateGroups(); // Prune stale (freed) entities from all groups - call each CreateMove before features run
 
 	void ClearModelIndexes()
 	{

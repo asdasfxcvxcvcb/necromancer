@@ -109,6 +109,15 @@ public:
 	virtual bool GetBrushInfo(int iBrush, CUtlVector<Vector4D> *pPlanesOut, int *pContentsOut) = 0;
 	virtual bool PointOutsideWorld(const Vector &ptTest) = 0;
 	virtual int GetLeafContainingPoint(const Vector &ptTest) = 0;
+
+	// concrete CEngineTrace additions, appended vtable slots 18+ (order is
+	// Amalgam-verified against the live engine - SpatialPartitionMask sits at
+	// slot 21 and the World face cache depends on it)
+	virtual void HandleEntityToCollideable(IHandleEntity *pHandleEntity, ICollideable **ppCollide, const char **ppDebugName) = 0;
+	virtual ICollideable *GetWorldCollideable() = 0;
+	virtual void SetTraceEntity(ICollideable *pCollideable, trace_t *pTrace) = 0;
+	virtual int SpatialPartitionMask() const = 0;
+	virtual int SpatialPartitionTriggerMask() const = 0;
 };
 
 MAKE_INTERFACE_VERSION(IEngineTrace, EngineTrace, "engine.dll", "EngineTraceClient003");

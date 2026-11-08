@@ -45,6 +45,7 @@ private:
 
 public:
 	void Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd);
+	float m_flLastReflect = 0.f;
 };
 
 MAKE_SINGLETON_SCOPED(CAutoAirblast, AutoAirblast, F);

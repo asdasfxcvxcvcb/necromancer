@@ -14,25 +14,17 @@ float CTickbaseManip::GetPingMs()
 
 int CTickbaseManip::GetProcessableTicks() const
 {
-	const int nAntiAimTicks = F::FakeAngle->AntiAimOn() ? F::FakeAngle->AntiAimTicks() : 0;
-	const int nAntiWarpReserve = CFG::Exploits_RapidFire_Antiwarp ? 1 : 0;
-	const int nCurrentCommandReserve = 1;
-	return Shifting::GetProcessableTicks(nAntiAimTicks + nAntiWarpReserve + nCurrentCommandReserve);
+	return Shifting::GetProcessableTicks(1);
 }
 
 int CTickbaseManip::GetOptimalRechargeLimit()
 {
-	// Cap the user's recharge limit by what the server can actually handle.
-	// sv_maxusrcmdprocessticks minus anti-aim ticks = max useful recharge.
-	const int nAntiAimTicks = F::FakeAngle->AntiAimOn() ? F::FakeAngle->AntiAimTicks() : 0;
-	const int nServerCap = (std::max)(Shifting::GetServerProcessBudget(nAntiAimTicks), 1);
+	const int nServerCap = (std::max)(Shifting::GetServerProcessBudget(0), 1);
 	return std::min(CFG::Exploits_Shifting_Recharge_Limit, nServerCap);
 }
 
 int CTickbaseManip::GetOptimalDTTicks()
 {
-	// User controls DT ticks directly via the slider.
-	// CL_Move handles choked-commands awareness (Amalgam-style).
 	return CFG::Exploits_RapidFire_Ticks;
 }
 

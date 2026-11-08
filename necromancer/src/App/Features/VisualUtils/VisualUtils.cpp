@@ -65,26 +65,15 @@ Color_t CVisualUtils::GetEntityColor(C_TFPlayer* pLocal, C_BaseEntity* pEntity)
 		if (pPlayer->IsInvisible())
 			return CFG::Color_Invisible;
 
-		if (pPlayer != pLocal && pPlayer->IsPlayerOnSteamFriendsList())
-			return CFG::Color_Friend;
-
+		bool bIsFriend = false;
+		PlayerPriority tPriority{};
+		bool bHasPriorityInfo = false;
 		if (pPlayer != pLocal)
 		{
-			PlayerPriority info{};
-			if (F::Players->GetInfo(pPlayer->entindex(), info))
-			{
-				if (info.Cheater)
-					return CFG::Color_Cheater;
-				if (info.Targeted)
-					return CFG::Color_Targeted;
-				if (info.Nigger)
-					return CFG::Color_Nigger;
-				if (info.RetardLegit)
-					return CFG::Color_RetardLegit;
-				if (info.Streamer)
-					return CFG::Color_Streamer;
-			}
+			bIsFriend = pPlayer->IsPlayerOnSteamFriendsList();
+			bHasPriorityInfo = F::Players->GetInfo(pPlayer->entindex(), tPriority);
 		}
+		return GetEntityColor(pLocal, pPlayer, bIsFriend, bHasPriorityInfo, tPriority);
 	}
 
 	if (pEntity == pLocal || IsEntityOwnedBy(pEntity, pLocal))
@@ -94,6 +83,50 @@ Color_t CVisualUtils::GetEntityColor(C_TFPlayer* pLocal, C_BaseEntity* pEntity)
 	const int nLocalTeam = pLocal->m_iTeamNum();
 	
 	if (nEntityTeam == nLocalTeam)
+		return CFG::Color_Teammate;
+
+	return CFG::Color_Enemy;
+}
+
+// Player-specific variant taking the caller's cached friend/priority lookups.
+// bHasPriorityInfo=false must come with the caller's zero-initialized struct:
+// GetInfo leaves it untouched on failure, so this reproduces the lookup-failure
+// path of the C_BaseEntity overload exactly.
+Color_t CVisualUtils::GetEntityColor(C_TFPlayer* pLocal, C_TFPlayer* pPlayer, bool bIsFriend, bool bHasPriorityInfo, const PlayerPriority& tPriority)
+{
+	if (!pLocal || !pPlayer)
+		return { 255, 255, 255, 255 };
+
+	if (pPlayer->entindex() == G::nTargetIndex)
+		return CFG::Color_Target;
+
+	if (pPlayer->IsInvulnerable())
+		return CFG::Color_Invulnerable;
+
+	if (pPlayer->IsInvisible())
+		return CFG::Color_Invisible;
+
+	if (pPlayer != pLocal && bIsFriend)
+		return CFG::Color_Friend;
+
+	if (pPlayer != pLocal && bHasPriorityInfo)
+	{
+		if (tPriority.Cheater)
+			return CFG::Color_Cheater;
+		if (tPriority.Targeted)
+			return CFG::Color_Targeted;
+		if (tPriority.Nigger)
+			return CFG::Color_Nigger;
+		if (tPriority.RetardLegit)
+			return CFG::Color_RetardLegit;
+		if (tPriority.Streamer)
+			return CFG::Color_Streamer;
+	}
+
+	if (pPlayer == pLocal || IsEntityOwnedBy(pPlayer, pLocal))
+		return CFG::Color_Local;
+
+	if (pPlayer->m_iTeamNum() == pLocal->m_iTeamNum())
 		return CFG::Color_Teammate;
 
 	return CFG::Color_Enemy;

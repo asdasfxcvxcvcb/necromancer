@@ -146,8 +146,26 @@ void CMaterials::Initialize()
 		m_pGlowSelfillumTint = nullptr;
 	}
 	if (m_pPlastic && m_pPlastic->IsErrorMaterial()) m_pPlastic = nullptr;
+	ValidateSheen();
 	if (m_pFlatNoInvis && m_pFlatNoInvis->IsErrorMaterial()) m_pFlatNoInvis = nullptr;
 	if (m_pShadedNoInvis && m_pShadedNoInvis->IsErrorMaterial()) m_pShadedNoInvis = nullptr;
+
+	static float flNextVarRefresh = 0.0f;
+	const float flRealTime = I::GlobalVars->realtime;
+	if (flRealTime >= flNextVarRefresh)
+	{
+		flNextVarRefresh = flRealTime + 2.0f;
+		if (m_pGlow)
+		{
+			m_pGlowEnvmapTint = m_pGlow->FindVar("$envmaptint", nullptr);
+			m_pGlowSelfillumTint = m_pGlow->FindVar("$selfillumtint", nullptr);
+		}
+		if (m_pSheen)
+		{
+			m_pSheenIndex = m_pSheen->FindVar("$sheenindex", nullptr);
+			m_pSheenTint = m_pSheen->FindVar("$sheenmaptint", nullptr);
+		}
+	}
 
 	if (!m_pFlat)
 	{
@@ -347,36 +365,32 @@ bool CMaterials::ShouldRenderLagRecordsBase(C_TFPlayer* pPlayer)
 	if (!pLocal)
 		return false;
 
-	// Only render for enemy players
-	if (pPlayer->m_iTeamNum() == pLocal->m_iTeamNum())
-		return false;
-
-	if (pPlayer->deadflag())
-		return false;
-
-	// Check weapon type requirements
 	const auto pWeapon = H::Entities->GetWeapon();
 	if (!pWeapon)
 		return false;
 
 	const auto weaponType = H::AimUtils->GetWeaponType(pWeapon);
-
 	if (weaponType == EWeaponType::HITSCAN)
 	{
-		if (!CFG::Aimbot_Active || !CFG::Aimbot_Hitscan_Active
-			|| !CFG::Aimbot_Target_Players || !CFG::Aimbot_Hitscan_Target_LagRecords)
+		if (!CFG::Aimbot_Active || !CFG::Aimbot_Hitscan_Active || !CFG::Aimbot_Target_Players || !CFG::Aimbot_Hitscan_Target_LagRecords)
 			return false;
 	}
 	else if (weaponType == EWeaponType::MELEE)
 	{
-		if (!CFG::Aimbot_Active || !CFG::Aimbot_Melee_Active
-			|| !CFG::Aimbot_Target_Players || !CFG::Aimbot_Melee_Target_LagRecords)
+		if (!CFG::Aimbot_Active || !CFG::Aimbot_Melee_Active || !CFG::Aimbot_Target_Players || !CFG::Aimbot_Melee_Target_LagRecords)
 			return false;
 	}
 	else
 	{
 		return false;
 	}
+
+	// Only render for enemy players
+	if (pPlayer->m_iTeamNum() == pLocal->m_iTeamNum())
+		return false;
+
+	if (pPlayer->deadflag())
+		return false;
 
 	// Check if player has records
 	int nRecords = 0;
@@ -408,6 +422,7 @@ void CMaterials::RenderLagRecords(C_TFPlayer* pPlayer, const DrawModelState_t& s
 		return;
 
 	// Set up lag record material
+	const bool bOldRenderingOriginalMat = m_bRenderingOriginalMat;
 	m_bRenderingOriginalMat = CFG::Materials_LagRecords_Material == 0;
 
 	auto GetMaterial = [&](int nIndex) -> IMaterial* {
@@ -481,11 +496,10 @@ void CMaterials::RenderLagRecords(C_TFPlayer* pPlayer, const DrawModelState_t& s
 	// (the player material override must persist for subsequent wearable draws)
 	I::ModelRender->ForcedMaterialOverride(pOriginalMaterial, originalOverrideType);
 
-	if (CFG::Materials_Players_No_Depth && pRenderContext)
-		pRenderContext->DepthRange(0.0f, 1.0f);
-
 	I::RenderView->SetBlend(flOriginalBlend);
 	I::RenderView->SetColorModulation(1.0f, 1.0f, 1.0f);
+
+	m_bRenderingOriginalMat = bOldRenderingOriginalMat;
 }
 
 void CMaterials::RunFakeAngle()
@@ -590,13 +604,15 @@ void CMaterials::Run()
 		return;
 
 
-	Initialize();
-
 	if (!m_mapDrawnEntities.empty())
 		m_mapDrawnEntities.clear();
 
-	if (!CFG::Materials_Active || I::EngineVGui->IsGameUIVisible() || F::SpyCamera->IsRendering())
+	// gate before Initialize: its material-recovery scan ran on every world
+	// view even with the feature disabled
+	if ((!CFG::Materials_Active && !CFG::Visuals_Sheen_Active) || I::EngineVGui->IsGameUIVisible() || F::SpyCamera->IsRendering())
 		return;
+
+	Initialize();
 
 	if (CFG::Misc_Clean_Screenshot && I::EngineClient->IsTakingScreenshot())
 	{
@@ -664,6 +680,7 @@ void CMaterials::Run()
 		const bool bIgnoreTagged = CFG::Materials_Players_Ignore_Tagged;
 		const bool bIgnoreTaggedTeammates = CFG::Materials_Players_Ignore_Tagged_Teammates;
 		const bool bShowTeammateMedics = CFG::Materials_Players_Show_Teammate_Medics;
+		const bool bFriendTeammates = CFG::Materials_Players_Friend_Teammates;
 		
 		// Get entity group once
 		const auto& vPlayers = H::Entities->GetGroup(EEntGroup::PLAYERS_ALL);
@@ -694,24 +711,35 @@ void CMaterials::Run()
 
 			// Check if player is tagged (Cheater/RetardLegit/Ignored/Targeted/Streamer/Nigger)
 			bool bIsTagged = false;
-			if (!bIgnoreTagged)
+			bool bIsIgnoredTag = false;
+			PlayerPriority playerPriority = {};
+			if (F::Players->GetInfo(pPlayer->entindex(), playerPriority))
 			{
-				PlayerPriority playerPriority = {};
-				if (F::Players->GetInfo(pPlayer->entindex(), playerPriority))
-				{
+				bIsIgnoredTag = playerPriority.Ignored;
+				if (!bIgnoreTagged || bFriendTeammates)
 					bIsTagged = playerPriority.Cheater || playerPriority.RetardLegit || playerPriority.Ignored || playerPriority.Targeted || playerPriority.Streamer || playerPriority.Nigger;
-				}
 			}
 
 			// Check if this is a tagged teammate that should be ignored
 			const int nPlayerTeam = pPlayer->m_iTeamNum();
 			const bool bIsTeammate = nPlayerTeam == nLocalTeam;
-			
-			if (bIsTagged && bIsTeammate && bIgnoreTaggedTeammates)
+
+			if (!bIsLocal && bIsTeammate)
 			{
-				// Exception: show teammate medics if that option is enabled
-				if (!bShowTeammateMedics || pPlayer->m_iClass() != TF_CLASS_MEDIC)
-					continue;
+				if (bFriendTeammates)
+				{
+					if (!bIsFriend && !bIsIgnoredTag)
+					{
+						if (!bShowTeammateMedics || pPlayer->m_iClass() != TF_CLASS_MEDIC)
+							continue;
+					}
+				}
+				else if (bIsTagged && !bIsIgnoredTag && bIgnoreTaggedTeammates)
+				{
+					// Exception: show teammate medics if that option is enabled
+					if (!bShowTeammateMedics || pPlayer->m_iClass() != TF_CLASS_MEDIC)
+						continue;
+				}
 			}
 
 			// Skip team/enemy filtering if player is tagged (and not ignoring tagged)
@@ -736,6 +764,17 @@ void CMaterials::Run()
 				m_pGlowEnvmapTint->SetVecValue(ColorUtils::ToFloat(entColor.r), ColorUtils::ToFloat(entColor.g), ColorUtils::ToFloat(entColor.b));
 
 			DrawEntity(pPlayer);
+
+			if (CFG::Materials_Players_Weapons_Active && !bIsLocal && !bIsFriend && !bIsTeammate)
+			{
+				const auto& weaponColor = CFG::Color_Materials_Weapons;
+
+				if (pMaterial && pMaterial != m_pGlow)
+					I::RenderView->SetColorModulation(weaponColor);
+
+				if (pMaterial == m_pGlow && m_pGlowEnvmapTint)
+					m_pGlowEnvmapTint->SetVecValue(ColorUtils::ToFloat(weaponColor.r), ColorUtils::ToFloat(weaponColor.g), ColorUtils::ToFloat(weaponColor.b));
+			}
 
 			C_BaseEntity* pAttach = pPlayer->FirstMoveChild();
 
@@ -929,6 +968,25 @@ void CMaterials::Run()
 			}
 		}
 
+		if (!CFG::Materials_World_Ignore_DroppedGuns)
+		{
+			for (const auto pEntity : H::Entities->GetGroup(EEntGroup::WEAPONS_DROPPED))
+			{
+				if (!pEntity || !pEntity->ShouldDraw() || !F::VisualUtils->IsOnScreen(pLocal, pEntity))
+					continue;
+
+				const auto color = F::VisualUtils->GetEntityColor(pLocal, pEntity);
+
+				if (pMaterial && pMaterial != m_pGlow)
+					I::RenderView->SetColorModulation(color);
+
+				if (pMaterial == m_pGlow && m_pGlowEnvmapTint)
+					m_pGlowEnvmapTint->SetVecValue(ColorUtils::ToFloat(color.r), ColorUtils::ToFloat(color.g), ColorUtils::ToFloat(color.b));
+
+				DrawEntity(pEntity);
+			}
+		}
+
 		const bool bIgnoringAllProjectiles = CFG::Materials_World_Ignore_LocalProjectiles
 			&& CFG::Materials_World_Ignore_EnemyProjectiles
 			&& CFG::Materials_World_Ignore_TeammateProjectiles;
@@ -1061,4 +1119,14 @@ void CMaterials::CleanUp()
 	}
 
 	m_bCleaningUp = false;
+}
+
+void CMaterials::ValidateSheen()
+{
+	if (m_pSheen && m_pSheen->IsErrorMaterial())
+	{
+		m_pSheen = nullptr;
+		m_pSheenIndex = nullptr;
+		m_pSheenTint = nullptr;
+	}
 }

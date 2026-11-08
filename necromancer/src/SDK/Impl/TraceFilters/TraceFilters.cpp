@@ -164,63 +164,60 @@ bool CTraceFilterCollideable::ShouldHitEntity(IHandleEntity* pServerEntity, int 
 
 	switch (pEntity->GetClassId())
 	{
-	// World props that always block projectiles
+	// Amalgam gates every case on the trace's contents mask (MASK_SOLID
+	// carries SOLID/MOVEABLE/MONSTER, so these gates pass for the pipeline's
+	// traces and the team/weapon logic below decides; a mask missing the bit
+	// skips the class entirely)
 	case ETFClassIds::CBaseEntity:
+		return contentsMask & CONTENTS_SOLID;
+
+	case ETFClassIds::CFunc_LOD:
 	case ETFClassIds::CBaseDoor:
 	case ETFClassIds::CDynamicProp:
 	case ETFClassIds::CPhysicsProp:
 	case ETFClassIds::CPhysicsPropMultiplayer:
-	case ETFClassIds::CFunc_LOD:
 	case ETFClassIds::CObjectCartDispenser:
 	case ETFClassIds::CFuncTrackTrain:
 	case ETFClassIds::CFuncConveyor:
 	case ETFClassIds::CTFGenericBomb:
 	case ETFClassIds::CTFPumpkinBomb:
-		return true;
+		return contentsMask & CONTENTS_MOVEABLE;
 
 	// Respawn room visualizer - check team
 	case ETFClassIds::CFuncRespawnRoomVisualizer:
-		if (contentsMask & CONTENTS_PLAYERCLIP)
-			return pEntity->m_iTeamNum() != nTeam;
-		break;
+		return contentsMask & CONTENTS_PLAYERCLIP && pEntity->m_iTeamNum() != nTeam;
 
 	// Medigun shield - check team
 	case ETFClassIds::CTFMedigunShield:
-		if (!(contentsMask & CONTENTS_PLAYERCLIP))
-			return pEntity->m_iTeamNum() != nTeam;
-		break;
+		return !(contentsMask & CONTENTS_PLAYERCLIP) && pEntity->m_iTeamNum() != nTeam;
 
-	// Players - skip check if iType == SKIP_CHECK (for GetProjectileFireSetup)
+	// Players - gated on CONTENTS_MONSTER (present in MASK_SOLID): enemy
+	// players redirect the muzzle-redirect trace and block direct-flight
+	// traces, teammates don't (Amalgam parity)
 	case ETFClassIds::CTFPlayer:
-		if (iType == SKIP_CHECK)
-			return false;  // Skip player collision when doing fire setup trace
+		if (!(contentsMask & CONTENTS_MONSTER))
+			return false;
 		if (iPlayer == PLAYER_ALL)
 			return true;
 		if (iPlayer == PLAYER_NONE)
 			return false;
 		return pEntity->m_iTeamNum() != nTeam;
 
-	// Buildings - skip check if iType == SKIP_CHECK
+	// Buildings
 	case ETFClassIds::CBaseObject:
 	case ETFClassIds::CObjectSentrygun:
 	case ETFClassIds::CObjectDispenser:
-		if (iType == SKIP_CHECK)
-			return false;  // Skip building collision when doing fire setup trace
-		if (iObject == OBJECT_ALL)
-			return true;
-		if (iObject == OBJECT_NONE)
-			return false;
-		return pEntity->m_iTeamNum() != nTeam;
+		return contentsMask & CONTENTS_MOVEABLE
+			&& (iObject == OBJECT_ALL ? true : iObject == OBJECT_NONE ? false : pEntity->m_iTeamNum() != nTeam);
 
-	// Teleporters - skip check if iType == SKIP_CHECK
+	// Teleporters
 	case ETFClassIds::CObjectTeleporter:
-		if (iType == SKIP_CHECK)
-			return false;
-		return true;
+		return contentsMask & CONTENTS_MOVEABLE;
 
-	// Stickies - only if bMisc is true
+	// Stickies - only remote-detonate ones (Amalgam parity)
 	case ETFClassIds::CTFGrenadePipebombProjectile:
-		return bMisc;
+		return contentsMask & CONTENTS_MOVEABLE && bMisc
+			&& pEntity->As<C_TFGrenadePipebombProjectile>()->m_iType() == TF_GL_MODE_REMOTE_DETONATE;
 	}
 
 	return false;

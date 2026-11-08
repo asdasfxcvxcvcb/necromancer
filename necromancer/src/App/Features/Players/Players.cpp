@@ -1,5 +1,59 @@
 #include "Players.h"
 
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <vector>
+#include <utility>
+
+static std::mutex s_StatsWriteMutex;
+static std::condition_variable s_StatsWriteCV;
+static bool s_bStatsWriteQuit = false;
+static bool s_bStatsWritePending = false;
+static std::filesystem::path s_StatsWritePath;
+static std::vector<std::pair<uint64_t, PlayerStats>> s_StatsSnapshot;
+static std::thread s_StatsWriteThread;
+
+static void StatsWriteWorker()
+{
+	while (true)
+	{
+		std::filesystem::path path;
+		std::vector<std::pair<uint64_t, PlayerStats>> snapshot;
+
+		{
+			std::unique_lock<std::mutex> lock(s_StatsWriteMutex);
+			s_StatsWriteCV.wait(lock, [] { return s_bStatsWritePending || s_bStatsWriteQuit; });
+
+			if (!s_bStatsWritePending)
+				return;
+
+			path = std::move(s_StatsWritePath);
+			snapshot = std::move(s_StatsSnapshot);
+			s_bStatsWritePending = false;
+		}
+
+		nlohmann::json j;
+		for (const auto& [steamID64, stats] : snapshot)
+		{
+			std::string key = std::to_string(steamID64);
+			j[key]["encounters"] = stats.Encounters;
+			j[key]["kills"] = stats.Kills;
+			j[key]["deaths"] = stats.Deaths;
+			j[key]["last_seen"] = stats.LastSeen;
+			j[key]["most_recent"] = stats.MostRecent;
+			j[key]["first_seen"] = stats.FirstSeen;
+		}
+
+		std::ofstream file(path, std::ios::binary | std::ios::trunc);
+		if (file.is_open())
+		{
+			const std::string data = j.dump(4);
+			file.write(data.data(), static_cast<std::streamsize>(data.size()));
+		}
+	}
+}
+
 void CPlayers::Parse()
 {
 	// Init player data file path
@@ -109,25 +163,23 @@ void CPlayers::SaveStats()
 	if (m_StatsPath.empty())
 		m_StatsPath = U::Storage->GetWorkFolder() / "player_stats.json";
 
-	std::ofstream outFile(m_StatsPath);
-	if (!outFile.is_open())
-		return;
-
-	nlohmann::json j;
+	std::vector<std::pair<uint64_t, PlayerStats>> snapshot;
+	snapshot.reserve(m_PlayerStats.size());
 	for (const auto& [steamID64, stats] : m_PlayerStats)
+		snapshot.emplace_back(steamID64, stats);
+
 	{
-		std::string key = std::to_string(steamID64);
-		j[key]["encounters"] = stats.Encounters;
-		j[key]["kills"] = stats.Kills;
-		j[key]["deaths"] = stats.Deaths;
-		j[key]["last_seen"] = stats.LastSeen;
-		j[key]["most_recent"] = stats.MostRecent;
-		j[key]["first_seen"] = stats.FirstSeen;
+		std::lock_guard<std::mutex> lock(s_StatsWriteMutex);
+		s_StatsWritePath = m_StatsPath;
+		s_StatsSnapshot = std::move(snapshot);
+		s_bStatsWritePending = true;
 	}
 
-	outFile << std::setw(4) << j;
-	outFile.close();
-	
+	if (!s_bStatsWriteQuit && !s_StatsWriteThread.joinable())
+		s_StatsWriteThread = std::thread(StatsWriteWorker);
+
+	s_StatsWriteCV.notify_one();
+
 	m_bStatsDirty = false;
 }
 
@@ -150,6 +202,20 @@ void CPlayers::CheckDeferredSave()
 	{
 		SaveStats();
 	}
+}
+
+void CPlayers::ShutdownStatsWriter()
+{
+	if (!s_StatsWriteThread.joinable())
+		return;
+
+	{
+		std::lock_guard<std::mutex> lock(s_StatsWriteMutex);
+		s_bStatsWriteQuit = true;
+	}
+
+	s_StatsWriteCV.notify_one();
+	s_StatsWriteThread.join();
 }
 
 void CPlayers::RecordEncounter(uint64_t steamID64)

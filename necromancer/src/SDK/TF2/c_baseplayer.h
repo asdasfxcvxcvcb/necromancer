@@ -111,8 +111,15 @@ public:
 		return *reinterpret_cast<char *>(reinterpret_cast<std::uintptr_t>(this) + nOffset);
 	}
 
+	// m_iAmmo is indexed directly by ammo type (slot 0 unused, types start at
+	// 1 — metal at index 3). Read the netvar instead of the
+	// CBasePlayer_GetAmmoCount signature call: that call came back empty in
+	// practice, which made the nav bot hunt ammo packs at full ammo.
 	int GetAmmoCount(int iAmmoType) {
-		return reinterpret_cast<int(__fastcall *)(void *, int)>(Signatures::CBasePlayer_GetAmmoCount.Get())(this, iAmmoType);
+		static int nOffset = NetVars::GetNetVar("CBasePlayer", "m_iAmmo");
+		if (nOffset <= 0 || iAmmoType < 0 || iAmmoType >= 32)
+			return 0;
+		return *reinterpret_cast<int *>(reinterpret_cast<std::uintptr_t>(this) + nOffset + iAmmoType * sizeof(int));
 	}
 
 	int m_afButtonLast() {

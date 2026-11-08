@@ -235,7 +235,8 @@ void CSpectatorList::Run()
 		I::MatSystemSurface->DisableClipping(false);
 		I::MatSystemSurface->SetClippingRect(nModeX, nTextY, (nModeX + LIST_WIDTH) - (CFG::Menu_Spacing_X + 1), nTextY + CFG::Menu_Drag_Bar_Height);
 
-		// Color logic (like Amalgam)
+		// Color logic (like Amalgam) - every tag colors the name, in the same
+		// priority order the ESP name/tag colors use
 		Color_t nameColor = CFG::Menu_Text_Inactive;
 		bool bHasPriorityColor = false;
 
@@ -247,9 +248,24 @@ void CSpectatorList::Run()
 				nameColor = CFG::Color_Cheater;
 				bHasPriorityColor = true;
 			}
+			else if (playerPriority.Targeted)
+			{
+				nameColor = CFG::Color_Targeted;
+				bHasPriorityColor = true;
+			}
+			else if (playerPriority.Nigger)
+			{
+				nameColor = CFG::Color_Nigger;
+				bHasPriorityColor = true;
+			}
 			else if (playerPriority.RetardLegit)
 			{
 				nameColor = CFG::Color_RetardLegit;
+				bHasPriorityColor = true;
+			}
+			else if (playerPriority.Streamer)
+			{
+				nameColor = CFG::Color_Streamer;
 				bHasPriorityColor = true;
 			}
 			else if (playerPriority.Ignored)

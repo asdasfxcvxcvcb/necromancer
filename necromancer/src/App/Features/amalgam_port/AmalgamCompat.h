@@ -49,6 +49,14 @@ class CTraceFilterWorldAndPropsOnlyAmalgam;
 #define CONTENTS_NOSTARTSOLID 0x100
 #endif
 
+// Amalgam's trace/calc epsilons (Utils/Math/Math.h)
+#ifndef DIST_EPSILON
+#define DIST_EPSILON 0.03125f
+#endif
+#ifndef CALC_EPSILON
+#define CALC_EPSILON 0.001f
+#endif
+
 // TF2 class constants (if not defined)
 #ifndef TF_CLASS_HEAVY
 #define TF_CLASS_HEAVY 6
@@ -228,6 +236,18 @@ namespace Math
             t = std::clamp(t, 0.f, 1.f);
         return C + (D - C) * t;
     }
+
+    // AABB vs AABB overlap test (Amalgam's Math::IsBoxIntersectingBox)
+    inline bool IsBoxIntersectingBox(const Vec3& vMins1, const Vec3& vMaxs1, const Vec3& vMins2, const Vec3& vMaxs2)
+    {
+        if (vMins1.x > vMaxs2.x || vMaxs1.x < vMins2.x)
+            return false;
+        if (vMins1.y > vMaxs2.y || vMaxs1.y < vMins2.y)
+            return false;
+        if (vMins1.z > vMaxs2.z || vMaxs1.z < vMins2.z)
+            return false;
+        return true;
+    }
     
     // VectorAngles - single argument version that returns Vec3
     inline Vec3 VectorAngles(const Vec3& forward)
@@ -266,7 +286,195 @@ namespace Math
 
         return Vec3(vX.Dot(vPoint), vY.Dot(vPoint), vZ.Dot(vPoint)) + vOrigin;
     }
-    
+
+    // AABBLine - distance along vDir from vStart until it exits the AABB
+    inline float AABBLine(Vec3 vMins, Vec3 vMaxs, Vec3 vStart, Vec3 vDir)
+    {
+        Vec3 a = { (vMins.x - vStart.x) / vDir.x, (vMins.y - vStart.y) / vDir.y, (vMins.z - vStart.z) / vDir.z };
+        Vec3 b = { (vMaxs.x - vStart.x) / vDir.x, (vMaxs.y - vStart.y) / vDir.y, (vMaxs.z - vStart.z) / vDir.z };
+        Vec3 c = { std::min(a.x, b.x), std::min(a.y, b.y), std::min(a.z, b.z) };
+        return std::max(std::max(c.x, c.y), c.z);
+    }
+
+    // PullPoint - slides a splash point along the trace line onto the target's AABB
+    inline Vec3 PullPoint(Vec3 vFrom, Vec3 vTo, Vec3 vOrigin, Vec3 vMins, Vec3 vMaxs)
+    {
+        const float flT = fabsf(AABBLine(vOrigin + vMins, vOrigin + vMaxs, vTo, vFrom - vTo));
+        return vTo + (vFrom - vTo) * flT;
+    }
+
+    // FullFraction - trace fraction corrected for the hull epsilon so a graze
+    // that only touched by the skin of the hull doesn't read as clear
+    inline float FullFraction(const Vec3& vDir, const CGameTrace& trace)
+    {
+        if (!trace.DidHit() || FNV1A::Hash32(trace.surface.name) == FNV1A::Hash32Const("**displacement**"))
+            return trace.fraction;
+
+        return trace.fraction - DIST_EPSILON / vDir.Dot(trace.plane.normal);
+    }
+    inline float FullFraction(const Vec3& vStart, const Vec3& vEnd, const CGameTrace& trace)
+    {
+        return FullFraction(vEnd - vStart, trace);
+    }
+    // (Math::VectorTransform for bone matrices already exists in Utils/Math/Math.h)
+
+    // polygon math for the splash Face sampler - ports of Amalgam's
+    // Math::ExpandPolygon / ClosestPointOnLine / ClosestPointOnTriangle /
+    // ClosestPointOnPolygon (Vec2 here lacks Dot/Cross/Normalized, so the 2D
+    // work is done with local helpers)
+    inline Vec3 VectorTransform(const Vec3& vIn, const matrix3x4_t& mMatrix)
+    {
+        Vec3 vOut;
+        ::Math::VectorTransform(vIn, mMatrix, vOut);
+        return vOut;
+    }
+
+    inline float Dot2(const Vec2& a, const Vec2& b)
+    {
+        return a.x * b.x + a.y * b.y;
+    }
+    inline Vec2 Norm2(const Vec2& v)
+    {
+        const float flLength = v.Length();
+        return flLength ? Vec2(v.x / flLength, v.y / flLength) : v;
+    }
+
+    inline void ExpandPolygon(std::vector<Vec3>& vOldVertices, std::vector<Vec3>& vNewVertices, const Vec3& vNormal, float flOffset, const Vec3* pTarget = nullptr)
+    {
+        Vec3 vForward = (vNewVertices.front() - vNewVertices.back()).Normalized();
+        Vec3 vRight = vForward.Cross(vNormal).Normalized();
+
+        vOldVertices = vNewVertices;
+        for (int i = 0, n = int(vNewVertices.size()); i < n; i++)
+        {
+            Vec3& vVertex1 = vOldVertices[i], &vVertex2 = vOldVertices[(i + 1) % n], &vVertex3 = vOldVertices[(i + 2) % n];
+
+            Vec2 vPoint1 = { vVertex1.Dot(vForward), vVertex1.Dot(vRight) };
+            Vec2 vPoint2 = { vVertex2.Dot(vForward), vVertex2.Dot(vRight) };
+            Vec2 vPoint3 = { vVertex3.Dot(vForward), vVertex3.Dot(vRight) };
+
+            Vec2 vDelta21 = vPoint2 - vPoint1;
+            Vec2 vDelta32 = vPoint3 - vPoint2;
+
+            Vec2 vNormal1 = Norm2(Vec2(vDelta21.y, -vDelta21.x));
+            Vec2 vNormal2 = Norm2(Vec2(vDelta32.y, -vDelta32.x));
+
+            Vec2 vBisect = Norm2(Vec2(vNormal1.x + vNormal2.x, vNormal1.y + vNormal2.y));
+            float flDistance = flOffset / Dot2(vNormal1, vBisect);
+            vBisect *= flDistance;
+
+            if (!pTarget)
+                vNewVertices[(i + 1) % n] += vForward * vBisect.x + vRight * vBisect.y;
+            else
+            {
+                Vec3 vToTarget = *pTarget - vVertex2;
+                if (Vec3 vDisplacementX = vForward * vBisect.x; vDisplacementX.Dot(vToTarget) > 0.f)
+                    vNewVertices[(i + 1) % n] += vDisplacementX;
+                if (Vec3 vDisplacementY = vRight * vBisect.y; vDisplacementY.Dot(vToTarget) > 0.f)
+                    vNewVertices[(i + 1) % n] += vDisplacementY;
+            }
+        }
+    }
+    inline void ExpandPolygon(std::vector<Vec3>& vVertices, const Vec3& vNormal, float flOffset, const Vec3* pTarget = nullptr)
+    {
+        std::vector<Vec3> vTemporary;
+        ExpandPolygon(vTemporary, vVertices, vNormal, flOffset, pTarget);
+    }
+
+    inline Vec3 ClosestPointOnLine(const Vec3& vPoint, const Vec3& vPoint1, const Vec3& vPoint2)
+    {
+        Vec3 vDelta = vPoint2 - vPoint1;
+
+        float flRatio = std::clamp((vPoint - vPoint1).Dot(vDelta) / vDelta.Dot(vDelta), 0.f, 1.f);
+
+        return vPoint1 + vDelta * flRatio;
+    }
+
+    inline Vec3 ClosestPointOnTriangle(const Vec3& vPoint, const Vec3& vPoint1, const Vec3& vPoint2, const Vec3& vPoint3, bool* pInside = nullptr)
+    {
+        Vec3 vDelta21 = vPoint2 - vPoint1;
+        Vec3 vDelta31 = vPoint3 - vPoint1;
+        if (pInside) *pInside = false;
+
+        Vec3 vDeltaPT = vPoint - vPoint1;
+        float flDot1 = vDelta21.Dot(vDeltaPT);
+        float flDot2 = vDelta31.Dot(vDeltaPT);
+        if (flDot1 <= 0 && flDot2 <= 0)
+            return vPoint1;
+
+        vDeltaPT = vPoint - vPoint2;
+        float flDot3 = vDelta21.Dot(vDeltaPT);
+        float flDot4 = vDelta31.Dot(vDeltaPT);
+        if (flDot3 >= 0 && flDot4 <= flDot3)
+            return vPoint2;
+
+        vDeltaPT = vPoint - vPoint3;
+        float flDot5 = vDelta21.Dot(vDeltaPT);
+        float flDot6 = vDelta31.Dot(vDeltaPT);
+        if (flDot6 >= 0 && flDot5 <= flDot6)
+            return vPoint3;
+
+        float flSideC = flDot1 * flDot4 - flDot3 * flDot2;
+        if (flSideC <= 0 && flDot1 >= 0 && flDot3 <= 0)
+        {
+            float flRatio = flDot1 / (flDot1 - flDot3);
+            return vPoint1 + vDelta21 * flRatio;
+        }
+
+        float flSideB = flDot5 * flDot2 - flDot1 * flDot6;
+        if (flSideB <= 0 && flDot2 >= 0 && flDot6 <= 0)
+        {
+            float flRatio = flDot2 / (flDot2 - flDot6);
+            return vPoint1 + vDelta31 * flRatio;
+        }
+
+        float flSideA = flDot3 * flDot6 - flDot5 * flDot4;
+        if (flSideA <= 0 && (flDot4 - flDot3) >= 0 && (flDot5 - flDot6) >= 0)
+        {
+            float flRatio = (flDot4 - flDot3) / (flDot4 - flDot3 + flDot5 - flDot6);
+            return vPoint2 + (vPoint3 - vPoint2) * flRatio;
+        }
+
+        float flDenominator = 1 / (flSideA + flSideB + flSideC);
+        float flV = flSideB * flDenominator;
+        float flW = flSideC * flDenominator;
+        if (pInside) *pInside = true;
+        return vPoint1 + vDelta21 * flV + vDelta31 * flW;
+    }
+
+    inline Vec3 ClosestPointOnPolygon(const Vec3& vPoint, const std::vector<Vec3>& vVertices, const Vec3& vNormal, bool* pInside = nullptr)
+    {
+        float flDot = vNormal.Dot(vPoint - vVertices.front());
+        Vec3 vProjection = vPoint - vNormal * flDot;
+
+        for (int i = 0, n = int(vVertices.size()); i < n; i++)
+        {
+            const Vec3& vVertex1 = vVertices[i], &vVertex2 = vVertices[(i + 1) % n];
+
+            Vec3 vEdge = vVertex2 - vVertex1;
+            Vec3 vToProjection = vProjection - vVertex1;
+
+            if (vToProjection.Cross(vEdge).Dot(vNormal) < 0)
+                goto outside;
+        }
+        if (pInside) *pInside = true;
+        return vProjection;
+
+    outside:
+        float flLowestDistance = std::numeric_limits<float>::max();
+        for (int i = 0, n = int(vVertices.size()); i < n; i++)
+        {
+            const Vec3& vVertex1 = vVertices[i], &vVertex2 = vVertices[(i + 1) % n];
+
+            Vec3 vLine = ClosestPointOnLine(vPoint, vVertex1, vVertex2);
+            float flDistance = vLine.DistToSqr(vPoint);
+            if (flDistance < flLowestDistance)
+                vProjection = vLine, flLowestDistance = flDistance;
+        }
+        if (pInside) *pInside = false;
+        return vProjection;
+    }
+
     // SolveQuadratic - solves ax^2 + bx + c = 0
     inline std::vector<float> SolveQuadratic(float a, float b, float c)
     {
@@ -509,7 +717,10 @@ using CTFSniperRifle = C_TFSniperRifle;
 // ============================================
 
 // k_flMaxVelocity and k_flMaxAngularVelocity are already defined in SDK/TF2/vphysics.h
-constexpr float TF_ARROW_MAX_CHARGE_TIME = 1.0f;
+// Amalgam Definitions.h value: NOT the 1s full-charge ramp (hardcoded in the
+// RemapVal calls) but the overcharge threshold where the fully drawn bow's aim
+// turns unsteady and the arrow wobbles +-6 degrees
+constexpr float TF_ARROW_MAX_CHARGE_TIME = 5.0f;
 
 // ============================================
 // Entity Group Enum (Amalgam style)
@@ -881,7 +1092,7 @@ namespace SDK
         return SDKUtils::RandomInt(min, max);
     }
     
-    inline float StdRandomFloat(float min, float max)
+    inline float StdRandomFloat(float min = 0.f, float max = 1.f)
     {
         // Standard library random for non-deterministic randomness
         static std::random_device rd;
@@ -897,7 +1108,12 @@ namespace SDK
         std::uniform_int_distribution<int> dis(min, max);
         return dis(gen);
     }
-    
+
+    inline bool StdRandomBool()
+    {
+        return StdRandomInt(0, 1) != 0;
+    }
+
     // Trace wrappers
     inline void Trace(const Vec3& start, const Vec3& end, int mask, ITraceFilter* filter, CGameTrace* trace)
     {
@@ -1163,14 +1379,26 @@ namespace SDK
             I::CVar->ConsoleColorPrintf({color.r, color.g, color.b, color.a}, "[%s] %s\n", szTag, szMsg);
     }
     
-    // Seed file line hash (for random seed calculation)
     inline int SeedFileLineHash(int nSeed, const char* szFile, int nLine)
     {
-        // Amalgam's implementation
-        unsigned int uHash = nSeed;
+        unsigned int uCRC = 0xFFFFFFFFu;
+        auto fProcessByte = [&](unsigned char uByte)
+        {
+            uCRC ^= uByte;
+            for (int i = 0; i < 8; ++i)
+                uCRC = (uCRC >> 1) ^ (0xEDB88320u & (0u - (uCRC & 1u)));
+        };
+        auto fProcess = [&](const void* pBuffer, int iLength)
+        {
+            const unsigned char* pb = static_cast<const unsigned char*>(pBuffer);
+            for (int i = 0; i < iLength; ++i)
+                fProcessByte(pb[i]);
+        };
+        fProcess(&nSeed, sizeof(int));
+        fProcess(&nLine, sizeof(int));
         for (const char* p = szFile; *p; ++p)
-            uHash = (uHash >> 1) + ((uHash & 1) << 31) + *p;
-        return static_cast<int>(uHash + nLine);
+            fProcessByte(static_cast<unsigned char>(*p));
+        return static_cast<int>(uCRC ^ 0xFFFFFFFFu);
     }
 }
 
@@ -1292,7 +1520,9 @@ namespace Vars
             struct AutoShootWrapper { bool get() const { return CFG::Aimbot_AutoShoot; } __declspec(property(get=get)) bool Value; } inline AutoShoot;
             struct { float Value = 25.f; } inline AssistStrength;
             struct { int Value = 4; } inline TickTolerance;
-            struct { int Value = 5; } inline MaxTargets; // Max targets to process
+            // Amalgam caps both its projectile and melee aimbots with one shared
+            // "Max targets" var - the menu slider feeds it here
+            struct MaxTargetsWrapper { int get() const { return CFG::Aimbot_Projectile_Max_Processing_Targets; } __declspec(property(get=get)) int Value; } inline MaxTargets;
         }
         
         namespace Projectile
@@ -1300,8 +1530,11 @@ namespace Vars
             namespace StrafePredictionEnum { enum { Off = 0, Air = 1 << 0, Ground = 1 << 1 }; }
             namespace SplashPredictionEnum { enum { Off = 0, Include = 1, Prefer = 2, Only = 3 }; }
             namespace HitboxesEnum { enum { Auto = 1 << 0, Head = 1 << 1, Body = 1 << 2, Feet = 1 << 3, BodyaimIfLethal = 1 << 4, PrioritizeFeet = 1 << 5 }; }
-            namespace ModifiersEnum { enum { UsePrimeTime = 1 << 0, ChargeWeapon = 1 << 1 }; }
-            namespace SplashModeEnum { enum { Multi = 0, Single = 1 }; }
+            namespace ModifiersEnum
+            {	// Amalgam's current bit layout
+                enum { ChargeWeapon = 1 << 0, CancelCharge = 1 << 1, UseArmTime = 1 << 2, AirSplash = 1 << 3, LobAngles = 1 << 4, TargetDormant = 1 << 5 };
+            }
+            namespace SplashModeEnum { enum { Trace = 0, Face = 1 }; }
             namespace RocketSplashModeEnum { enum { Regular = 0, SpecialLight = 1, SpecialHeavy = 2 }; }
             namespace DeltaModeEnum { enum { Average = 0, Max = 1 }; }
             namespace MovesimFrictionFlagsEnum { enum { RunReduce = 1 << 0, CalculateIncrease = 1 << 1 }; }
@@ -1314,9 +1547,17 @@ namespace Vars
                        (CFG::Aimbot_Amalgam_Projectile_Hitbox_BodyaimLethal ? HitboxesEnum::BodyaimIfLethal : 0) |
                        (CFG::Aimbot_Amalgam_Projectile_Hitbox_PrioritizeFeet ? HitboxesEnum::PrioritizeFeet : 0);
             } __declspec(property(get=get)) int Value; } inline Hitboxes;
-            struct ModifiersWrapper { int get() const { 
-                return (CFG::Aimbot_Amalgam_Projectile_Mod_PrimeTime ? ModifiersEnum::UsePrimeTime : 0) |
-                       (CFG::Aimbot_Amalgam_Projectile_Mod_ChargeWeapon ? ModifiersEnum::ChargeWeapon : 0);
+            struct ModifiersWrapper { int get() const {
+                // Amalgam's default is CancelCharge (0b0010) - auto-cancel charges
+                // when the aimbot stops pressing attack. ChargeWeapon stays optional
+                // via its CFG checkbox; the user's Amalgam config additionally runs
+                // UseArmTime | AirSplash | LobAngles, so those are wired too
+                // (sticky arm timing, pipe air dets, high-arc solutions)
+                return (CFG::Aimbot_Amalgam_Projectile_Mod_ChargeWeapon ? ModifiersEnum::ChargeWeapon : 0)
+                     | ModifiersEnum::CancelCharge
+                     | (CFG::Aimbot_Amalgam_Projectile_Mod_UseArmTime ? ModifiersEnum::UseArmTime : 0)
+                     | (CFG::Aimbot_Amalgam_Projectile_Mod_AirSplash ? ModifiersEnum::AirSplash : 0)
+                     | (CFG::Aimbot_Amalgam_Projectile_Mod_LobAngles ? ModifiersEnum::LobAngles : 0);
             } __declspec(property(get=get)) int Value; } inline Modifiers;
             struct MaxSimulationTimeWrapper { float get() const { return CFG::Aimbot_Projectile_Max_Simulation_Time; } __declspec(property(get=get)) float Value; } inline MaxSimulationTime;
             struct HitChanceWrapper { float get() const { return static_cast<float>(CFG::Aimbot_Amalgam_Projectile_HitChance); } __declspec(property(get=get)) float Value; } inline HitChance;
@@ -1349,12 +1590,23 @@ namespace Vars
             struct { float Value = -1.f; } inline SplashRotateX;
             struct { float Value = -1.f; } inline SplashRotateY;
             struct { int Value = 10; } inline SplashTraceInterval;
+            struct { int Value = 1; } inline DirectTraceInterval;
+            struct { int Value = 20; } inline LobTraceInterval;
+            struct { bool Value = true; } inline IntervalRetest;
             struct { int Value = 1; } inline SplashNormalSkip;
-            struct { int Value = SplashModeEnum::Multi; } inline SplashMode;
+            struct { int Value = 0; } inline SplashAirCount;
+            struct { bool Value = true; } inline LobAnglesUnderpredict;
+            struct { int Value = 100; } inline SplashRestrictDirect;
+            struct { int Value = 5; } inline SplashRestrictArc;
+            struct { int Value = 25; } inline SplashRestrictFirst;
+            struct SplashModeWrapper { int get() const { return CFG::Aimbot_Amalgam_Projectile_SplashMode; } __declspec(property(get=get)) int Value; } inline SplashMode;
+            struct SplashDensityDirectWrapper { float get() const { return CFG::Aimbot_Amalgam_Projectile_SplashDensity_Direct; } __declspec(property(get=get)) float Value; } inline SplashDensityDirect;
+            struct SplashDensityArcWrapper { float get() const { return CFG::Aimbot_Amalgam_Projectile_SplashDensity_Arc; } __declspec(property(get=get)) float Value; } inline SplashDensityArc;
+            struct { float Value = 0.0000001f; } inline SplashSamplesCutoff; // Amalgam NOSAVE debug default
+            struct { bool Value = false; } inline HuntsmanPullNoZ;
             struct RocketSplashModeWrapper { int get() const { return CFG::Aimbot_Amalgam_Projectile_RocketSplashMode; } __declspec(property(get=get)) int Value; } inline RocketSplashMode;
             struct SplashPredictionWrapper { int get() const { return CFG::Aimbot_Amalgam_Projectile_Splash; } __declspec(property(get=get)) int Value; } inline SplashPrediction;
             struct { bool Value = true; } inline SplashGrates;
-            struct { float Value = 0.f; } inline DragOverride;
             struct { float Value = 0.f; } inline TimeOverride;
             struct { float Value = 50.f; } inline HuntsmanLerp;
             struct { float Value = 100.f; } inline HuntsmanLerpLow;
@@ -1368,14 +1620,25 @@ namespace Vars
             struct MidpointAimWrapper { bool get() const { return CFG::Aimbot_Projectile_Midpoint_Aim; } __declspec(property(get=get)) bool Value; } inline MidpointAim;
             struct MidpointMaxDistanceWrapper { float get() const { return CFG::Aimbot_Projectile_Midpoint_Max_Distance; } __declspec(property(get=get)) float Value; } inline MidpointMaxDistance;
         }
+
+        namespace Melee
+        {
+            namespace SwingValidateModeEnum { enum { Both = 0, Swing = 1, Simulated = 2 }; }
+            struct AutoBackstabWrapper { bool get() const { return CFG::Aimbot_Melee_Auto_Backstab; } __declspec(property(get=get)) bool Value; } inline AutoBackstab;
+            struct IgnoreRazorbackWrapper { bool get() const { return CFG::Aimbot_Melee_Ignore_Razorback; } __declspec(property(get=get)) bool Value; } inline IgnoreRazorback;
+            struct SwingPredictionWrapper { bool get() const { return CFG::Aimbot_Melee_Predict_Swing; } __declspec(property(get=get)) bool Value; } inline SwingPrediction;
+            struct SwingPredictLagWrapper { bool get() const { return CFG::Aimbot_Melee_Swing_Predict_Lag; } __declspec(property(get=get)) bool Value; } inline SwingPredictLag;
+            struct WhipTeamWrapper { bool get() const { return CFG::Aimbot_Melee_Whip_Teammates; } __declspec(property(get=get)) bool Value; } inline WhipTeam;
+            struct { int Value = 13; } inline SwingTicks; // Amalgam NOSAVE debug default (prediction horizon in ticks)
+            struct { int Value = SwingValidateModeEnum::Both; } inline SwingValidateMode; // Amalgam default
+        }
         
         namespace Healing
         {
             namespace HealPriorityEnum { enum { None = 0, PrioritizeTeam = 1, PrioritizeFriends = 2, FriendsOnly = 3 }; }
             struct { int Value = HealPriorityEnum::None; } inline HealPriority;
-            struct { bool Value = false; } inline AutoArrow;
-            struct { bool Value = false; } inline AutoSandvich;
-            struct { bool Value = false; } inline AutoRepair;
+            struct ArrowWrapper { bool get() const { return CFG::Aimbot_Projectile_AutoArrow; } __declspec(property(get=get)) bool Value; } inline AutoArrow;
+            struct RepairWrapper { bool get() const { return CFG::Aimbot_Projectile_AutoRepair; } __declspec(property(get=get)) bool Value; } inline AutoRepair;
         }
     }
     
