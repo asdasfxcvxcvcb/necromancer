@@ -102,6 +102,9 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <TargetName>necromancer</TargetName>
   </PropertyGroup>
+  <PropertyGroup>
+    <LibraryPath>$(ProjectDir)third_party\opus;$(LibraryPath)</LibraryPath>
+  </PropertyGroup>
   <ImportGroup Label="ExtensionSettings">
   </ImportGroup>
   <ImportGroup Label="Shared">

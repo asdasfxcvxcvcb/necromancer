@@ -20,7 +20,7 @@
 #include <audiopolicy.h>
 
 #pragma comment(lib, "ole32.lib")
-#pragma comment(lib, "D:\\Games\\asd\\asdsd\\necromancer\\necromancer\\third_party\\opus\\opus.lib")
+#pragma comment(lib, "opus.lib")
 
 namespace
 {
