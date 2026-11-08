@@ -26,10 +26,6 @@ jobs:
       - name: Build
         run: msbuild necromancer.sln /p:Configuration=${{ matrix.configuration }} /p:Platform=${{ matrix.platform }} /m
 
-      - name: Rename AVX2 DLL
-        if: matrix.configuration == 'ReleaseAVX2'
-        run: Rename-Item -Path "bin/${{ matrix.configuration }}/necromancer.dll" -NewName "necromancer_AVX2.dll"
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
