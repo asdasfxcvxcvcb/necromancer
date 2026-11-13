@@ -19,6 +19,17 @@ namespace
 	constexpr int VACC_PROJ_TICKS = 33;
 	constexpr float VACC_PROJ_GRAVITY = 0.4f;
 	constexpr float VACC_SNIPER_AIM_RADIUS = 40.f;
+	constexpr float VACC_PREDICT_MOVE_SPEED = 60.f;
+
+	// pure world occlusion - players, buildings and everything else can never
+	// fake a sightline the way an entity-target trace can
+	bool IsWorldVisible(const Vec3& vFrom, const Vec3& vTo)
+	{
+		CGameTrace trace = {};
+		CTraceFilterWorldAndPropsOnly filter = {};
+		SDK::Trace(vFrom, vTo, MASK_SHOT, &filter, &trace);
+		return trace.fraction >= 0.99f;
+	}
 
 	bool IsMarkedPlayer(C_BaseEntity* pEntity)
 	{
@@ -203,7 +214,7 @@ medigun_resist_types_t WeaponIDToResType(int weaponID)
 	}
 }
 
-bool IsPlayerInDanger(C_TFPlayer* player, medigun_resist_types_t& dangerType, const std::vector<Vec3>& vecPath, bool& bMarkedSource)
+bool IsPlayerInDanger(C_TFPlayer* player, medigun_resist_types_t& dangerType, const std::vector<Vec3>& vecPath, bool& bMarkedSource, int nStrictLevel)
 {
 	bMarkedSource = false;
 
@@ -234,6 +245,12 @@ bool IsPlayerInDanger(C_TFPlayer* player, medigun_resist_types_t& dangerType, co
 		if (!enemy->IsCritBoosted() && !enemy->IsMiniCritBoosted() && !zoomed)
 			continue;
 
+		// strictness gates the sniper panic path; a marked sniper always gets
+		// Max aggression regardless of the setting
+		const int nSniperStrict = IsMarkedPlayer(enemy) ? 0 : nStrictLevel;
+		if (nSniperStrict >= 3)
+			continue;
+
 		auto mins{ player->m_vecMins() };
 		auto maxs{ player->m_vecMaxs() };
 		mins.x *= 3.0f; mins.y *= 3.0f; mins.z *= 1.5f;
@@ -242,37 +259,44 @@ bool IsPlayerInDanger(C_TFPlayer* player, medigun_resist_types_t& dangerType, co
 		Vec3 forward{};
 		Math::AngleVectors(enemy->GetEyeAngles(), &forward);
 
+		const Vec3 vEye = enemy->m_vecOrigin() + Vec3{ 0.0f, 0.0f, enemy->m_vecMaxs().z };
+
 		bool bAimReach = Math::RayToOBB(enemy->GetShootPos(), forward, player->m_vecOrigin(), mins, maxs, player->RenderableToWorldTransform());
 		bool bSightline = false;
 		if (bAimReach)
 		{
-			const auto visibleFromCenter{ H::AimUtils->TraceEntityAutoDet(pEntity, player->GetCenter(), enemy->m_vecOrigin() + Vec3{ 0.0f, 0.0f, enemy->m_vecMaxs().z }) };
+			const auto visibleFromCenter{ IsWorldVisible(player->GetCenter(), vEye) };
 			// only the OR of the two rays matters - skip the head ray when the
 			// center ray already proved visibility
-			const auto visibleFromHead{ visibleFromCenter || H::AimUtils->TraceEntityAutoDet(pEntity, player->m_vecOrigin() + Vec3{ 0.0f, 0.0f, player->m_vecMaxs().z }, enemy->m_vecOrigin() + Vec3{ 0.0f, 0.0f, enemy->m_vecMaxs().z }) };
+			const auto visibleFromHead{ visibleFromCenter || IsWorldVisible(player->m_vecOrigin() + Vec3{ 0.0f, 0.0f, player->m_vecMaxs().z }, vEye) };
 			bSightline = visibleFromCenter || visibleFromHead;
 		}
 
 		// the pop must land before the shot: the aim ray and the sightline
 		// against where the player is about to be count on their own, so a
-		// fully-covered player about to peek still trips the danger
-		if (!bAimReach || !bSightline)
+		// covered player actually moving toward the exposure still trips the
+		// danger. High requires motion, Medium only trusts the current
+		// sightline, and a stationary player can never pre-peek
+		if ((!bAimReach || !bSightline) && nSniperStrict <= 1)
 		{
-			const Vec3 vEye = enemy->m_vecOrigin() + Vec3{ 0.0f, 0.0f, enemy->m_vecMaxs().z };
-			for (const auto& vPos : vecPath)
+			const bool bMoving = player->m_vecVelocity().Length2D() > VACC_PREDICT_MOVE_SPEED;
+			if (nSniperStrict == 0 || bMoving)
 			{
-				const Vec3 vCenter = vPos + Vec3{ 0.0f, 0.0f, (mins.z + maxs.z) * 0.25f };
-				const Vec3 vDelta = vCenter - enemy->GetShootPos();
-				const float flAlong = vDelta.Dot(forward);
-				if (flAlong <= 0.f)
-					continue;
-				if ((enemy->GetShootPos() + forward * flAlong).DistTo(vCenter) > VACC_SNIPER_AIM_RADIUS)
-					continue;
-				if (!H::AimUtils->TraceEntityAutoDet(pEntity, vCenter, vEye))
-					continue;
-				bAimReach = true;
-				bSightline = true;
-				break;
+				for (const auto& vPos : vecPath)
+				{
+					const Vec3 vCenter = vPos + Vec3{ 0.0f, 0.0f, (mins.z + maxs.z) * 0.25f };
+					const Vec3 vDelta = vCenter - enemy->GetShootPos();
+					const float flAlong = vDelta.Dot(forward);
+					if (flAlong <= 0.f)
+						continue;
+					if ((enemy->GetShootPos() + forward * flAlong).DistTo(vCenter) > VACC_SNIPER_AIM_RADIUS)
+						continue;
+					if (!IsWorldVisible(vCenter, vEye))
+						continue;
+					bAimReach = true;
+					bSightline = true;
+					break;
+				}
 			}
 		}
 
@@ -613,9 +637,10 @@ void CAutoVaccinator::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd*
 		medigun_resist_types_t panicType{ MEDIGUN_NUM_RESISTS };
 		bool bPanicTargetIsHeal = false;
 		bool bMarkedThreat = false;
-		if (healTarget && IsPlayerInDanger(healTarget, panicType, healTarget != pLocal ? vecHealPath : vecSelfPath, bMarkedThreat) && !PlayerHasResUber(panicType, healTarget))
+		const int nPanicStrict = std::clamp(CFG::Triggerbot_AutoVaccinator_Tolerance, 0, 3);
+		if (healTarget && IsPlayerInDanger(healTarget, panicType, healTarget != pLocal ? vecHealPath : vecSelfPath, bMarkedThreat, nPanicStrict) && !PlayerHasResUber(panicType, healTarget))
 			bPanicTargetIsHeal = true;
-		else if (IsPlayerInDanger(pLocal, panicType, vecSelfPath, bMarkedThreat) && !PlayerHasResUber(panicType, pLocal))
+		else if (IsPlayerInDanger(pLocal, panicType, vecSelfPath, bMarkedThreat, nPanicStrict) && !PlayerHasResUber(panicType, pLocal))
 			bPanicTargetIsHeal = false;
 		else
 			panicType = MEDIGUN_NUM_RESISTS;
