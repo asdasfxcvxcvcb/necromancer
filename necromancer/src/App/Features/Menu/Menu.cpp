@@ -3255,6 +3255,12 @@ void CMenu::MainWindow()
 					{ "Everyone", 0 },
 					{ "Friends Only", 1 }
 				});
+				SelectSingle("Strict Level", CFG::Triggerbot_AutoVaccinator_Tolerance, {
+					{ "Max", 0 },
+					{ "High", 1 },
+					{ "Medium", 2 },
+					{ "Low", 3 }
+				});
 			}
 			GroupBoxEnd();
 			GroupBoxStart("Auto Sapper", 150);
@@ -4846,6 +4852,9 @@ void CMenu::MainWindow()
 					CheckBox("No Pop (Cycle Only)", CFG::Triggerbot_AutoVaccinator_NoPop);
 				SelectSingle("Pop For", CFG::Triggerbot_AutoVaccinator_Pop, {
 					{ "Everyone", 0 }, { "Friends Only", 1 }
+				});
+				SelectSingle("Strict Level", CFG::Triggerbot_AutoVaccinator_Tolerance, {
+					{ "Max", 0 }, { "High", 1 }, { "Medium", 2 }, { "Low", 3 }
 				});
 			}
 		};

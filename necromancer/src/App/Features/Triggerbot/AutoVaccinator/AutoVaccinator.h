@@ -13,6 +13,7 @@ class CAutoVaccinator
 	int m_nPredictedResist = -1;
 	float m_flPredictTime = 0.f;
 	float m_flLastPopTime[MEDIGUN_NUM_RESISTS] = {};
+	float m_flRealtimeLastPop = 0.f;
 
 	void Reset();
 	bool CanPop(C_WeaponMedigun* medigun, int type) const;

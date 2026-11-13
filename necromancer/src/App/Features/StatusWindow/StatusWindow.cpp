@@ -273,7 +273,7 @@ void CStatusWindow::Run()
 		const int iCharge = static_cast<int>(pMedigun->m_flChargeLevel() * 100.0f);
 		const float flLastPop = F::AutoVaccinator->GetLastPopTime();
 
-		if (flLastPop > 0.f && flNow - flLastPop < ACTION_LATCH_TIME)
+		if (flLastPop > 0.f && I::GlobalVars->realtime - flLastPop < ACTION_LATCH_TIME)
 		{
 			strcpy_s(e.m_szStatus, "POP");
 			e.m_tColor = tYellow;

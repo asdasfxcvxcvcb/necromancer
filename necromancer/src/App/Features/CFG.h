@@ -229,6 +229,7 @@ namespace CFG
 	CFGVAR(Triggerbot_AutoVaccinator_Always_On, true);
 	CFGVAR(Triggerbot_AutoVaccinator_NoPop, false); // When enabled with Always On, only cycles resistance without popping
 	CFGVAR(Triggerbot_AutoVaccinator_Pop, 0); //0 everyone 1 friends only
+	CFGVAR(Triggerbot_AutoVaccinator_Tolerance, 0); // strict level: 0 Max (most pops, default) 1 High 2 Medium 3 Low (strictest, fewest pops) - marked enemies (cheater/retard/streamer etc) always pop at Max aggression
 
 #pragma endregion
 

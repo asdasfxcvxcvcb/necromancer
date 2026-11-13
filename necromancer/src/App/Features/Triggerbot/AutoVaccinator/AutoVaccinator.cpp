@@ -1,12 +1,15 @@
 #include "AutoVaccinator.h"
 
 #include "../../AutoUberPop/AutoUberPop.h"
+#include "../../Players/Players.h"
 #include "../../amalgam_port/MoveSim/MoveSimAmalgam.h"
 #include "../../CFG.h"
 
 #include <cfloat>
+#include <cstdarg>
+#include <cstdio>
 
-constexpr float HEALTH_LIMIT = 0.85f;
+constexpr float VACC_LOW_HP = 100.f;
 constexpr float VACC_SELF_POP_MIN = 0.45f;
 constexpr float VACC_CHANGE_WATCHDOG = 2.0f;
 
@@ -16,6 +19,47 @@ namespace
 	constexpr int VACC_PROJ_TICKS = 33;
 	constexpr float VACC_PROJ_GRAVITY = 0.4f;
 	constexpr float VACC_SNIPER_AIM_RADIUS = 40.f;
+
+	bool IsMarkedPlayer(C_BaseEntity* pEntity)
+	{
+		PlayerPriority priority{};
+		return pEntity && F::Players->GetInfo(pEntity->entindex(), priority)
+			&& (priority.Cheater || priority.RetardLegit || priority.Targeted || priority.Streamer || priority.Nigger);
+	}
+
+	bool MarkedEnemyAimingAt(C_TFPlayer* pTarget)
+	{
+		if (!pTarget || pTarget->IsInvulnerable())
+			return false;
+
+		for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PLAYERS_ENEMIES))
+		{
+			const auto pEnemy{ pEntity ? pEntity->As<C_TFPlayer>() : nullptr };
+			if (!pEnemy || pEnemy->deadflag() || pEnemy->IsDormant() || pEnemy->m_bFeignDeathReady() || pEnemy->m_flInvisibility() > 0.0f)
+				continue;
+
+			if (!IsMarkedPlayer(pEnemy))
+				continue;
+
+			const auto pWeapon{ pEnemy->m_hActiveWeapon().Get() ? pEnemy->m_hActiveWeapon().Get()->As<C_TFWeaponBase>() : nullptr };
+			if (!pWeapon)
+				continue;
+
+			const auto eType{ H::AimUtils->GetWeaponType(pWeapon) };
+			if (eType != EWeaponType::HITSCAN && eType != EWeaponType::PROJECTILE)
+				continue;
+
+			const bool bZoomed{ pEnemy->InCond(TF_COND_ZOOMED) };
+			const Vec3 vTarget{ pTarget->GetCenter() };
+			if (Math::CalcFov(pEnemy->GetEyeAngles(), Math::CalcAngle(pEnemy->GetShootPos(), vTarget)) >= (eType == EWeaponType::HITSCAN ? (bZoomed ? 10.f : 30.f) : 90.f))
+				continue;
+
+			if (H::AimUtils->TraceEntityAutoDet(pEnemy, vTarget, pEnemy->m_vecOrigin() + Vec3{ 0.0f, 0.0f, pEnemy->m_vecMaxs().z }))
+				return true;
+		}
+
+		return false;
+	}
 
 	// predicted positions of a player for danger checks; falls back to the
 	// current origin on any sim failure so behavior degrades to the old checks
@@ -159,17 +203,12 @@ medigun_resist_types_t WeaponIDToResType(int weaponID)
 	}
 }
 
-bool IsPlayerInDanger(C_TFPlayer* player, medigun_resist_types_t& dangerType, const std::vector<Vec3>& vecPath)
+bool IsPlayerInDanger(C_TFPlayer* player, medigun_resist_types_t& dangerType, const std::vector<Vec3>& vecPath, bool& bMarkedSource)
 {
+	bMarkedSource = false;
+
 	if (!player || player->IsInvulnerable())
 		return false;
-
-	const auto percentHealth{
-		Math::RemapValClamped
-		(
-			static_cast<float>(player->m_iHealth()), 0.0f, static_cast<float>(player->GetMaxHealth()), 0.0f, 1.0f
-		)
-	};
 
 	// Check for dangerous players
 	for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PLAYERS_ENEMIES))
@@ -241,10 +280,12 @@ bool IsPlayerInDanger(C_TFPlayer* player, medigun_resist_types_t& dangerType, co
 			continue;
 
 		dangerType = MEDIGUN_BULLET_RESIST;
+		bMarkedSource = IsMarkedPlayer(enemy);
 		return true;
 	}
 
 	size_t numClosePipebombs{};
+	bool bPipeMarked = false;
 
 	// Check for dangerous projectiles
 	for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PROJECTILES_ENEMIES))
@@ -274,22 +315,26 @@ bool IsPlayerInDanger(C_TFPlayer* player, medigun_resist_types_t& dangerType, co
 		if (!visibleFromCenter && !visibleFromHead)
 			continue;
 
+		const bool bProjMarked = IsMarkedPlayer(pEntity->m_hOwnerEntity().Get());
+
 		switch (pEntity->GetClassId())
 		{
 		case ETFClassIds::CTFProjectile_Arrow:
 			if (vel.IsZero() || flMinDist > 150.0f)
 				continue;
-			if (const auto arrow{ pEntity->As<C_TFProjectile_Arrow>() }; !arrow->m_bCritical() && percentHealth >= 1.0f)
+			if (const auto arrow{ pEntity->As<C_TFProjectile_Arrow>() }; !arrow->m_bCritical() && player->m_iHealth() >= VACC_LOW_HP)
 				continue;
 			dangerType = MEDIGUN_BULLET_RESIST;
+			bMarkedSource = bProjMarked;
 			return true;
 
 		case ETFClassIds::CTFProjectile_HealingBolt:
 			if (vel.IsZero() || flMinDist > 150.0f)
 				continue;
-			if (const auto arrow{ pEntity->As<C_TFProjectile_Arrow>() }; !arrow->m_bCritical() && percentHealth >= HEALTH_LIMIT)
+			if (const auto arrow{ pEntity->As<C_TFProjectile_Arrow>() }; !arrow->m_bCritical() && player->m_iHealth() >= VACC_LOW_HP)
 				continue;
 			dangerType = MEDIGUN_BULLET_RESIST;
+			bMarkedSource = bProjMarked;
 			return true;
 
 		case ETFClassIds::CTFProjectile_Rocket:
@@ -297,9 +342,10 @@ bool IsPlayerInDanger(C_TFPlayer* player, medigun_resist_types_t& dangerType, co
 		case ETFClassIds::CTFProjectile_EnergyBall:
 			if (flMinDist > 250.0f)
 				continue;
-			if (const auto rocket{ pEntity->As<C_TFProjectile_Rocket>() }; !rocket->m_bCritical() && percentHealth >= 1.0f)
+			if (const auto rocket{ pEntity->As<C_TFProjectile_Rocket>() }; !rocket->m_bCritical() && player->m_iHealth() >= VACC_LOW_HP)
 				continue;
 			dangerType = MEDIGUN_BLAST_RESIST;
+			bMarkedSource = bProjMarked;
 			return true;
 
 		case ETFClassIds::CTFGrenadePipebombProjectile:
@@ -307,12 +353,14 @@ bool IsPlayerInDanger(C_TFPlayer* player, medigun_resist_types_t& dangerType, co
 				continue;
 			if (const auto bomb{ pEntity->As<C_TFGrenadePipebombProjectile>() }; bomb->m_iType() == TF_GL_MODE_REMOTE_DETONATE_PRACTICE)
 				continue;
-			if (const auto bomb{ pEntity->As<C_TFGrenadePipebombProjectile>() }; !bomb->m_bCritical() && percentHealth >= 1.0f && flMinDist >= 100.0f)
+			if (const auto bomb{ pEntity->As<C_TFGrenadePipebombProjectile>() }; !bomb->m_bCritical() && player->m_iHealth() >= VACC_LOW_HP && flMinDist >= 100.0f)
 			{
 				numClosePipebombs++;
+				bPipeMarked |= bProjMarked;
 				continue;
 			}
 			dangerType = MEDIGUN_BLAST_RESIST;
+			bMarkedSource = bProjMarked;
 			return true;
 
 		case ETFClassIds::CTFProjectile_Flare:
@@ -321,6 +369,7 @@ bool IsPlayerInDanger(C_TFPlayer* player, medigun_resist_types_t& dangerType, co
 			if (const auto flare{ pEntity->As<C_TFProjectile_Flare>() }; !flare->m_bCritical() && !player->InCond(TF_COND_BURNING) && !player->InCond(TF_COND_BURNING_PYRO))
 				continue;
 			dangerType = MEDIGUN_FIRE_RESIST;
+			bMarkedSource = bProjMarked;
 			return true;
 
 		case ETFClassIds::CTFProjectile_BallOfFire:
@@ -329,14 +378,16 @@ bool IsPlayerInDanger(C_TFPlayer* player, medigun_resist_types_t& dangerType, co
 			if (!player->InCond(TF_COND_BURNING) && !player->InCond(TF_COND_BURNING_PYRO))
 				continue;
 			dangerType = MEDIGUN_FIRE_RESIST;
+			bMarkedSource = bProjMarked;
 			return true;
 
 		case ETFClassIds::CTFProjectile_EnergyRing:
 			if (flMinDist > 150.0f)
 				continue;
-			if (percentHealth >= HEALTH_LIMIT)
+			if (player->m_iHealth() >= VACC_LOW_HP)
 				continue;
 			dangerType = MEDIGUN_BULLET_RESIST;
+			bMarkedSource = bProjMarked;
 			return true;
 
 		default: {}
@@ -346,6 +397,7 @@ bool IsPlayerInDanger(C_TFPlayer* player, medigun_resist_types_t& dangerType, co
 	if (numClosePipebombs > 1)
 	{
 		dangerType = MEDIGUN_BLAST_RESIST;
+		bMarkedSource = bPipeMarked;
 		return true;
 	}
 
@@ -363,7 +415,8 @@ bool IsPlayerInDanger(C_TFPlayer* player, medigun_resist_types_t& dangerType, co
 			continue;
 
 		dangerType = MEDIGUN_BULLET_RESIST;
-		if (percentHealth < HEALTH_LIMIT)
+		bMarkedSource = IsMarkedPlayer(sentrygun->m_hBuilder().Get());
+		if (player->m_iHealth() < VACC_LOW_HP)
 			return true;
 	}
 
@@ -404,22 +457,20 @@ bool CAutoVaccinator::CanPop(C_WeaponMedigun* medigun, int type) const
 		return false;
 
 	const float flNow = I::GlobalVars->curtime;
-	return m_flLastPopTime[type] <= 0.f || flNow - m_flLastPopTime[type] >= 0.75f;
+	const float flSince = flNow - m_flLastPopTime[type];
+	return m_flLastPopTime[type] <= 0.f || flSince < 0.f || flSince >= 0.75f;
 }
 
 float CAutoVaccinator::GetLastPopTime() const
 {
-	float flLast = 0.f;
-	for (int i = 0; i < MEDIGUN_NUM_RESISTS; i++)
-	{
-		if (m_flLastPopTime[i] > flLast)
-			flLast = m_flLastPopTime[i];
-	}
-	return flLast;
+	return m_flRealtimeLastPop;
 }
 
 void CAutoVaccinator::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* cmd)
 {
+	const bool bKeyEdge = CFG::Triggerbot_Key && H::Input->IsPressed(CFG::Triggerbot_Key);
+	const bool bKeyHeld = CFG::Triggerbot_Key && H::Input->IsDown(CFG::Triggerbot_Key);
+
 	if (!CFG::Triggerbot_AutoVaccinator_Active)
 	{
 		Reset();
@@ -442,6 +493,29 @@ void CAutoVaccinator::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd*
 	if (Shifting::bRecharging)
 		return;
 
+	// a new match resets the server clock - stale per-type pop cooldowns from
+	// the previous map would land minutes in the future and block every pop
+	// until the new clock caught up (dj's "cycling but not popping after new
+	// matches", popAge was NEGATIVE in the VaccDbg capture)
+	static float s_flLastCurtime = 0.f;
+	if (I::GlobalVars->curtime < s_flLastCurtime)
+	{
+		for (int i = 0; i < MEDIGUN_NUM_RESISTS; i++)
+			m_flLastPopTime[i] = 0.f;
+		m_flRealtimeLastPop = 0.f;
+		m_nPredictedResist = -1;
+		m_flPredictTime = 0.f;
+		m_bKeyPopQueued = false;
+	}
+	s_flLastCurtime = I::GlobalVars->curtime;
+
+	auto PressAttack2 = [&](int nType)
+	{
+		cmd->buttons |= IN_ATTACK2;
+		m_flLastPopTime[nType] = I::GlobalVars->curtime;
+		m_flRealtimeLastPop = I::GlobalVars->realtime;
+	};
+
 	// the server's actual resist is the ONLY authority - everything else
 	// derives from it, so a desync like the old simulated m_SimResType chase
 	// ("cycling but never popping") is structurally impossible. The netvar
@@ -463,10 +537,9 @@ void CAutoVaccinator::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd*
 	if (m_GoalResType < MEDIGUN_BULLET_RESIST || m_GoalResType >= MEDIGUN_NUM_RESISTS)
 		m_GoalResType = nActual;
 
-	const bool bTriggerbotKeyPressed = CFG::Triggerbot_Key && H::Input->IsDown(CFG::Triggerbot_Key);
-	const bool bNoPop = CFG::Triggerbot_AutoVaccinator_NoPop && !bTriggerbotKeyPressed;
+	const bool bNoPop = CFG::Triggerbot_AutoVaccinator_NoPop && !bKeyHeld;
 
-	if (bTriggerbotKeyPressed && H::Input->IsPressed(CFG::Triggerbot_Key))
+	if (bKeyEdge)
 		m_bKeyPopQueued = true;
 	if (m_bKeyPopQueued && bNoPop)
 		m_bKeyPopQueued = false;
@@ -478,10 +551,7 @@ void CAutoVaccinator::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd*
 		if (nActual == m_GoalResType)
 		{
 			if (medigun->m_flChargeLevel() >= 0.25f)
-			{
-				cmd->buttons |= IN_ATTACK2;
-				m_flLastPopTime[m_GoalResType] = I::GlobalVars->curtime;
-			}
+				PressAttack2(m_GoalResType);
 			m_ShouldPop = false;
 			m_bKeyPopQueued = false;
 			m_GoalResType = nActual;
@@ -508,11 +578,7 @@ void CAutoVaccinator::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd*
 
 		if (nActual == popType && CanPop(medigun, popType))
 		{
-			if (medigun->m_flChargeLevel() >= 0.25f)
-			{
-				cmd->buttons |= IN_ATTACK2;
-				m_flLastPopTime[popType] = I::GlobalVars->curtime;
-			}
+			PressAttack2(popType);
 			m_bKeyPopQueued = false;
 			return;
 		}
@@ -546,12 +612,15 @@ void CAutoVaccinator::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd*
 
 		medigun_resist_types_t panicType{ MEDIGUN_NUM_RESISTS };
 		bool bPanicTargetIsHeal = false;
-		if (healTarget && IsPlayerInDanger(healTarget, panicType, healTarget != pLocal ? vecHealPath : vecSelfPath) && !PlayerHasResUber(panicType, healTarget))
+		bool bMarkedThreat = false;
+		if (healTarget && IsPlayerInDanger(healTarget, panicType, healTarget != pLocal ? vecHealPath : vecSelfPath, bMarkedThreat) && !PlayerHasResUber(panicType, healTarget))
 			bPanicTargetIsHeal = true;
-		else if (IsPlayerInDanger(pLocal, panicType, vecSelfPath) && !PlayerHasResUber(panicType, pLocal))
+		else if (IsPlayerInDanger(pLocal, panicType, vecSelfPath, bMarkedThreat) && !PlayerHasResUber(panicType, pLocal))
 			bPanicTargetIsHeal = false;
 		else
 			panicType = MEDIGUN_NUM_RESISTS;
+
+		bMarkedThreat = bMarkedThreat || MarkedEnemyAimingAt(pLocal) || (healTarget && healTarget != pLocal && MarkedEnemyAimingAt(healTarget));
 
 		float flSelfScore[MEDIGUN_NUM_RESISTS] = {};
 		F::AutoUberPop->ScoreDangers(pLocal, medigun, pLocal, flSelfScore[MEDIGUN_BULLET_RESIST], flSelfScore[MEDIGUN_BLAST_RESIST], flSelfScore[MEDIGUN_FIRE_RESIST]);
@@ -597,7 +666,17 @@ void CAutoVaccinator::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd*
 				}
 			}
 
-			if (flMaxScore >= 1.f)
+			const int nStrictLevel = bMarkedThreat ? 0 : std::clamp(CFG::Triggerbot_AutoVaccinator_Tolerance, 0, 3);
+			float flScoreReq = 1.f, flSelfReq = VACC_SELF_POP_MIN;
+			switch (nStrictLevel)
+			{
+			case 1: flScoreReq = 1.5f; flSelfReq = 0.75f; break;
+			case 2: flScoreReq = 2.f; flSelfReq = 1.25f; break;
+			case 3: flScoreReq = 999.f; flSelfReq = 999.f; break;
+			default: break;
+			}
+
+			if (flMaxScore >= flScoreReq)
 			{
 				m_GoalResType = scoredType;
 				if (!bNoPop && CanPop(medigun, scoredType))
@@ -610,7 +689,7 @@ void CAutoVaccinator::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd*
 				// when the damage at risk is a real chunk of our health
 				// (one midrange scout vs full HP scores ~0.2-0.35, in your
 				// face ~0.6-1.2; dj's heavy+scout case must NOT pop)
-				if (flSelfMax >= VACC_SELF_POP_MIN && !bNoPop && CanPop(medigun, selfType))
+				if (flSelfMax >= flSelfReq && !bNoPop && CanPop(medigun, selfType))
 					m_ShouldPop = true;
 			}
 			else if (flMaxScore > 0.f)
@@ -627,10 +706,7 @@ void CAutoVaccinator::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd*
 		if (m_ShouldPop && nActual == m_GoalResType)
 		{
 			if (medigun->m_flChargeLevel() >= 0.25f)
-			{
-				cmd->buttons |= IN_ATTACK2;
-				m_flLastPopTime[m_GoalResType] = I::GlobalVars->curtime;
-			}
+				PressAttack2(m_GoalResType);
 			m_ShouldPop = false;
 			m_bKeyPopQueued = false;
 			m_GoalResType = nActual;
@@ -680,7 +756,11 @@ void CAutoVaccinator::ProcessPlayerHurt(IGameEvent* event)
 	if (!CFG::Triggerbot_AutoVaccinator_Active)
 		return;
 
-	if (m_ShouldPop || m_bKeyPopQueued)
+	// a pending key-pop queue must NOT veto hurt pops: while the key is held
+	// the queue is always pending, which silenced every hurt response (dj's
+	// "HURT ignored" spam). The hurt event picks the correct resist anyway,
+	// so it replaces the queued pop instead of waiting behind it
+	if (m_ShouldPop)
 		return;
 
 	const auto pLocal{ H::Entities->GetLocal() };
@@ -716,10 +796,6 @@ void CAutoVaccinator::ProcessPlayerHurt(IGameEvent* event)
 	if (!victimEnt)
 		return;
 
-	const auto percentHealth{
-		Math::RemapValClamped(static_cast<float>(health), 0.0f, static_cast<float>(victimEnt->GetMaxHealth()), 0.0f, 1.0f)
-	};
-
 	m_GoalResType = WeaponIDToResType(weaponID);
 
 	const bool bTriggerbotKeyPressed = CFG::Triggerbot_Key && H::Input->IsDown(CFG::Triggerbot_Key);
@@ -727,7 +803,9 @@ void CAutoVaccinator::ProcessPlayerHurt(IGameEvent* event)
 
 	const bool bSelfDamage = victimEnt == pLocal;
 	const bool bPopsAllowed = !bNoPop;
-	const bool bUrgent = event->GetBool("crit") || event->GetBool("minicrit") || percentHealth < HEALTH_LIMIT;
+	const bool bMarkedAttacker = attacker && IsMarkedPlayer(attacker->As<C_BaseEntity>());
+	const int nStrictLevel = bMarkedAttacker ? 0 : std::clamp(CFG::Triggerbot_AutoVaccinator_Tolerance, 0, 3);
+	const bool bUrgent = event->GetBool("crit") || event->GetBool("minicrit") || (nStrictLevel < 3 && health < VACC_LOW_HP);
 
 	// Amalgam-style lethal stream: pop on a non-urgent hit only when the
 	// attacker's damage RATE can kill the victim within a second (chips and
@@ -742,17 +820,24 @@ void CAutoVaccinator::ProcessPlayerHurt(IGameEvent* event)
 			bLethalStream = static_cast<float>(iDamage) / pAttackerBase->GetFireRate() / static_cast<float>(victimEnt->m_iHealth()) >= 1.f;
 	}
 
+	const bool bWorth = bUrgent || (nStrictLevel <= 2 && bLethalStream);
+	const bool bChipPop = nStrictLevel <= 0;
+
 	if (bPopsAllowed && CanPop(medigun, m_GoalResType))
 	{
-		const bool bWorth = bUrgent || bLethalStream;
-		if (m_GoalResType == MEDIGUN_BULLET_RESIST && !PlayerHasResUber(MEDIGUN_BULLET_RESIST, victimEnt) && (bSelfDamage || bWorth))
+		if (m_GoalResType == MEDIGUN_BULLET_RESIST && !PlayerHasResUber(MEDIGUN_BULLET_RESIST, victimEnt) && (bWorth || (bSelfDamage && bChipPop)))
 			m_ShouldPop = true;
 
 		if (!m_ShouldPop && m_GoalResType == MEDIGUN_FIRE_RESIST && !PlayerHasResUber(MEDIGUN_FIRE_RESIST, victimEnt) && bWorth)
 			m_ShouldPop = true;
 
-		if (!m_ShouldPop && m_GoalResType == MEDIGUN_BLAST_RESIST && !PlayerHasResUber(MEDIGUN_BLAST_RESIST, victimEnt) && (bSelfDamage || bWorth))
+		if (!m_ShouldPop && m_GoalResType == MEDIGUN_BLAST_RESIST && !PlayerHasResUber(MEDIGUN_BLAST_RESIST, victimEnt) && (bWorth || (bSelfDamage && bChipPop)))
 			m_ShouldPop = true;
+
+		// the hurt pop replaces any queued key-pop: both wanted a pop, the
+		// hurt event knows the actual damage type
+		if (m_ShouldPop)
+			m_bKeyPopQueued = false;
 	}
 
 	auto healTargetEnt = medigun->m_hHealingTarget().Get();
