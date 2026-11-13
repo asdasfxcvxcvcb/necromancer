@@ -123,3 +123,4 @@ necromancer/src/App/Features/PacMan/embed_sounds.py
 
 nul
 necromancer.dll.new
+necromancer_AVX2.dll.new
