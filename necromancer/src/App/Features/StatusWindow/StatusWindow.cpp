@@ -278,11 +278,6 @@ void CStatusWindow::Run()
 			strcpy_s(e.m_szStatus, "POP");
 			e.m_tColor = tYellow;
 		}
-		else if (F::AutoVaccinator->IsKeyPopQueued())
-		{
-			strcpy_s(e.m_szStatus, "QUEUED");
-			e.m_tColor = tYellow;
-		}
 		else if (F::AutoVaccinator->IsChangingRes())
 		{
 			const int nGoal = F::AutoVaccinator->GetGoalResType();

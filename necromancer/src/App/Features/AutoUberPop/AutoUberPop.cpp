@@ -6,6 +6,7 @@
 #include "../amalgam_port/AmalgamCompat.h"
 #include "../amalgam_port/ProjectileSimulation/ProjectileSimulation.h"
 #include "../amalgam_port/AimbotProjectile/AimbotProjectileAmalgam.h"
+#include "../amalgam_port/MoveSim/MoveSimAmalgam.h"
 
 // Port of Amalgam's CAutoHeal::AutoVaccinator/GetDangers, retargeted to the
 // stock medigun uber. Differences from the original:
@@ -244,8 +245,238 @@ namespace
 				flReturn = 3.f;
 			else if (pProjectile->As<C_TFBaseRocket>()->m_iDeflected())
 				flReturn = 1.36f;
-		}
+	}
 		return flReturn;
+	}
+}
+
+namespace ProjectileDanger
+{
+	bool IsWorldVisible(const Vec3& vFrom, const Vec3& vTo)
+	{
+		CGameTrace trace = {};
+		CTraceFilterWorldAndPropsOnly filter = {};
+		SDK::Trace(vFrom, vTo, MASK_SHOT, &filter, &trace);
+		return trace.fraction >= 0.99f;
+	}
+
+	void GetTargetPath(C_TFPlayer* pPlayer, std::vector<Vec3>& vecPath)
+	{
+		vecPath.clear();
+		if (!pPlayer || pPlayer->deadflag() || pPlayer->IsDormant())
+			return;
+
+		struct PathCache_t
+		{
+			int iIndex = -1;
+			std::vector<Vec3> vecPath;
+		};
+		static PathCache_t s_tCache[2] = {};
+		static int s_nLastTick = -1;
+		const int nTick = I::GlobalVars->tickcount;
+		if (nTick != s_nLastTick)
+		{
+			s_tCache[0].iIndex = -1;
+			s_tCache[1].iIndex = -1;
+			s_nLastTick = nTick;
+		}
+
+		const int iIndex = pPlayer->entindex();
+		for (auto& tSlot : s_tCache)
+		{
+			if (tSlot.iIndex == iIndex)
+			{
+				vecPath = tSlot.vecPath;
+				return;
+			}
+		}
+
+		vecPath.push_back(pPlayer->m_vecOrigin());
+
+		AmalgamMoveStorage tStorage;
+		if (F::MoveSim->Initialize(pPlayer, tStorage, false, true, false))
+		{
+			for (int i = 0; i < static_cast<int>(SIM_TICKS); i++)
+				F::MoveSim->RunTick(tStorage, true);
+			F::MoveSim->Restore(tStorage);
+
+			for (const auto& v : tStorage.m_vPath)
+			{
+				if ((v - vecPath.back()).Length2D() > 16.f)
+					vecPath.push_back(v);
+				if (vecPath.size() >= 4)
+					break;
+			}
+		}
+
+		for (auto& tSlot : s_tCache)
+		{
+			if (tSlot.iIndex == -1)
+			{
+				tSlot.iIndex = iIndex;
+				tSlot.vecPath = vecPath;
+				break;
+			}
+		}
+	}
+
+	Approach_t ProjectileClosestApproach(C_BaseEntity* pEntity, const std::vector<Vec3>& vecPath, int nTicks)
+	{
+		Approach_t tOut{};
+		if (vecPath.empty())
+			return tOut;
+
+		Vec3 vel{};
+		pEntity->EstimateAbsVelocity(vel);
+		if (vel.IsZero())
+			return tOut;
+
+		const auto eClassId = pEntity->GetClassId();
+		const bool bArcs = eClassId != ETFClassIds::CTFProjectile_Rocket
+			&& eClassId != ETFClassIds::CTFProjectile_SentryRocket
+			&& eClassId != ETFClassIds::CTFProjectile_EnergyBall;
+
+		const float flGravity = SDKUtils::GetGravity() * GRAVITY_SCALE;
+
+		auto Integrate = [&](int iTicks) {
+			Vec3 vPos = pEntity->m_vecOrigin();
+			Vec3 vVel = vel;
+			float flMinDist = FLT_MAX;
+			for (int i = 0; i < iTicks; i++)
+			{
+				if (bArcs)
+					vVel.z -= flGravity * TICK_INTERVAL;
+				vPos += vVel * TICK_INTERVAL;
+
+				for (const auto& vTarget : vecPath)
+				{
+					const float flDist = vPos.DistTo(vTarget);
+					if (flDist < flMinDist)
+					{
+						flMinDist = flDist;
+						tOut.vBlastPos = vPos;
+					}
+				}
+
+				if (vVel.Length2D() < 50.f && flMinDist > 250.f)
+					break;
+				if (vPos.DistTo(vecPath.front()) > 1200.f && flMinDist > 250.f)
+					break;
+			}
+			tOut.flMinDist = flMinDist;
+			tOut.vEnd = vPos;
+			return tOut;
+		};
+
+		tOut = Integrate(nTicks);
+
+		CGameTrace impactTrace = {};
+		CTraceFilterWorldAndPropsOnly impactFilter = {};
+		SDK::Trace(pEntity->m_vecOrigin(), tOut.vEnd, MASK_SOLID, &impactFilter, &impactTrace);
+		if (impactTrace.fraction < 1.0f)
+		{
+			const int nCapped = std::max(1, static_cast<int>(nTicks * impactTrace.fraction));
+			if (nCapped < nTicks)
+				tOut = Integrate(nCapped);
+		}
+		return tOut;
+	}
+
+	bool GetBlastParams(C_BaseEntity* pEntity, BlastParams_t& tOut)
+	{
+		tOut = {};
+		switch (pEntity->GetClassId())
+		{
+		case ETFClassIds::CTFGrenadePipebombProjectile:
+		{
+			const auto pBomb = pEntity->As<C_TFGrenadePipebombProjectile>();
+			if (!pBomb || pBomb->m_iType() == TF_GL_MODE_REMOTE_DETONATE_PRACTICE)
+				return false;
+
+			tOut.bCrit = pBomb->m_bCritical();
+			tOut.flDamage = pBomb->m_flDamage();
+			tOut.flRadius = pBomb->m_DmgRadius();
+			if (tOut.flRadius <= 1.f)
+				tOut.flRadius = ROCKET_RADIUS;
+
+			Vec3 vel{};
+			pEntity->EstimateAbsVelocity(vel);
+			tOut.bPlacedSticky = pBomb->m_iType() == TF_GL_MODE_REMOTE_DETONATE && pBomb->m_bTouched() && vel.Length() < STICKY_VEL_MAX;
+			if (tOut.bPlacedSticky)
+			{
+				const auto pThrower = pBomb->m_hThrower().Get() ? pBomb->m_hThrower().Get()->As<C_TFPlayer>() : nullptr;
+				if (!pThrower || pThrower->deadflag() || pThrower->IsDormant())
+					return false;
+			}
+			tOut.bValid = true;
+			return true;
+		}
+		case ETFClassIds::CTFProjectile_Rocket:
+		case ETFClassIds::CTFProjectile_SentryRocket:
+		case ETFClassIds::CTFProjectile_EnergyBall:
+		{
+			if (pEntity->GetClassId() == ETFClassIds::CTFProjectile_EnergyBall)
+			{
+				tOut.bCharged = pEntity->As<C_TFProjectile_EnergyBall>()->m_bChargedShot();
+				tOut.flDamage = tOut.bCharged ? ENERGY_CHARGED_DAMAGE : ENERGY_DAMAGE;
+				tOut.bHalfFalloff = true;
+			}
+			else
+			{
+				const auto pRocket = pEntity->As<C_TFProjectile_Rocket>();
+				tOut.bCrit = pRocket->m_bCritical();
+				if (pEntity->GetClassId() == ETFClassIds::CTFProjectile_SentryRocket)
+					tOut.flDamage = SENTRY_ROCKET_DAMAGE;
+				else
+				{
+					const auto pLauncher = pRocket->m_hLauncher().Get() ? pRocket->m_hLauncher().Get()->As<C_TFWeaponBase>() : nullptr;
+					if (pLauncher)
+						tOut.flRadius = SDK::AttribHookValue(ROCKET_RADIUS, "mult_explosion_radius", pLauncher);
+					tOut.flDamage = pLauncher && pLauncher->GetWeaponID() == TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT ? ROCKET_DH_DAMAGE : ROCKET_DAMAGE;
+				}
+			}
+			tOut.bValid = true;
+			return true;
+		}
+		default:
+			return false;
+		}
+	}
+
+	bool BlastReachable(const Vec3& vBlast, const std::vector<Vec3>& vecPath, float flCenterZ)
+	{
+		for (const auto& vPos : vecPath)
+		{
+			if (IsWorldVisible(vBlast, vPos))
+				return true;
+			if (IsWorldVisible(vBlast, vPos + Vec3{ 0.0f, 0.0f, flCenterZ }))
+				return true;
+		}
+		return false;
+	}
+
+	float WorstBlastDamage(const Vec3& vBlast, float flDamage, float flRadius, bool bHalfFalloff, float flMult, const std::vector<Vec3>& vecPath, float flCenterZ, float& flPathOnly)
+	{
+		flPathOnly = 0.f;
+		if (flRadius <= 1.f || vecPath.empty())
+			return 0.f;
+
+		const float flEdge = bHalfFalloff ? 0.5f : std::clamp(flDamage / flRadius, 0.f, 1.f);
+		float flWorst = 0.f;
+		for (size_t i = 0; i < vecPath.size(); i++)
+		{
+			const Vec3 vCenter{ vecPath[i] + Vec3{ 0.0f, 0.0f, flCenterZ } };
+			const float flDist = std::min((vBlast - vecPath[i]).Length(), (vBlast - vCenter).Length());
+			if (flDist >= flRadius)
+				continue;
+			if (!IsWorldVisible(vBlast, vecPath[i]) && !IsWorldVisible(vBlast, vCenter))
+				continue;
+			const float flDmg = flDamage * flMult * (1.f - (flDist / flRadius) * (1.f - flEdge));
+			flWorst = std::max(flWorst, flDmg);
+			if (i > 0)
+				flPathOnly = std::max(flPathOnly, flDmg);
+		}
+		return flWorst;
 	}
 }
 
@@ -484,6 +715,9 @@ void CAutoUberPop::GetDangers(C_TFPlayer* pTarget, bool bVaccinator, float& flBu
 		if (pSentry->m_hEnemy().Get() != pTarget && pSentry->m_hAutoAimTarget().Get() != pTarget || !pSentry->m_iAmmoShells())
 			continue;
 
+		if (pSentry->IsDisabled() || pSentry->m_bBuilding() || pSentry->m_bPlacing())
+			continue;
+
 		const float flDistance = pSentry->GetCenter().DistTo(vTargetCenter);
 		float flDamage = 19.f, flMult = pTarget->IsMarked() ? 1.36f : 1.f;
 		float flFireRate;
@@ -537,7 +771,7 @@ void CAutoUberPop::GetDangers(C_TFPlayer* pTarget, bool bVaccinator, float& flBu
 		{
 			const auto pRocket = pEntity->As<C_TFBaseRocket>();
 			const auto pLauncher = pRocket ? pRocket->m_hLauncher().Get() : nullptr;
-			pWeapon = pLauncher ? pLauncher->As<C_TFWeaponBase>() : nullptr;
+			pWeapon = pLauncher && pLauncher->GetClassId() != ETFClassIds::CObjectSentrygun ? pLauncher->As<C_TFWeaponBase>() : nullptr;
 			const auto pWpnOwner = pWeapon && pWeapon->m_hOwnerEntity().Get() ? pWeapon->m_hOwnerEntity().Get()->As<C_TFPlayer>() : nullptr;
 			pOwner = pWpnOwner;
 			break;
@@ -552,6 +786,42 @@ void CAutoUberPop::GetDangers(C_TFPlayer* pTarget, bool bVaccinator, float& flBu
 			break;
 		}
 		}
+
+		ProjectileDanger::BlastParams_t tBlast{};
+		const bool bBlast = ProjectileDanger::GetBlastParams(pEntity, tBlast);
+		if (bBlast)
+		{
+			const auto pBlastOwner = pOwner ? pOwner : pWeapon ? pWeapon->m_hOwnerEntity().Get() ? pWeapon->m_hOwnerEntity().Get()->As<C_TFPlayer>() : nullptr : nullptr;
+			if (pBlastOwner && IsIgnoredIndex(pBlastOwner->entindex()))
+				continue;
+
+			std::vector<Vec3> vecPath;
+			ProjectileDanger::GetTargetPath(pTarget, vecPath);
+			const float flCenterZ = pTarget->m_vecMaxs().z * 0.5f;
+
+			Vec3 vBlastPos{};
+			if (!tBlast.bPlacedSticky)
+			{
+				const int nProjTicks = std::clamp(static_cast<int>(ProjectileDanger::PROJ_TICKS) + TIME_TO_TICKS(flLatency + ProjectileDanger::REACT_BUFFER), static_cast<int>(ProjectileDanger::PROJ_TICKS), static_cast<int>(ProjectileDanger::PROJ_TICKS) * 2);
+				const auto tApproach = ProjectileDanger::ProjectileClosestApproach(pEntity, vecPath, nProjTicks);
+				if (tApproach.flMinDist > 250.f)
+					continue;
+				vBlastPos = tApproach.vBlastPos;
+			}
+			else
+				vBlastPos = pEntity->m_vecOrigin();
+
+			float flPathWorst = 0.f;
+			const float flBlastMult = tBlast.bCrit ? ProjectileDanger::CRIT_MULT : pTarget->IsMarked() ? 1.36f : 1.f;
+			float flWorst = ProjectileDanger::WorstBlastDamage(vBlastPos, tBlast.flDamage, tBlast.flRadius, tBlast.bHalfFalloff, flBlastMult, vecPath, flCenterZ, flPathWorst);
+			flWorst *= flBlastResist > 0.f ? 1.f - flBlastResist : 1.f + flBlastResist;
+			if (flWorst <= 0.f)
+				continue;
+
+			flBlastDanger += flWorst / std::max(iPlayerHealth, 1);
+			continue;
+		}
+
 		if (!pOwner || IsIgnoredIndex(pOwner->entindex())
 			|| pWeapon && !pWeapon->GetDamage())
 			continue;
@@ -592,12 +862,14 @@ void CAutoUberPop::GetDangers(C_TFPlayer* pTarget, bool bVaccinator, float& flBu
 	}
 
 	// ignore damage classes the target is already immune to; the vaccinator's
-	// own resist uber already covers its type while it is active
-	if (flBulletResist >= (bVaccinator ? 0.75f : 1.f))
+	// own resist uber already covers its type while it is active, and so does
+	// another medic's vacc pop on our heal target (0.75 cover is enough that
+	// our own uber would be wasted)
+	if (flBulletResist >= 0.75f)
 		flBulletDanger = 0.f;
-	if (flBlastResist >= (bVaccinator ? 0.75f : 1.f))
+	if (flBlastResist >= 0.75f)
 		flBlastDanger = 0.f;
-	if (flFireResist >= (bVaccinator ? 0.75f : 1.f))
+	if (flFireResist >= 0.75f)
 		flFireDanger = 0.f;
 
 	flBulletOut = std::max(flBulletOut, flBulletDanger);

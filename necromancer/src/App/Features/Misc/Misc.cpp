@@ -860,27 +860,50 @@ void CMisc::AutoMedigun(CUserCmd* cmd)
 	if (!medigun)
 		return;
 
-	// User priority: when user presses IN_ATTACK, autoheal turns off completely.
-	// User's choice of heal target is always superior to the code.
-	// After they release, wait a few ticks for beam to detach before re-engaging.
-	static int nUserOverrideTicks = 0;
+	const float flOverhealMult = (medigun->GetMedigunType() == MEDIGUN_QUICKFIX) ? 1.25f : 1.5f;
+	constexpr float FL_CONNECT_RANGE = 450.0f;
+	constexpr float FL_STICK_RANGE = 540.0f;
 
-	if (cmd->buttons & IN_ATTACK)
+	static int nUserOverrideTicks = 0;
+	static bool bUserHeld = false;
+
+	const bool bHeld{ (cmd->buttons & IN_ATTACK) != 0 };
+	const bool bPressEdge{ bHeld && !bUserHeld };
+	bUserHeld = bHeld;
+
+	if (bHeld)
 	{
-		nUserOverrideTicks = 5; // After release, wait 5 ticks for beam to detach
-		return; // User is controlling — autoheal off
+		nUserOverrideTicks = 5;
+
+		if (bPressEdge && medigun->m_bHealing())
+		{
+			const auto pBeam{ medigun->m_hHealingTarget().Get() };
+			const auto pBeamPlayer{ pBeam ? pBeam->As<C_TFPlayer>() : nullptr };
+			if (pBeamPlayer && !pBeamPlayer->deadflag())
+			{
+				Vec3 vDir{};
+				Math::AngleVectors(cmd->viewangles, &vDir);
+				const Vec3 vSrc{ local->GetShootPos() };
+				const Vec3 vEnd{ vSrc + vDir * FL_CONNECT_RANGE };
+
+				CTraceFilterHitscan filter{};
+				trace_t tr{};
+				H::AimUtils->Trace(vSrc, vEnd, (MASK_SHOT & ~CONTENTS_HITBOX), &filter, &tr);
+
+				const auto pHit{ tr.m_pEnt && tr.m_pEnt->GetClassId() == ETFClassIds::CTFPlayer ? tr.m_pEnt->As<C_TFPlayer>() : nullptr };
+				if (pHit && pHit != pBeamPlayer && pHit != local && !pHit->deadflag()
+					&& pHit->m_iTeamNum() == local->m_iTeamNum() && !pHit->InCond(TF_COND_STEALTHED))
+					cmd->buttons &= ~IN_ATTACK;
+			}
+		}
+		return;
 	}
 
-	// Still in override cooldown — let beam detach naturally
 	if (nUserOverrideTicks > 0)
 	{
 		nUserOverrideTicks--;
 		return;
 	}
-
-	const float flOverhealMult = (medigun->GetMedigunType() == MEDIGUN_QUICKFIX) ? 1.25f : 1.5f;
-	constexpr float FL_CONNECT_RANGE = 450.0f;
-	constexpr float FL_STICK_RANGE = 540.0f;
 
 	auto getHealthPercent = [&](C_TFPlayer* pl) -> float
 	{

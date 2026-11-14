@@ -15,20 +15,34 @@ constexpr float VACC_CHANGE_WATCHDOG = 2.0f;
 
 namespace
 {
-	constexpr int VACC_SIM_TICKS = 24;
 	constexpr int VACC_PROJ_TICKS = 33;
-	constexpr float VACC_PROJ_GRAVITY = 0.4f;
 	constexpr float VACC_SNIPER_AIM_RADIUS = 40.f;
 	constexpr float VACC_PREDICT_MOVE_SPEED = 60.f;
+	constexpr float VACC_REACT_BUFFER = 0.02f;
+	constexpr float VACC_BLAST_CRIT_RATIO = 0.3f;
+	constexpr float VACC_BLAST_CHIP_RATIO = 0.7f;
+	constexpr float VACC_BLAST_LOW_RATIO = 0.15f;
+	constexpr float VACC_STICKY_LOW_CRIT_RATIO = 0.5f;
 
-	// pure world occlusion - players, buildings and everything else can never
-	// fake a sightline the way an entity-target trace can
-	bool IsWorldVisible(const Vec3& vFrom, const Vec3& vTo)
+	// conservative muzzle speeds for the no-react zone: a faster projectile
+	// reaches us sooner, so its zone is the bigger (safer) one per weapon
+	float ProjectileWeaponSpeed(int nWeaponID)
 	{
-		CGameTrace trace = {};
-		CTraceFilterWorldAndPropsOnly filter = {};
-		SDK::Trace(vFrom, vTo, MASK_SHOT, &filter, &trace);
-		return trace.fraction >= 0.99f;
+		switch (nWeaponID)
+		{
+		case TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT:
+		case TF_WEAPON_CANNON:
+		case TF_WEAPON_GRENADELAUNCHER:
+		case TF_WEAPON_FLAREGUN:
+		case TF_WEAPON_FLAREGUN_REVENGE:
+		case TF_WEAPON_FLAME_BALL: return 1200.f;
+		case TF_WEAPON_COMPOUND_BOW: return 2000.f;
+		case TF_WEAPON_CROSSBOW: return 1800.f;
+		case TF_WEAPON_SYRINGEGUN_MEDIC:
+		case TF_WEAPON_RAYGUN:
+		case TF_WEAPON_SHOTGUN_BUILDING_RESCUE: return 1100.f;
+		default: return 1000.f;
+		}
 	}
 
 	bool IsMarkedPlayer(C_BaseEntity* pEntity)
@@ -70,91 +84,6 @@ namespace
 		}
 
 		return false;
-	}
-
-	// predicted positions of a player for danger checks; falls back to the
-	// current origin on any sim failure so behavior degrades to the old checks
-	void GetDangerPath(C_TFPlayer* pPlayer, std::vector<Vec3>& vecPath)
-	{
-		vecPath.clear();
-		if (!pPlayer || pPlayer->deadflag() || pPlayer->IsDormant())
-			return;
-		vecPath.push_back(pPlayer->m_vecOrigin());
-
-		AmalgamMoveStorage tStorage;
-		if (!F::MoveSim->Initialize(pPlayer, tStorage, false, true, false))
-		{
-			F::MoveSim->Restore(tStorage);
-			return;
-		}
-		for (int i = 0; i < VACC_SIM_TICKS; i++)
-			F::MoveSim->RunTick(tStorage, true);
-		F::MoveSim->Restore(tStorage);
-
-		for (const auto& v : tStorage.m_vPath)
-		{
-			if ((v - vecPath.back()).Length2D() > 16.f)
-				vecPath.push_back(v);
-			if (vecPath.size() >= 4)
-				break;
-		}
-	}
-
-	// closest the projectile gets to any protected position within its
-	// integrated flight window (straight for rockets, gravity arc for the
-	// rest). A world trace from the projectile to its flight end caps the
-	// window where the projectile slams into a wall, so arcs can no longer
-	// score through geometry
-	float ProjectileClosestApproach(C_BaseEntity* pEntity, const std::vector<Vec3>& vecPath, int nTicks)
-	{
-		if (vecPath.empty())
-			return FLT_MAX;
-
-		Vec3 vel{};
-		pEntity->EstimateAbsVelocity(vel);
-		if (vel.IsZero())
-			return FLT_MAX;
-
-		const auto eClassId = pEntity->GetClassId();
-		const bool bArcs = eClassId != ETFClassIds::CTFProjectile_Rocket
-			&& eClassId != ETFClassIds::CTFProjectile_SentryRocket
-			&& eClassId != ETFClassIds::CTFProjectile_EnergyBall;
-
-		const float flGravity = SDKUtils::GetGravity() * VACC_PROJ_GRAVITY;
-
-		auto Integrate = [&](int iTicks) {
-			Vec3 vPos = pEntity->m_vecOrigin();
-			Vec3 vVel = vel;
-			float flMinDist = FLT_MAX;
-			for (int i = 0; i < iTicks; i++)
-			{
-				if (bArcs)
-					vVel.z -= flGravity * TICK_INTERVAL;
-				vPos += vVel * TICK_INTERVAL;
-
-				for (const auto& vTarget : vecPath)
-					flMinDist = std::min(flMinDist, vPos.DistTo(vTarget));
-
-				if (vVel.Length2D() < 50.f && flMinDist > 250.f)
-					break;
-				if (vPos.DistTo(vecPath.front()) > 1200.f && flMinDist > 250.f)
-					break;
-			}
-			return std::pair(flMinDist, vPos);
-		};
-
-		const auto [flFirst, vEnd] = Integrate(nTicks);
-
-		CGameTrace impactTrace = {};
-		CTraceFilterWorldAndPropsOnly impactFilter = {};
-		SDK::Trace(pEntity->m_vecOrigin(), vEnd, MASK_SOLID, &impactFilter, &impactTrace);
-		if (impactTrace.fraction < 1.0f)
-		{
-			const int nCapped = std::max(1, static_cast<int>(nTicks * impactTrace.fraction));
-			if (nCapped < nTicks)
-				return Integrate(nCapped).first;
-		}
-		return flFirst;
 	}
 }
 
@@ -214,7 +143,7 @@ medigun_resist_types_t WeaponIDToResType(int weaponID)
 	}
 }
 
-bool IsPlayerInDanger(C_TFPlayer* player, medigun_resist_types_t& dangerType, const std::vector<Vec3>& vecPath, bool& bMarkedSource, int nStrictLevel)
+bool IsPlayerInDanger(C_TFPlayer* player, medigun_resist_types_t& dangerType, const std::vector<Vec3>& vecPath, bool& bMarkedSource, int nStrictLevel, float flPairRatio = 1.f)
 {
 	bMarkedSource = false;
 
@@ -231,15 +160,64 @@ bool IsPlayerInDanger(C_TFPlayer* player, medigun_resist_types_t& dangerType, co
 		if (!enemy || enemy->deadflag())
 			continue;
 
-		if (enemy->m_iClass() != TF_CLASS_SNIPER)
+		const auto weapon{ enemy->m_hActiveWeapon().Get() ? enemy->m_hActiveWeapon().Get()->As<C_TFWeaponBase>() : nullptr };
+		if (!weapon)
 			continue;
 
-		const auto weapon{ enemy->m_hActiveWeapon().Get()->As<C_TFWeaponBase>() };
-		if (!weapon || weapon->GetSlot() != WEAPON_SLOT_PRIMARY || weapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW)
+		const int nWeaponID = weapon->GetWeaponID();
+		const auto eWpnType = H::AimUtils->GetWeaponType(weapon);
+
+		// projectile-holder panic zone (Max/High only): inside this range the
+		// enemy can fire a projectile that lands before our pop command even
+		// reaches the server (flight time < latency + 20ms buffer), so the pop
+		// happens preemptively - the in-flight loop below only covers shots
+		// already airborne. Stickies are placed, not reacted to
+		if (enemy->m_iClass() != TF_CLASS_SNIPER)
+		{
+			if (eWpnType != EWeaponType::PROJECTILE || nWeaponID == TF_WEAPON_PIPEBOMBLAUNCHER || nStrictLevel >= 2)
+				continue;
+
+			const Vec3 vEye = enemy->m_vecOrigin() + Vec3{ 0.0f, 0.0f, enemy->m_vecMaxs().z };
+			if (enemy->GetShootPos().DistTo(player->GetCenter()) > ProjectileWeaponSpeed(nWeaponID) * (SDKUtils::GetRealLatency() + VACC_REACT_BUFFER))
+				continue;
+			if (!ProjectileDanger::IsWorldVisible(player->GetCenter(), vEye))
+				continue;
+
+			const auto nRes = WeaponIDToResType(nWeaponID);
+			if (nRes == MEDIGUN_NUM_RESISTS)
+				continue;
+
+			dangerType = nRes;
+			bMarkedSource = IsMarkedPlayer(enemy);
+			return true;
+		}
+
+		if (weapon->GetSlot() != WEAPON_SLOT_PRIMARY)
 			continue;
+
+		// huntsman: a sniper holding a DEADLY projectile weapon - it gets the
+		// projectile-holder panic zone instead of the aim-ray checks (a charged
+		// arrow one-shots the patient, and arrows in flight stay covered by the
+		// projectile loop below)
+		if (nWeaponID == TF_WEAPON_COMPOUND_BOW)
+		{
+			const int nSniperStrict = IsMarkedPlayer(enemy) ? 0 : nStrictLevel;
+			if (nSniperStrict >= 2)
+				continue;
+
+			const Vec3 vEye = enemy->m_vecOrigin() + Vec3{ 0.0f, 0.0f, enemy->m_vecMaxs().z };
+			if (enemy->GetShootPos().DistTo(player->GetCenter()) > ProjectileWeaponSpeed(nWeaponID) * (SDKUtils::GetRealLatency() + VACC_REACT_BUFFER))
+				continue;
+			if (!ProjectileDanger::IsWorldVisible(player->GetCenter(), vEye))
+				continue;
+
+			dangerType = MEDIGUN_BULLET_RESIST;
+			bMarkedSource = IsMarkedPlayer(enemy);
+			return true;
+		}
 
 		bool zoomed{ enemy->InCond(TF_COND_ZOOMED) };
-		if (weapon->GetWeaponID() == TF_WEAPON_SNIPERRIFLE_CLASSIC)
+		if (nWeaponID == TF_WEAPON_SNIPERRIFLE_CLASSIC)
 			zoomed = weapon->As<C_TFSniperRifleClassic>()->m_bCharging();
 
 		if (!enemy->IsCritBoosted() && !enemy->IsMiniCritBoosted() && !zoomed)
@@ -265,10 +243,10 @@ bool IsPlayerInDanger(C_TFPlayer* player, medigun_resist_types_t& dangerType, co
 		bool bSightline = false;
 		if (bAimReach)
 		{
-			const auto visibleFromCenter{ IsWorldVisible(player->GetCenter(), vEye) };
+			const auto visibleFromCenter{ ProjectileDanger::IsWorldVisible(player->GetCenter(), vEye) };
 			// only the OR of the two rays matters - skip the head ray when the
 			// center ray already proved visibility
-			const auto visibleFromHead{ visibleFromCenter || IsWorldVisible(player->m_vecOrigin() + Vec3{ 0.0f, 0.0f, player->m_vecMaxs().z }, vEye) };
+			const auto visibleFromHead{ visibleFromCenter || ProjectileDanger::IsWorldVisible(player->m_vecOrigin() + Vec3{ 0.0f, 0.0f, player->m_vecMaxs().z }, vEye) };
 			bSightline = visibleFromCenter || visibleFromHead;
 		}
 
@@ -291,7 +269,7 @@ bool IsPlayerInDanger(C_TFPlayer* player, medigun_resist_types_t& dangerType, co
 						continue;
 					if ((enemy->GetShootPos() + forward * flAlong).DistTo(vCenter) > VACC_SNIPER_AIM_RADIUS)
 						continue;
-					if (!IsWorldVisible(vCenter, vEye))
+					if (!ProjectileDanger::IsWorldVisible(vCenter, vEye))
 						continue;
 					bAimReach = true;
 					bSightline = true;
@@ -308,10 +286,13 @@ bool IsPlayerInDanger(C_TFPlayer* player, medigun_resist_types_t& dangerType, co
 		return true;
 	}
 
+	const float flCenterZ{ player->m_vecMaxs().z * 0.5f };
+	const float flHealth{ static_cast<float>(player->m_iHealth()) };
+	const bool bLowHP{ player->m_iHealth() < VACC_LOW_HP };
+
 	size_t numClosePipebombs{};
 	bool bPipeMarked = false;
 
-	// Check for dangerous projectiles
 	for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PROJECTILES_ENEMIES))
 	{
 		if (!pEntity)
@@ -322,40 +303,41 @@ bool IsPlayerInDanger(C_TFPlayer* player, medigun_resist_types_t& dangerType, co
 		if (pEntity->m_vecOrigin().DistTo(player->GetCenter()) > 2000.0f)
 			continue;
 
-		// arc-aware closest approach vs current + predicted positions
-		// (replaces the linear latency extrapolation - pipes/arrows/flares
-		// drop, rockets fly straight); window extended by our ping so the
-		// pop command lands on the server before the damage does
-		const int nProjTicks = std::clamp(VACC_PROJ_TICKS + TIME_TO_TICKS(SDKUtils::GetRealLatency()), VACC_PROJ_TICKS, VACC_PROJ_TICKS * 2);
-		const float flMinDist = ProjectileClosestApproach(pEntity, vecPath, nProjTicks);
-		if (flMinDist > 250.0f)
-			continue;
+		const auto bomb{ pEntity->GetClassId() == ETFClassIds::CTFGrenadePipebombProjectile ? pEntity->As<C_TFGrenadePipebombProjectile>() : nullptr };
+		const bool bPlacedSticky{ bomb && bomb->m_iType() == TF_GL_MODE_REMOTE_DETONATE && bomb->m_bTouched() && vel.Length() < ProjectileDanger::STICKY_VEL_MAX };
 
-		// only the OR of the two rays matters - skip the head ray when the
-		// center ray already proved visibility
-		const auto visibleFromCenter{ H::AimUtils->TraceEntityAutoDet(pEntity, player->GetCenter(), pEntity->GetCenter()) };
-		const auto visibleFromHead{ visibleFromCenter || H::AimUtils->TraceEntityAutoDet(pEntity, player->m_vecOrigin() + Vec3{ 0.0f, 0.0f, player->m_vecMaxs().z }, pEntity->GetCenter()) };
-
-		if (!visibleFromCenter && !visibleFromHead)
-			continue;
+		Vec3 vBlastPos{};
+		float flMinDist = FLT_MAX;
+		if (bPlacedSticky)
+		{
+			vBlastPos = bomb->m_vecOrigin();
+			for (const auto& vPos : vecPath)
+			{
+				const Vec3 vCenter{ vPos + Vec3{ 0.0f, 0.0f, flCenterZ } };
+				flMinDist = std::min(flMinDist, std::min((vBlastPos - vPos).Length(), (vBlastPos - vCenter).Length()));
+			}
+		}
+		else
+		{
+			const int nProjTicks = std::clamp(VACC_PROJ_TICKS + TIME_TO_TICKS(SDKUtils::GetRealLatency() + VACC_REACT_BUFFER), VACC_PROJ_TICKS, VACC_PROJ_TICKS * 2);
+			const auto tApproach = ProjectileDanger::ProjectileClosestApproach(pEntity, vecPath, nProjTicks);
+			vBlastPos = tApproach.vBlastPos;
+			flMinDist = tApproach.flMinDist;
+			if (flMinDist > 250.0f)
+				continue;
+		}
 
 		const bool bProjMarked = IsMarkedPlayer(pEntity->m_hOwnerEntity().Get());
 
 		switch (pEntity->GetClassId())
 		{
 		case ETFClassIds::CTFProjectile_Arrow:
-			if (vel.IsZero() || flMinDist > 150.0f)
-				continue;
-			if (const auto arrow{ pEntity->As<C_TFProjectile_Arrow>() }; !arrow->m_bCritical() && player->m_iHealth() >= VACC_LOW_HP)
-				continue;
-			dangerType = MEDIGUN_BULLET_RESIST;
-			bMarkedSource = bProjMarked;
-			return true;
-
 		case ETFClassIds::CTFProjectile_HealingBolt:
-			if (vel.IsZero() || flMinDist > 150.0f)
+			if (flMinDist > 150.0f)
 				continue;
 			if (const auto arrow{ pEntity->As<C_TFProjectile_Arrow>() }; !arrow->m_bCritical() && player->m_iHealth() >= VACC_LOW_HP)
+				continue;
+			if (!ProjectileDanger::BlastReachable(vBlastPos, vecPath, flCenterZ))
 				continue;
 			dangerType = MEDIGUN_BULLET_RESIST;
 			bMarkedSource = bProjMarked;
@@ -364,33 +346,87 @@ bool IsPlayerInDanger(C_TFPlayer* player, medigun_resist_types_t& dangerType, co
 		case ETFClassIds::CTFProjectile_Rocket:
 		case ETFClassIds::CTFProjectile_SentryRocket:
 		case ETFClassIds::CTFProjectile_EnergyBall:
-			if (flMinDist > 250.0f)
+		{
+			ProjectileDanger::BlastParams_t tBlast{};
+			if (!ProjectileDanger::GetBlastParams(pEntity, tBlast))
 				continue;
-			if (const auto rocket{ pEntity->As<C_TFProjectile_Rocket>() }; !rocket->m_bCritical() && player->m_iHealth() >= VACC_LOW_HP)
+
+			float flPathWorst = 0.f;
+			const float flWorst = ProjectileDanger::WorstBlastDamage(vBlastPos, tBlast.flDamage, tBlast.flRadius, tBlast.bHalfFalloff, tBlast.bCrit ? ProjectileDanger::CRIT_MULT : 1.f, vecPath, flCenterZ, flPathWorst);
+			const float flRatio = flWorst / std::max(flHealth, 1.f);
+			if (!(flRatio >= 1.f
+				|| (tBlast.bCrit && nStrictLevel <= 2 && flRatio >= VACC_BLAST_CRIT_RATIO)
+				|| (tBlast.bCharged && nStrictLevel <= 1 && flRatio >= VACC_BLAST_CRIT_RATIO)
+				|| (bLowHP && nStrictLevel <= 2 && flRatio >= VACC_BLAST_LOW_RATIO)
+				|| (nStrictLevel <= 1 && flRatio >= VACC_BLAST_CHIP_RATIO)))
 				continue;
+
 			dangerType = MEDIGUN_BLAST_RESIST;
 			bMarkedSource = bProjMarked;
 			return true;
+		}
 
 		case ETFClassIds::CTFGrenadePipebombProjectile:
-			if (flMinDist > 250.0f)
+		{
+			if (!bomb || bomb->m_iType() == TF_GL_MODE_REMOTE_DETONATE_PRACTICE)
 				continue;
-			if (const auto bomb{ pEntity->As<C_TFGrenadePipebombProjectile>() }; bomb->m_iType() == TF_GL_MODE_REMOTE_DETONATE_PRACTICE)
+
+			ProjectileDanger::BlastParams_t tBlast{};
+			if (!ProjectileDanger::GetBlastParams(pEntity, tBlast))
 				continue;
-			if (const auto bomb{ pEntity->As<C_TFGrenadePipebombProjectile>() }; !bomb->m_bCritical() && player->m_iHealth() >= VACC_LOW_HP && flMinDist >= 100.0f)
+
+			float flPathWorst = 0.f;
+			const float flWorst = ProjectileDanger::WorstBlastDamage(vBlastPos, tBlast.flDamage, tBlast.flRadius, false, tBlast.bCrit ? ProjectileDanger::CRIT_MULT : 1.f, vecPath, flCenterZ, flPathWorst);
+			const float flRatio = flWorst / std::max(flHealth, 1.f);
+
+			if (bPlacedSticky)
 			{
-				numClosePipebombs++;
-				bPipeMarked |= bProjMarked;
+				if (!tBlast.bValid)
+					continue;
+
+				const bool bWalkingIn{ flPathWorst > 0.f };
+				if (!(flRatio >= 1.f
+					|| (nStrictLevel <= 1 && flRatio >= VACC_BLAST_CRIT_RATIO)
+					|| (nStrictLevel == 2 && (tBlast.bCrit || bWalkingIn || bLowHP) && flRatio >= VACC_BLAST_CRIT_RATIO)
+					|| (nStrictLevel == 3 && tBlast.bCrit && flRatio >= VACC_STICKY_LOW_CRIT_RATIO)))
+				{
+					if (!tBlast.bCrit && flRatio >= VACC_BLAST_LOW_RATIO)
+					{
+						numClosePipebombs++;
+						bPipeMarked |= bProjMarked;
+					}
+					continue;
+				}
+
+				dangerType = MEDIGUN_BLAST_RESIST;
+				bMarkedSource = bProjMarked;
+				return true;
+			}
+
+			if (!(flRatio >= 1.f
+				|| (tBlast.bCrit && nStrictLevel <= 2 && flRatio >= VACC_BLAST_CRIT_RATIO)
+				|| (bLowHP && nStrictLevel <= 2 && flRatio >= VACC_BLAST_LOW_RATIO)
+				|| (nStrictLevel <= 1 && flRatio >= VACC_BLAST_CHIP_RATIO)))
+			{
+				if (!tBlast.bCrit && flWorst > 0.f && flRatio >= VACC_BLAST_LOW_RATIO)
+				{
+					numClosePipebombs++;
+					bPipeMarked |= bProjMarked;
+				}
 				continue;
 			}
+
 			dangerType = MEDIGUN_BLAST_RESIST;
 			bMarkedSource = bProjMarked;
 			return true;
+		}
 
 		case ETFClassIds::CTFProjectile_Flare:
 			if (flMinDist > 150.0f)
 				continue;
 			if (const auto flare{ pEntity->As<C_TFProjectile_Flare>() }; !flare->m_bCritical() && !player->InCond(TF_COND_BURNING) && !player->InCond(TF_COND_BURNING_PYRO))
+				continue;
+			if (!ProjectileDanger::BlastReachable(vBlastPos, vecPath, flCenterZ))
 				continue;
 			dangerType = MEDIGUN_FIRE_RESIST;
 			bMarkedSource = bProjMarked;
@@ -401,6 +437,8 @@ bool IsPlayerInDanger(C_TFPlayer* player, medigun_resist_types_t& dangerType, co
 				continue;
 			if (!player->InCond(TF_COND_BURNING) && !player->InCond(TF_COND_BURNING_PYRO))
 				continue;
+			if (!ProjectileDanger::BlastReachable(vBlastPos, vecPath, flCenterZ))
+				continue;
 			dangerType = MEDIGUN_FIRE_RESIST;
 			bMarkedSource = bProjMarked;
 			return true;
@@ -409,6 +447,8 @@ bool IsPlayerInDanger(C_TFPlayer* player, medigun_resist_types_t& dangerType, co
 			if (flMinDist > 150.0f)
 				continue;
 			if (player->m_iHealth() >= VACC_LOW_HP)
+				continue;
+			if (!ProjectileDanger::BlastReachable(vBlastPos, vecPath, flCenterZ))
 				continue;
 			dangerType = MEDIGUN_BULLET_RESIST;
 			bMarkedSource = bProjMarked;
@@ -438,10 +478,39 @@ bool IsPlayerInDanger(C_TFPlayer* player, medigun_resist_types_t& dangerType, co
 		if (sentrygun->m_hAutoAimTarget() != player && sentrygun->m_hEnemy() != player)
 			continue;
 
+		if (sentrygun->IsDisabled() || sentrygun->m_bBuilding() || sentrygun->m_bPlacing())
+			continue;
+
+		const bool bMarkedBuilder{ IsMarkedPlayer(sentrygun->m_hBuilder().Get()) };
+		const int nSentryStrict{ bMarkedBuilder ? 0 : nStrictLevel };
+
+		if (sentrygun->m_iUpgradeLevel() < 2)
+			continue;
+
+		if (player->m_iHealth() >= VACC_LOW_HP)
+			continue;
+
+		// the heal target usually deletes a half-dead sentry before it does
+		// real damage - only a dying sentry against a healthy pair is quiet
+		const float flSentryHP{ static_cast<float>(sentrygun->m_iHealth()) / static_cast<float>(std::max(sentrygun->m_iMaxHealth(), 1)) };
+		if (flSentryHP < 0.35f && flPairRatio >= 0.5f)
+			continue;
+
+		const float flSentryDist{ sentrygun->GetCenter().DistTo(player->GetCenter()) };
+		const bool bWrangled{ sentrygun->m_bPlayerControlled() };
+		if (!bWrangled && flSentryDist > 600.f + SDKUtils::GetRealLatency() * 400.f && nSentryStrict > 0)
+			continue;
+
+		// sentries are perfect aimbots with a tracking delay - the ray runs
+		// from the sentry to where we are AND where our predicted movement
+		// puts us, so tucking behind cover or strafing out waits instead of
+		// burning a charge on bullets that will miss
+		if (!ProjectileDanger::BlastReachable(sentrygun->GetCenter(), vecPath, flCenterZ))
+			continue;
+
 		dangerType = MEDIGUN_BULLET_RESIST;
-		bMarkedSource = IsMarkedPlayer(sentrygun->m_hBuilder().Get());
-		if (player->m_iHealth() < VACC_LOW_HP)
-			return true;
+		bMarkedSource = bMarkedBuilder;
+		return true;
 	}
 
 	return false;
@@ -467,7 +536,6 @@ void CAutoVaccinator::Reset()
 	m_GoalResType = MEDIGUN_NUM_RESISTS;
 	m_IsChangingRes = false;
 	m_ShouldPop = false;
-	m_bKeyPopQueued = false;
 	m_SwitchDelayTicks = 0;
 	m_flChangeStart = 0.f;
 }
@@ -492,7 +560,6 @@ float CAutoVaccinator::GetLastPopTime() const
 
 void CAutoVaccinator::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* cmd)
 {
-	const bool bKeyEdge = CFG::Triggerbot_Key && H::Input->IsPressed(CFG::Triggerbot_Key);
 	const bool bKeyHeld = CFG::Triggerbot_Key && H::Input->IsDown(CFG::Triggerbot_Key);
 
 	if (!CFG::Triggerbot_AutoVaccinator_Active)
@@ -539,7 +606,6 @@ void CAutoVaccinator::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd*
 		m_flRealtimeLastPop = 0.f;
 		m_nPredictedResist = -1;
 		m_flPredictTime = 0.f;
-		m_bKeyPopQueued = false;
 	}
 	s_flLastCurtime = I::GlobalVars->curtime;
 
@@ -573,17 +639,6 @@ void CAutoVaccinator::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd*
 
 	const bool bNoPop = CFG::Triggerbot_AutoVaccinator_NoPop && !bKeyHeld;
 
-	// the key-pop is the manual override for Cycle Only mode - in that mode
-	// auto-popping is suppressed and the key is the judgment call. With
-	// Always Pop the auto logic already pops on real threats, so a trigger
-	// press must NOT queue one: dj holds this key for the triggerbot and
-	// every accidental press burned a charge (the "popped for no reason"
-	// screenshots - status POP, zero threats on screen)
-	if (bKeyEdge && CFG::Triggerbot_AutoVaccinator_NoPop)
-		m_bKeyPopQueued = true;
-	if (m_bKeyPopQueued && bNoPop)
-		m_bKeyPopQueued = false;
-
 	// 1. latched pop execution - fires only when the server's actual resist
 	// already matches the goal, never mid-cycle on the wrong type
 	if (m_ShouldPop)
@@ -593,75 +648,89 @@ void CAutoVaccinator::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd*
 			if (medigun->m_flChargeLevel() >= 0.25f)
 				PressAttack2(m_GoalResType);
 			m_ShouldPop = false;
-			m_bKeyPopQueued = false;
 			m_GoalResType = nActual;
 			return;
 		}
 		// else: keep latched, the cycle block below brings the resist over
 	}
-	// 2. queued key-pop owns the goal until it fires
-	else if (m_bKeyPopQueued && !bNoPop)
-	{
-		medigun_resist_types_t popType = (m_GoalResType >= MEDIGUN_BULLET_RESIST && m_GoalResType < MEDIGUN_NUM_RESISTS)
-			? static_cast<medigun_resist_types_t>(m_GoalResType)
-			: static_cast<medigun_resist_types_t>(nActual);
 
-		const auto healTargetEntQ = medigun->m_hHealingTarget().Get();
-		C_TFPlayer* healTargetQ = healTargetEntQ ? healTargetEntQ->As<C_TFPlayer>() : nullptr;
-		const bool bHealAllowed = healTargetQ && (CFG::Triggerbot_AutoVaccinator_Pop != 1 || healTargetQ->IsPlayerOnSteamFriendsList());
-		const bool bSelfHas = PlayerHasResUber(popType, pLocal);
-		const bool bAllCovered = bHealAllowed ? (bSelfHas && PlayerHasResUber(popType, healTargetQ)) : bSelfHas;
-		if (bAllCovered && nActual == popType)
-			popType = static_cast<medigun_resist_types_t>((popType + 1) % MEDIGUN_NUM_RESISTS);
-
-		m_GoalResType = popType;
-
-		if (nActual == popType && CanPop(medigun, popType))
-		{
-			PressAttack2(popType);
-			m_bKeyPopQueued = false;
-			return;
-		}
-	}
 	// 3. danger decision - only with nothing latched and not already cycling
 	// (hysteresis: a mid-cycle goal flip-flop is what makes the vacc churn),
-	// so a flickering threat can never stomp a queued or latched pop either
-	else if (!m_IsChangingRes)
+	// so a flickering threat can never stomp a latched pop either. There is
+	// deliberately NO blind key-pop: the trigger key doubles as the pop key,
+	// and dj holds/spams it for the triggerbot - the old press-queues-a-pop
+	// burned charges with zero threats on screen. Holding the key in Cycle
+	// Only mode just allows threat pops through the decision below
+	if (!m_ShouldPop && !m_IsChangingRes)
 	{
-		if (m_bKeyPopQueued)
-			m_bKeyPopQueued = false;
-
 		const auto healTargetEnt = medigun->m_hHealingTarget().Get();
 		C_TFPlayer* healTarget = healTargetEnt ? healTargetEnt->As<C_TFPlayer>() : nullptr;
 
-		static int s_nLastCmd = 0;
-		static std::vector<Vec3> s_vecSelfPath;
-		static std::vector<Vec3> s_vecHealPath;
-		static int s_iHealIdx = -1;
-		if (cmd->command_number != s_nLastCmd)
-		{
-			s_nLastCmd = cmd->command_number;
-			GetDangerPath(pLocal, s_vecSelfPath);
-			s_iHealIdx = healTarget && healTarget != pLocal ? healTarget->entindex() : -1;
-			if (s_iHealIdx >= 0)
-				GetDangerPath(healTarget, s_vecHealPath);
-		}
-		const std::vector<Vec3>& vecSelfPath = s_vecSelfPath;
-		const std::vector<Vec3> vecEmptyPath;
-		const std::vector<Vec3>& vecHealPath = s_iHealIdx >= 0 ? s_vecHealPath : vecEmptyPath;
+		std::vector<Vec3> vecSelfPath;
+		ProjectileDanger::GetTargetPath(pLocal, vecSelfPath);
+		std::vector<Vec3> vecHealPath;
+		if (healTarget && healTarget != pLocal)
+			ProjectileDanger::GetTargetPath(healTarget, vecHealPath);
 
 		medigun_resist_types_t panicType{ MEDIGUN_NUM_RESISTS };
 		bool bPanicTargetIsHeal = false;
 		bool bMarkedThreat = false;
 		const int nPanicStrict = std::clamp(CFG::Triggerbot_AutoVaccinator_Tolerance, 0, 3);
-		if (healTarget && IsPlayerInDanger(healTarget, panicType, healTarget != pLocal ? vecHealPath : vecSelfPath, bMarkedThreat, nPanicStrict) && !PlayerHasResUber(panicType, healTarget))
+		float flLocalRatio = static_cast<float>(pLocal->m_iHealth()) / static_cast<float>(std::max(pLocal->GetMaxHealth(), 1));
+		if (healTarget)
+			flLocalRatio = std::min(flLocalRatio, static_cast<float>(healTarget->m_iHealth()) / static_cast<float>(std::max(healTarget->GetMaxHealth(), 1)));
+
+		if (healTarget && IsPlayerInDanger(healTarget, panicType, healTarget != pLocal ? vecHealPath : vecSelfPath, bMarkedThreat, nPanicStrict, flLocalRatio) && !PlayerHasResUber(panicType, healTarget))
 			bPanicTargetIsHeal = true;
-		else if (IsPlayerInDanger(pLocal, panicType, vecSelfPath, bMarkedThreat, nPanicStrict) && !PlayerHasResUber(panicType, pLocal))
+		else if (IsPlayerInDanger(pLocal, panicType, vecSelfPath, bMarkedThreat, nPanicStrict, flLocalRatio) && !PlayerHasResUber(panicType, pLocal))
 			bPanicTargetIsHeal = false;
 		else
 			panicType = MEDIGUN_NUM_RESISTS;
 
 		bMarkedThreat = bMarkedThreat || MarkedEnemyAimingAt(pLocal) || (healTarget && healTarget != pLocal && MarkedEnemyAimingAt(healTarget));
+
+		// spun-up heavy at knife range (Medium to Max): looking at us with a
+		// real sightline and either of us at low health -> bullet now. The
+		// health bar pushes earlier on high ping (the pop lands later), and
+		// WHO the heavy is looking at decides whose health counts - beaming a
+		// healthy patient is no reason, beaming a hurt one is
+		if (panicType == MEDIGUN_NUM_RESISTS && nPanicStrict <= 2)
+		{
+			const float flCloseZone = 160.f + SDKUtils::GetRealLatency() * 400.f;
+			for (const auto pEntity : H::Entities->GetGroup(EEntGroup::PLAYERS_ENEMIES))
+			{
+				const auto pEnemy{ pEntity ? pEntity->As<C_TFPlayer>() : nullptr };
+				if (!pEnemy || pEnemy->deadflag() || pEnemy->IsDormant() || pEnemy->m_iClass() != TF_CLASS_HEAVY)
+					continue;
+
+				const auto pHeavyWpn = pEnemy->m_hActiveWeapon().Get() ? pEnemy->m_hActiveWeapon().Get()->As<C_TFWeaponBase>() : nullptr;
+				if (!pHeavyWpn || pHeavyWpn->GetWeaponID() != TF_WEAPON_MINIGUN || !pEnemy->InCond(TF_COND_AIMING))
+					continue;
+
+				const Vec3 vEye = pEnemy->m_vecOrigin() + Vec3{ 0.0f, 0.0f, pEnemy->m_vecMaxs().z };
+				const bool bLocalInRange = pEnemy->GetShootPos().DistTo(pLocal->GetCenter()) <= flCloseZone;
+				const bool bHealInRange = healTarget && pEnemy->GetShootPos().DistTo(healTarget->GetCenter()) <= flCloseZone;
+				if (!bLocalInRange && !bHealInRange)
+					continue;
+
+				const auto fHeavyOnUs = [&](C_TFPlayer* pProtected) -> bool {
+					if (!pProtected || pProtected->IsInvulnerable())
+						return false;
+					if (Math::CalcFov(pEnemy->GetEyeAngles(), Math::CalcAngle(pEnemy->GetShootPos(), pProtected->GetCenter())) >= 30.f)
+						return false;
+					if (!ProjectileDanger::IsWorldVisible(pProtected->GetCenter(), vEye))
+						return false;
+					const float flRatio = static_cast<float>(pProtected->m_iHealth()) / static_cast<float>(std::max(pProtected->GetMaxHealth(), 1));
+					return flRatio < std::min(0.5f + SDKUtils::GetRealLatency() * 2.f, 0.8f);
+				};
+
+				if (fHeavyOnUs(pLocal) || (healTarget && fHeavyOnUs(healTarget)))
+				{
+					panicType = MEDIGUN_BULLET_RESIST;
+					break;
+				}
+			}
+		}
 
 		float flSelfScore[MEDIGUN_NUM_RESISTS] = {};
 		F::AutoUberPop->ScoreDangers(pLocal, medigun, pLocal, flSelfScore[MEDIGUN_BULLET_RESIST], flSelfScore[MEDIGUN_BLAST_RESIST], flSelfScore[MEDIGUN_FIRE_RESIST]);
@@ -705,24 +774,78 @@ void CAutoVaccinator::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd*
 			default: break;
 			}
 
-			// Amalgam discipline: the combined self+patient score must reach
-			// the lethal-in-latency bar before any pop - there is no eager
-			// "somebody has a gun somewhere" pop (that 0.45 self-pop burned
-			// charges on far-away enemies nobody was shooting)
-			if (flMaxScore >= flScoreReq)
+			// dj: even a tiny chip can kill us when our health is low - soften
+			// the bar by the WORST protected health ratio (medic + patient),
+			// floored at half the normal bar so it never gets too aggressive
+			float flWorstRatio = static_cast<float>(pLocal->m_iHealth()) / static_cast<float>(std::max(pLocal->GetMaxHealth(), 1));
+			if (healTarget)
+				flWorstRatio = std::min(flWorstRatio, static_cast<float>(healTarget->m_iHealth()) / static_cast<float>(std::max(healTarget->GetMaxHealth(), 1)));
+			flScoreReq *= std::clamp(flWorstRatio * 1.5f, 0.5f, 1.f);
+
+			// a type already popped-active (2.5s window) on BOTH of us gets no
+			// pop - the charge would double-pay for 75% cover we already have
+			// (panic and hurt paths already skip it, the scored pop must too);
+			// while covered the goal pre-cycles toward an uncovered type so
+			// the next pop is ready for blast or fire instead
+			const auto fCovered = [&](medigun_resist_types_t eType) -> bool
+			{
+				if (!PlayerHasResUber(eType, pLocal))
+					return false;
+				if (healTarget && healTarget != pLocal && !PlayerHasResUber(eType, healTarget))
+					return false;
+				return true;
+			};
+
+			if (flMaxScore >= flScoreReq && !fCovered(scoredType))
 			{
 				m_GoalResType = scoredType;
 				if (!bNoPop && CanPop(medigun, scoredType))
 					m_ShouldPop = true;
 			}
-			else if (flMaxScore > 0.f)
-			{
-				const float flGoalScore = m_GoalResType >= MEDIGUN_BULLET_RESIST && m_GoalResType < MEDIGUN_NUM_RESISTS ? flScore[m_GoalResType] : 0.f;
-				if (flMaxScore > flGoalScore * 1.25f || m_GoalResType == MEDIGUN_NUM_RESISTS)
-					m_GoalResType = scoredType;
-			}
 			else
-				m_GoalResType = MEDIGUN_BULLET_RESIST;
+			{
+				medigun_resist_types_t eBest = MEDIGUN_NUM_RESISTS;
+				float flBest = 0.f;
+				for (int i = MEDIGUN_BULLET_RESIST; i < MEDIGUN_NUM_RESISTS; i++)
+				{
+					const auto eType{ static_cast<medigun_resist_types_t>(i) };
+					if (fCovered(eType))
+						continue;
+					if (flScore[i] > flBest)
+					{
+						flBest = flScore[i];
+						eBest = eType;
+					}
+				}
+
+				const bool bGoalValid = m_GoalResType >= MEDIGUN_BULLET_RESIST && m_GoalResType < MEDIGUN_NUM_RESISTS;
+				const bool bGoalCovered = bGoalValid && fCovered(static_cast<medigun_resist_types_t>(m_GoalResType));
+				const float flGoalScore = bGoalValid ? flScore[m_GoalResType] : 0.f;
+
+				if (eBest != MEDIGUN_NUM_RESISTS)
+				{
+					if (bGoalCovered || !bGoalValid || flBest > flGoalScore * 1.25f)
+						m_GoalResType = eBest;
+				}
+				else
+				{
+					medigun_resist_types_t eIdle = MEDIGUN_NUM_RESISTS;
+					for (int i = MEDIGUN_BULLET_RESIST; i < MEDIGUN_NUM_RESISTS; i++)
+					{
+						const auto eType{ static_cast<medigun_resist_types_t>(i) };
+						if (!fCovered(eType))
+						{
+							eIdle = eType;
+							break;
+						}
+					}
+
+					if (eIdle != MEDIGUN_NUM_RESISTS)
+						m_GoalResType = eIdle;
+					else if (bGoalCovered)
+						m_GoalResType = static_cast<medigun_resist_types_t>((m_GoalResType + 1) % MEDIGUN_NUM_RESISTS);
+				}
+			}
 		}
 
 		// the decision landed a pop with the right resist already active
@@ -731,7 +854,6 @@ void CAutoVaccinator::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd*
 			if (medigun->m_flChargeLevel() >= 0.25f)
 				PressAttack2(m_GoalResType);
 			m_ShouldPop = false;
-			m_bKeyPopQueued = false;
 			m_GoalResType = nActual;
 			return;
 		}
@@ -859,11 +981,6 @@ void CAutoVaccinator::ProcessPlayerHurt(IGameEvent* event)
 
 		if (!m_ShouldPop && m_GoalResType == MEDIGUN_BLAST_RESIST && !PlayerHasResUber(MEDIGUN_BLAST_RESIST, victimEnt) && (bWorth || (bSelfDamage && bChipPop)))
 			m_ShouldPop = true;
-
-		// the hurt pop replaces any queued key-pop: both wanted a pop, the
-		// hurt event knows the actual damage type
-		if (m_ShouldPop)
-			m_bKeyPopQueued = false;
 	}
 
 	auto healTargetEnt = medigun->m_hHealingTarget().Get();
