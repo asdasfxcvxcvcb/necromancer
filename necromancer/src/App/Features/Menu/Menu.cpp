@@ -1004,13 +1004,13 @@ bool CMenu::InputKey(const char *szLabel, int &nKeyOut)
 		{
 			bool bMouse = (n > 0x0 && n < 0x7);
 			bool bLetter = (n > L'A' - 1 && n < L'Z' + 1);
-			bool bAllowed = (n == VK_LSHIFT || n == VK_RSHIFT || n == VK_SHIFT || n == VK_ESCAPE || n == VK_INSERT || n == VK_F3 || n == VK_MENU || n == VK_CAPITAL || n == VK_SPACE || n == VK_CONTROL);
+			bool bAllowed = (n == VK_LSHIFT || n == VK_RSHIFT || n == VK_SHIFT || n == VK_ESCAPE || n == VK_INSERT || n == VK_F3 || n == VK_PRIOR || n == VK_MENU || n == VK_CAPITAL || n == VK_SPACE || n == VK_CONTROL);
 			bool bNumPad = n > (VK_NUMPAD0 - 1) && n < (VK_NUMPAD9)+1;
 			if (bMouse || bLetter || bAllowed || bNumPad)
 			{
 				if (H::Input->IsPressed(n))
 				{
-					if (n == VK_INSERT || n == VK_F3) {
+					if (n == VK_INSERT || n == VK_F3 || n == VK_PRIOR) {
 						m_mapStates[&nKeyOut] = false;
 						break;
 					}
@@ -1240,7 +1240,7 @@ bool CMenu::InputText(const char *szLabel, const char *szLabel2, std::string &st
 		strUndo = strTemp;
 		nCaret = nAnchor = static_cast<int>(strTemp.size());
 	}
-	if (H::Input->IsPressed(VK_ESCAPE) || H::Input->IsPressed(VK_INSERT) || H::Input->IsPressed(VK_F3)) {
+	if (H::Input->IsPressed(VK_ESCAPE) || H::Input->IsPressed(VK_INSERT) || H::Input->IsPressed(VK_F3) || (H::Input->IsPressed(VK_PRIOR) && H::Input->IsDown(VK_SHIFT))) {
 		if (m_mapStates[&strOutput])
 			strTemp = strUndo;
 		m_mapStates[&strOutput] = false;
@@ -1645,7 +1645,7 @@ bool CMenu::ColorPicker(const char* szLabel, Color_t& colVar)
 		m_mapStates[&colVar] = false;
 		m_bClickConsumed = true;
 	}
-	if (H::Input->IsPressed(VK_ESCAPE) || H::Input->IsPressed(VK_INSERT) || H::Input->IsPressed(VK_F3)) {
+	if (H::Input->IsPressed(VK_ESCAPE) || H::Input->IsPressed(VK_INSERT) || H::Input->IsPressed(VK_F3) || (H::Input->IsPressed(VK_PRIOR) && H::Input->IsDown(VK_SHIFT))) {
 		m_mapStates[&colVar] = false;
 		m_mapContextMenuStates[&colVar] = false;
 	}
@@ -4678,9 +4678,6 @@ void CMenu::MainWindow()
 				{ "High", 0 }, { "Forward", 1 }, { "Dynamic", 2 }
 			});
 			InputKey("Auto FaN Key", CFG::Misc_AutoFaN_Key);
-			CheckBox("MoveSim Debug", CFG::MoveSim_Debug);
-			if (CFG::MoveSim_Debug)
-				InputKey("Sim Save Key", CFG::MoveSim_Debug_Key);
 		};
 		m_mapGroupBoxes["Misc_Sound"].m_fnRenderContent = [this]() {
 			CheckBox("Block Footsteps", CFG::Misc_Sound_Block_Footsteps);
@@ -7310,7 +7307,7 @@ void CMenu::Run()
 		m_nColorPickerTextureId = I::MatSystemSurface->CreateNewTextureID(true);
 		I::MatSystemSurface->DrawSetTextureRGBAEx(m_nColorPickerTextureId, reinterpret_cast<const unsigned char *>(m_pGradient.get()), 200, 200, IMAGE_FORMAT_RGBA8888);
 	}
-	if (H::Input->IsPressed(VK_INSERT) || H::Input->IsPressed(VK_F3))
+	if (H::Input->IsPressed(VK_INSERT) || H::Input->IsPressed(VK_F3) || (H::Input->IsPressed(VK_PRIOR) && H::Input->IsDown(VK_SHIFT)))
 		I::MatSystemSurface->SetCursorAlwaysVisible(m_bOpen = !m_bOpen);
 	float currentTime = I::EngineClient->Time();
 	float deltaTime = currentTime - m_flLastFrameTime;
