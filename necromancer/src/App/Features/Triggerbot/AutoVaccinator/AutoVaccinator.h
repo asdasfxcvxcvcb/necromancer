@@ -15,10 +15,10 @@ class CAutoVaccinator
 	float m_flLastPopTime[MEDIGUN_NUM_RESISTS] = {};
 	float m_flRealtimeLastPop = 0.f;
 
-	void Reset();
 	bool CanPop(C_WeaponMedigun* medigun, int type) const;
 
 public:
+	void Reset();
 	void Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* cmd);
 	void ProcessPlayerHurt(IGameEvent* event);
 	void PreventReload(CUserCmd* cmd);

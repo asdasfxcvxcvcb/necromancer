@@ -514,6 +514,16 @@ void CAutoVaccinator::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd*
 		return;
 	}
 
+	// a latched pop or pending queue must NEVER survive death: Run is not
+	// called while dead, so without this the latch froze through the respawn
+	// and fired the instant the new life had charge ("immediately popped
+	// bullet for this medic") - a fresh life re-decides from scratch
+	if (pLocal->deadflag())
+	{
+		Reset();
+		return;
+	}
+
 	if (Shifting::bRecharging)
 		return;
 
@@ -563,7 +573,13 @@ void CAutoVaccinator::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd*
 
 	const bool bNoPop = CFG::Triggerbot_AutoVaccinator_NoPop && !bKeyHeld;
 
-	if (bKeyEdge)
+	// the key-pop is the manual override for Cycle Only mode - in that mode
+	// auto-popping is suppressed and the key is the judgment call. With
+	// Always Pop the auto logic already pops on real threats, so a trigger
+	// press must NOT queue one: dj holds this key for the triggerbot and
+	// every accidental press burned a charge (the "popped for no reason"
+	// screenshots - status POP, zero threats on screen)
+	if (bKeyEdge && CFG::Triggerbot_AutoVaccinator_NoPop)
 		m_bKeyPopQueued = true;
 	if (m_bKeyPopQueued && bNoPop)
 		m_bKeyPopQueued = false;
@@ -679,42 +695,24 @@ void CAutoVaccinator::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd*
 				}
 			}
 
-			medigun_resist_types_t selfType = MEDIGUN_NUM_RESISTS;
-			float flSelfMax = 0.f;
-			for (int i = 0; i < MEDIGUN_NUM_RESISTS; i++)
-			{
-				const auto eType = static_cast<medigun_resist_types_t>(i);
-				if (flSelfScore[i] > 0.f && !PlayerHasResUber(eType, pLocal) && flSelfScore[i] > flSelfMax)
-				{
-					flSelfMax = flSelfScore[i];
-					selfType = eType;
-				}
-			}
-
 			const int nStrictLevel = bMarkedThreat ? 0 : std::clamp(CFG::Triggerbot_AutoVaccinator_Tolerance, 0, 3);
-			float flScoreReq = 1.f, flSelfReq = VACC_SELF_POP_MIN;
+			float flScoreReq = 1.f;
 			switch (nStrictLevel)
 			{
-			case 1: flScoreReq = 1.5f; flSelfReq = 0.75f; break;
-			case 2: flScoreReq = 2.f; flSelfReq = 1.25f; break;
-			case 3: flScoreReq = 999.f; flSelfReq = 999.f; break;
+			case 1: flScoreReq = 1.5f; break;
+			case 2: flScoreReq = 2.f; break;
+			case 3: flScoreReq = 999.f; break;
 			default: break;
 			}
 
+			// Amalgam discipline: the combined self+patient score must reach
+			// the lethal-in-latency bar before any pop - there is no eager
+			// "somebody has a gun somewhere" pop (that 0.45 self-pop burned
+			// charges on far-away enemies nobody was shooting)
 			if (flMaxScore >= flScoreReq)
 			{
 				m_GoalResType = scoredType;
 				if (!bNoPop && CanPop(medigun, scoredType))
-					m_ShouldPop = true;
-			}
-			else if (selfType != MEDIGUN_NUM_RESISTS)
-			{
-				m_GoalResType = selfType;
-				// human judgment: a nonzero score is not a threat - only pop
-				// when the damage at risk is a real chunk of our health
-				// (one midrange scout vs full HP scores ~0.2-0.35, in your
-				// face ~0.6-1.2; dj's heavy+scout case must NOT pop)
-				if (flSelfMax >= flSelfReq && !bNoPop && CanPop(medigun, selfType))
 					m_ShouldPop = true;
 			}
 			else if (flMaxScore > 0.f)
@@ -830,7 +828,10 @@ void CAutoVaccinator::ProcessPlayerHurt(IGameEvent* event)
 	const bool bPopsAllowed = !bNoPop;
 	const bool bMarkedAttacker = attacker && IsMarkedPlayer(attacker->As<C_BaseEntity>());
 	const int nStrictLevel = bMarkedAttacker ? 0 : std::clamp(CFG::Triggerbot_AutoVaccinator_Tolerance, 0, 3);
-	const bool bUrgent = event->GetBool("crit") || event->GetBool("minicrit") || (nStrictLevel < 3 && health < VACC_LOW_HP);
+	// class-aware urgency: the old absolute health < 100 gate made every chip
+	// on a spy (125 max HP) "urgent" and burned charges for nothing
+	const float flHealthRatio = static_cast<float>(health) / static_cast<float>(std::max(victimEnt->GetMaxHealth(), 1));
+	const bool bUrgent = event->GetBool("crit") || event->GetBool("minicrit") || (nStrictLevel < 3 && flHealthRatio < 0.5f);
 
 	// Amalgam-style lethal stream: pop on a non-urgent hit only when the
 	// attacker's damage RATE can kill the victim within a second (chips and

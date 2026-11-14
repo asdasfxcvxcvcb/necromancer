@@ -215,6 +215,8 @@ static CMFlow SectionCacheAndInput(CClientModeShared* ecx, float flInputSampleTi
 		auto pWeaponVacc = H::Entities->GetWeapon();
 		if (pLocalVacc && !pLocalVacc->deadflag() && pWeaponVacc)
 			F::AutoVaccinator->Run(pLocalVacc, pWeaponVacc, pCmd);
+		else if (pLocalVacc && pLocalVacc->deadflag())
+			F::AutoVaccinator->Reset();
 	}
 
 	return CMFlow::CONTINUE;
