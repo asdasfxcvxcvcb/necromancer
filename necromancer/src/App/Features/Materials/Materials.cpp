@@ -968,25 +968,6 @@ void CMaterials::Run()
 			}
 		}
 
-		if (!CFG::Materials_World_Ignore_DroppedGuns)
-		{
-			for (const auto pEntity : H::Entities->GetGroup(EEntGroup::WEAPONS_DROPPED))
-			{
-				if (!pEntity || !pEntity->ShouldDraw() || !F::VisualUtils->IsOnScreen(pLocal, pEntity))
-					continue;
-
-				const auto color = F::VisualUtils->GetEntityColor(pLocal, pEntity);
-
-				if (pMaterial && pMaterial != m_pGlow)
-					I::RenderView->SetColorModulation(color);
-
-				if (pMaterial == m_pGlow && m_pGlowEnvmapTint)
-					m_pGlowEnvmapTint->SetVecValue(ColorUtils::ToFloat(color.r), ColorUtils::ToFloat(color.g), ColorUtils::ToFloat(color.b));
-
-				DrawEntity(pEntity);
-			}
-		}
-
 		const bool bIgnoringAllProjectiles = CFG::Materials_World_Ignore_LocalProjectiles
 			&& CFG::Materials_World_Ignore_EnemyProjectiles
 			&& CFG::Materials_World_Ignore_TeammateProjectiles;

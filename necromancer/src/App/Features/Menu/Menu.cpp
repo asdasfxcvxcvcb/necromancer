@@ -3520,8 +3520,7 @@ void CMenu::MainWindow()
 					{ "Enemy Projectiles", CFG::Materials_World_Ignore_EnemyProjectiles },
 					{ "Teammate Projectiles", CFG::Materials_World_Ignore_TeammateProjectiles },
 					{ "Halloween Gifts", CFG::Materials_World_Ignore_Halloween_Gift },
-					{ "MVM Money", CFG::Materials_World_Ignore_MVM_Money },
-					{ "Dropped Guns", CFG::Materials_World_Ignore_DroppedGuns }
+					{ "MVM Money", CFG::Materials_World_Ignore_MVM_Money }
 					});
 			}
 			GroupBoxEnd();
@@ -3664,8 +3663,7 @@ void CMenu::MainWindow()
 					{ "Enemy Projectiles", CFG::Outlines_World_Ignore_EnemyProjectiles },
 					{ "Teammate Projectiles", CFG::Outlines_World_Ignore_TeammateProjectiles },
 					{ "Halloween Gifts", CFG::Outlines_World_Ignore_Halloween_Gift },
-					{ "MVM Money", CFG::Outlines_World_Ignore_MVM_Money },
-					{ "Dropped Guns", CFG::Outlines_World_Ignore_DroppedGuns }
+					{ "MVM Money", CFG::Outlines_World_Ignore_MVM_Money }
 					});
 			}
 			GroupBoxEnd();

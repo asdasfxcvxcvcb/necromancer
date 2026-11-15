@@ -227,50 +227,6 @@ void CEntityHelper::UpdatePlayerInfoFromGC()
 	}
 }
 
-static bool IsWeaponNetworkClass(int nRawClassId, ClientClass* pClientClass)
-{
-	static unsigned char s_ucClassCache[512] = {};
-
-	if (nRawClassId <= 0 || nRawClassId >= 512)
-		return false;
-
-	unsigned char& ucState = s_ucClassCache[nRawClassId];
-	if (ucState)
-		return ucState == 1;
-
-	ucState = 2;
-
-	if (pClientClass && pClientClass->m_pRecvTable)
-	{
-		std::vector<RecvTable*> vecStack;
-		vecStack.push_back(pClientClass->m_pRecvTable);
-
-		while (!vecStack.empty())
-		{
-			RecvTable* pTable = vecStack.back();
-			vecStack.pop_back();
-
-			if (!pTable || !pTable->m_pNetTableName)
-				continue;
-
-			if (!_stricmp(pTable->m_pNetTableName, "DT_TFWeaponBase"))
-			{
-				ucState = 1;
-				break;
-			}
-
-			for (int n = 0; n < pTable->m_nProps; n++)
-			{
-				const RecvProp* pProp = pTable->GetProp(n);
-				if (pProp && pProp->GetType() == DPT_DataTable && pProp->GetDataTable())
-					vecStack.push_back(pProp->GetDataTable());
-			}
-		}
-	}
-
-	return ucState == 1;
-}
-
 void CEntityHelper::UpdateCache()
 {
 	const auto pLocal = GetLocal();
@@ -511,13 +467,7 @@ void CEntityHelper::UpdateCache()
 		}
 
 		default:
-		{
-			if (!CFG::Perf_Extreme_Limit_Entity_Cache
-				&& IsWeaponNetworkClass(nRawClassId, pClientClass)
-				&& !pEntity->m_hOwnerEntity().Get())
-				m_mapGroups[static_cast<int>(EEntGroup::WEAPONS_DROPPED)].push_back(pEntity);
 			break;
-		}
 		}
 	}
 }

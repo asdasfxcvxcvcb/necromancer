@@ -23,7 +23,6 @@ enum class EEntGroup
 	AMMOPACKS,
 	HALLOWEEN_GIFT,
 	MVM_MONEY,
-	WEAPONS_DROPPED,
 
 	COUNT // Must be last - used for array sizing
 };

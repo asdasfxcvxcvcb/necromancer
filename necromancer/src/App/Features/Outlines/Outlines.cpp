@@ -473,7 +473,6 @@ void COutlines::RunModels()
 		const bool bIgnoreAmmoPacks = CFG::Outlines_World_Ignore_AmmoPacks;
 		const bool bIgnoreHalloweenGift = CFG::Outlines_World_Ignore_Halloween_Gift;
 		const bool bIgnoreMVMMoney = CFG::Outlines_World_Ignore_MVM_Money;
-		const bool bIgnoreDroppedGuns = CFG::Outlines_World_Ignore_DroppedGuns;
 		const bool bIgnoreLocalProj = CFG::Outlines_World_Ignore_LocalProjectiles;
 		const bool bIgnoreEnemyProj = CFG::Outlines_World_Ignore_EnemyProjectiles;
 		const bool bIgnoreTeammateProj = CFG::Outlines_World_Ignore_TeammateProjectiles;
@@ -535,22 +534,6 @@ void COutlines::RunModels()
 			{
 				if (!pEntity || !pEntity->ShouldDraw() || !F::VisualUtils->IsOnScreen(pLocal, pEntity))
 					continue;
-
-				m_vecOutlineEntities.emplace_back(OutlineEntity_t{pEntity, color, flWorldAlpha});
-
-				if (!F::Materials->HasDrawn(pEntity))
-					DrawEntity(pEntity, true);
-			}
-		}
-
-		if (!bIgnoreDroppedGuns)
-		{
-			for (const auto pEntity : H::Entities->GetGroup(EEntGroup::WEAPONS_DROPPED))
-			{
-				if (!pEntity || !pEntity->ShouldDraw() || !F::VisualUtils->IsOnScreen(pLocal, pEntity))
-					continue;
-
-				const auto color = F::VisualUtils->GetEntityColor(pLocal, pEntity);
 
 				m_vecOutlineEntities.emplace_back(OutlineEntity_t{pEntity, color, flWorldAlpha});
 

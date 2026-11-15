@@ -400,7 +400,6 @@ namespace CFG
 	CFGVAR(Materials_World_Ignore_TeammateProjectiles, false);
 	CFGVAR(Materials_World_Ignore_Halloween_Gift, false);
 	CFGVAR(Materials_World_Ignore_MVM_Money, false);
-	CFGVAR(Materials_World_Ignore_DroppedGuns, false);
 
 	CFGVAR(Materials_ViewModel_Active, false);
 	CFGVAR(Materials_ViewModel_Hands_Alpha, 0.5f);
@@ -446,7 +445,6 @@ namespace CFG
 	CFGVAR(Outlines_World_Ignore_TeammateProjectiles, true);
 	CFGVAR(Outlines_World_Ignore_Halloween_Gift, false);
 	CFGVAR(Outlines_World_Ignore_MVM_Money, false);
-	CFGVAR(Outlines_World_Ignore_DroppedGuns, false);
 
 	// Misc Enemy - HP-based coloring
 	CFGVAR(Visuals_Enemy_Outline_HP_Based, true); // Color enemy outlines based on HP
