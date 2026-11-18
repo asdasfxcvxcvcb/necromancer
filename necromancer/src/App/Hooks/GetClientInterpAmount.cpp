@@ -1,6 +1,5 @@
 #include "../../SDK/SDK.h"
 #include "../Features/CFG.h"
-#include "../Features/amalgam_port/AmalgamCompat.h"
 
 // Signatures for net_graph display calls - we want to show real lerp there
 MAKE_SIGNATURE(CNetGraphPanel_DrawTextFields_GetClientInterpAmount_Call1, "client.dll", "48 8B 05 ? ? ? ? 4C 8D 05 ? ? ? ? F3 44 0F 10 0D", 0x0);

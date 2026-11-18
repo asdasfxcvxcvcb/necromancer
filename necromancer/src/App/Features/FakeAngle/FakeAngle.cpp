@@ -1,7 +1,6 @@
 #include "FakeAngle.h"
 #include "../CFG.h"
 #include "../AntiBackstab/AntiBackstab.h"
-#include "../amalgam_port/AmalgamCompat.h"
 
 // Jitter system (hash-based like Amalgam)
 static inline int GetJitter(uint32_t uHash)

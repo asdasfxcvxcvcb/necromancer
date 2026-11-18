@@ -1,7 +1,6 @@
 #include "AutoDetonate.h"
 
 #include "../../CFG.h"
-#include "../../amalgam_port/AmalgamCompat.h"
 #include <algorithm>
 
 // Update or create tracking entry for enemy-sticky pair

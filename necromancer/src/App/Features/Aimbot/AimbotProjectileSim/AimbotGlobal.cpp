@@ -1,5 +1,5 @@
 #include "AimbotGlobal.h"
-#include "../Ticks/Ticks.h"
+#include "Ticks.h"
 #include "../../Players/Players.h"
 
 void CAimbotGlobal::SortTargets(std::vector<Target_t>& targets, int iMethod)
@@ -8,9 +8,9 @@ void CAimbotGlobal::SortTargets(std::vector<Target_t>& targets, int iMethod)
     {
         switch (iMethod)
         {
-        case Vars::Aimbot::General::TargetSelectionEnum::FOV:
+        case TargetSelectionEnum::FOV:
             return a.m_flFOVTo < b.m_flFOVTo;
-        case Vars::Aimbot::General::TargetSelectionEnum::Distance:
+        case TargetSelectionEnum::Distance:
             return a.m_flDistTo < b.m_flDistTo;
         default:
             return false;
@@ -109,11 +109,11 @@ bool CAimbotGlobal::IsHitboxValid(int nHitbox, int iHitboxes)
     switch (nHitbox)
     {
     case BOUNDS_HEAD:
-        return iHitboxes & Vars::Aimbot::Projectile::HitboxesEnum::Head;
+        return iHitboxes & HitboxesEnum::Head;
     case BOUNDS_BODY:
-        return iHitboxes & Vars::Aimbot::Projectile::HitboxesEnum::Body;
+        return iHitboxes & HitboxesEnum::Body;
     case BOUNDS_FEET:
-        return iHitboxes & Vars::Aimbot::Projectile::HitboxesEnum::Feet;
+        return iHitboxes & HitboxesEnum::Feet;
     }
     return false;
 }
@@ -140,32 +140,32 @@ bool CAimbotGlobal::ShouldIgnore(C_BaseEntity* pTarget, C_TFPlayer* pLocal, C_TF
             return false;
 
         // Invulnerable
-        if (Vars::Aimbot::General::Ignore.Value & Vars::Aimbot::General::IgnoreEnum::Invulnerable)
+        if (CFG::Aimbot_Ignore_Invulnerable)
         {
             if (pPlayer->InCond(TF_COND_INVULNERABLE) || 
                 pPlayer->InCond(TF_COND_INVULNERABLE_CARD_EFFECT) ||
-                pPlayer->InCond(TF_COND_INVULNERABLE_HIDE_UNLESS_DAMAGED) ||
+                pPlayer->InCond(TF_COND_INVULNERABLE_HIDE_UNLESS_DAMAGE) ||
                 pPlayer->InCond(TF_COND_INVULNERABLE_USER_BUFF) ||
                 pPlayer->InCond(TF_COND_PHASE))
                 return true;
         }
 
         // Invisible
-        if (Vars::Aimbot::General::Ignore.Value & Vars::Aimbot::General::IgnoreEnum::Invisible)
+        if (CFG::Aimbot_Ignore_Invisible)
         {
             if (pPlayer->m_flInvisibility() >= 1.0f)
                 return true;
         }
 
         // Taunting
-        if (Vars::Aimbot::General::Ignore.Value & Vars::Aimbot::General::IgnoreEnum::Taunting)
+        if (CFG::Aimbot_Ignore_Taunting)
         {
             if (pPlayer->InCond(TF_COND_TAUNTING))
                 return true;
         }
 
         // Friends/Ignored players (using SEOwnedDE's player list system)
-        if (Vars::Aimbot::General::Ignore.Value & Vars::Aimbot::General::IgnoreEnum::Friends)
+        if (CFG::Aimbot_Ignore_Friends)
         {
             PlayerPriority priority{};
             if (F::Players->GetInfo(pPlayer->entindex(), priority))
@@ -196,12 +196,12 @@ bool CAimbotGlobal::ShouldAim()
     // Amalgam's original logic: for Plain/Silent aim types, only aim when we can actually attack
     // This prevents the aimbot from "pre-aiming" when we can't shoot yet
     // NOTE: The aimbot key check is done in RunMain, not here!
-    switch (Vars::Aimbot::General::AimType.Value)
+    switch (AimTypeValue())
     {
-    case Vars::Aimbot::General::AimTypeEnum::Plain:
-    case Vars::Aimbot::General::AimTypeEnum::Silent:
+    case AimTypeEnum::Plain:
+    case AimTypeEnum::Silent:
         // Only aim if we can attack OR we're reloading (queued attack) OR timing is unsure
-        if (!G::bCanPrimaryAttack && !G::bReloading && !F::AmalgamTicks->IsTimingUnsure())
+        if (!G::bCanPrimaryAttack && !G::bReloading && !F::ProjectileTicks->IsTimingUnsure())
             return false;
     }
 
@@ -221,7 +221,7 @@ bool CAimbotGlobal::ShouldHoldAttack(C_TFWeaponBase* pWeapon)
     {
     case TF_WEAPON_MINIGUN:
         // Only hold if user was attacking and we can't attack yet
-        if (!G::bCanPrimaryAttack && G::LastUserCmd && (G::LastUserCmd->buttons & IN_ATTACK) && Vars::Aimbot::General::AimType.Value && !pWeapon->IsInReload())
+        if (!G::bCanPrimaryAttack && G::LastUserCmd && (G::LastUserCmd->buttons & IN_ATTACK) && AimTypeValue() && !pWeapon->IsInReload())
             return true;
         break;
     }

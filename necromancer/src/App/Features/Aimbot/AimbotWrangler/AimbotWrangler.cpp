@@ -1,6 +1,5 @@
 #include "AimbotWrangler.h"
 #include "../../CFG.h"
-#include "../../amalgam_port/AmalgamCompat.h"
 #include "../../Players/Players.h"
 #include <algorithm>
 #include <cmath>

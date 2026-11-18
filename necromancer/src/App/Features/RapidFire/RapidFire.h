@@ -9,12 +9,16 @@ class CRapidFire
 	bool m_bSetCommand = false;
 	int m_iWait = 0;
 
+private:
+
 	Vec3 m_vShiftStart = {};
 	Vec3 m_vAntiWarpVelocity = {};
 	bool m_bStartedShiftOnGround = false;
 	int m_nAntiWarpMaxTicks = 0;
 
 	bool m_bStickyCharging = false;
+	bool m_bLastUserSpinInput = false;
+	bool m_bFastRevDraining = false;
 
 	bool ShouldStart(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon);
 	void AntiWarp(C_TFPlayer* pLocal, CUserCmd* pCmd, int nTicks);
@@ -28,7 +32,9 @@ public:
 	void Run(CUserCmd* pCmd, bool* pSendPacket);
 	void MaintainWait();
 	void RunFastSticky(CUserCmd* pCmd, bool* pSendPacket);
+	void RunFastRev(CUserCmd* pCmd, bool* pSendPacket);
 	bool ShouldExitCreateMove(CUserCmd* pCmd);
+	void RunBatchCommand(C_TFPlayer* pLocal, CUserCmd* pCmd);
 	bool IsWeaponSupported(C_TFWeaponBase* pWeapon);
 	bool IsStickyWeapon(C_TFWeaponBase* pWeapon);
 

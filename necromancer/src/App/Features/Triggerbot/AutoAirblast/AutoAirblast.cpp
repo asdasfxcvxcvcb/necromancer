@@ -3,8 +3,6 @@
 #include "../../CFG.h"
 #include "../../MovementSimulation/MovementSimulation.h"
 #include "../../ProjectileSim/ProjectileSim.h"
-#include "../../amalgam_port/ProjectileSimulation/ProjectileSimulation.h"
-#include "../../amalgam_port/Ticks/Ticks.h"
 
 #include <unordered_map>
 

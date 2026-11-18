@@ -1,5 +1,4 @@
 #include "../../SDK/SDK.h"
-#include "../Features/amalgam_port/AmalgamCompat.h"
 
 // Origin compression constant (same as Amalgam)
 #define PLAYER_ORIGIN_COMPRESSION 0.125f
@@ -63,25 +62,25 @@ MAKE_HOOK(CBaseEntity_SetAbsVelocity, Signatures::CBaseEntity_SetAbsVelocity.Get
 		const int nPlayerIndex = pPlayer->entindex();
 		if (pPlayer->IsDormant())
 		{
-			g_AmalgamEntitiesExt.SetAvgVelocity(nPlayerIndex, Vec3{});
+			g_EntityMotionExt.SetAvgVelocity(nPlayerIndex, Vec3{});
 			return CALL_ORIGINAL(ecx, vecAbsVelocity);
 		}
 
-		auto pRecords = g_AmalgamEntitiesExt.GetOrigins(nPlayerIndex);
+		auto pRecords = g_EntityMotionExt.GetOrigins(nPlayerIndex);
 		if (!pRecords || pRecords->empty())
 		{
-			g_AmalgamEntitiesExt.SetAvgVelocity(nPlayerIndex, Vec3{});
+			g_EntityMotionExt.SetAvgVelocity(nPlayerIndex, Vec3{});
 			return CALL_ORIGINAL(ecx, vecAbsVelocity);
 		}
 
 		auto& tOldRecord = pRecords->front();
-		auto tNewRecord = CAmalgamEntitiesHelper::VelFixOriginRecord{ pPlayer->m_vecOrigin() + Vec3(0, 0, pPlayer->m_vecMaxs().z), pPlayer->m_flSimulationTime() };
+		auto tNewRecord = CEntityMotionExt::VelFixOriginRecord{ pPlayer->m_vecOrigin() + Vec3(0, 0, pPlayer->m_vecMaxs().z), pPlayer->m_flSimulationTime() };
 
 		int iDeltaTicks = TIME_TO_TICKS(tNewRecord.m_flSimulationTime - tOldRecord.m_flSimulationTime);
 		float flDeltaTime = TICKS_TO_TIME(iDeltaTicks);
 		if (iDeltaTicks <= 0)
 		{
-			g_AmalgamEntitiesExt.SetAvgVelocity(nPlayerIndex, Vec3{});
+			g_EntityMotionExt.SetAvgVelocity(nPlayerIndex, Vec3{});
 			return CALL_ORIGINAL(ecx, vecAbsVelocity);
 		}
 
@@ -90,7 +89,7 @@ MAKE_HOOK(CBaseEntity_SetAbsVelocity, Signatures::CBaseEntity_SetAbsVelocity.Get
 		if ((tNewRecord.m_vecOrigin - tOldRecord.m_vecOrigin).Length2DSqr() >= flDist)
 		{
 			pRecords->clear();
-			g_AmalgamEntitiesExt.SetAvgVelocity(nPlayerIndex, Vec3{});
+			g_EntityMotionExt.SetAvgVelocity(nPlayerIndex, Vec3{});
 			return CALL_ORIGINAL(ecx, vecAbsVelocity);
 		}
 
@@ -144,7 +143,7 @@ MAKE_HOOK(CBaseEntity_SetAbsVelocity, Signatures::CBaseEntity_SetAbsVelocity.Get
 			}
 		}
 
-		g_AmalgamEntitiesExt.SetAvgVelocity(nPlayerIndex, tAxisInfo.Get(bGrounded));
+		g_EntityMotionExt.SetAvgVelocity(nPlayerIndex, tAxisInfo.Get(bGrounded));
 		CALL_ORIGINAL(ecx, (tNewRecord.m_vecOrigin - tOldRecord.m_vecOrigin) / flDeltaTime);
 		return;
 	}

@@ -1,7 +1,54 @@
 #pragma once
 
-#include "../AmalgamCompat.h"
+#include "../../CFG.h"
 #include "../../LagRecords/LagRecords.h"
+
+constexpr float AIM_ASSIST_STRENGTH = 25.f;
+
+namespace AimTypeEnum
+{
+	enum AimTypeEnum { Off = 0, Plain = 1, Smooth = 2, Silent = 3, Locking = 4, Assistive = 5 };
+}
+namespace TargetSelectionEnum
+{
+	enum TargetSelectionEnum { FOV = 0, Distance = 1 };
+}
+namespace TargetEnum
+{
+	enum TargetEnum { Unknown, Player, Sentry, Dispenser, Teleporter, Sticky, NPC, Bomb };
+}
+namespace HitboxesEnum
+{
+	enum HitboxesEnum { Auto = 1 << 0, Head = 1 << 1, Body = 1 << 2, Feet = 1 << 3, BodyaimIfLethal = 1 << 4, PrioritizeFeet = 1 << 5 };
+}
+namespace ModifiersEnum
+{
+	enum ModifiersEnum { ChargeWeapon = 1 << 0, CancelCharge = 1 << 1, UseArmTime = 1 << 2, AirSplash = 1 << 3, LobAngles = 1 << 4, TargetDormant = 1 << 5 };
+}
+
+inline int AimTypeValue()
+{
+	return CFG::Aimbot_Projectile_Aim_Type == 1 ? AimTypeEnum::Silent : AimTypeEnum::Plain;
+}
+
+inline int ProjectileHitboxFlags()
+{
+	return (CFG::Aimbot_Amalgam_Projectile_Hitbox_Auto ? HitboxesEnum::Auto : 0) |
+	       (CFG::Aimbot_Amalgam_Projectile_Hitbox_Head ? HitboxesEnum::Head : 0) |
+	       (CFG::Aimbot_Amalgam_Projectile_Hitbox_Body ? HitboxesEnum::Body : 0) |
+	       (CFG::Aimbot_Amalgam_Projectile_Hitbox_Feet ? HitboxesEnum::Feet : 0) |
+	       (CFG::Aimbot_Amalgam_Projectile_Hitbox_BodyaimLethal ? HitboxesEnum::BodyaimIfLethal : 0) |
+	       (CFG::Aimbot_Amalgam_Projectile_Hitbox_PrioritizeFeet ? HitboxesEnum::PrioritizeFeet : 0);
+}
+
+inline int ProjectileModifierFlags()
+{
+	return (CFG::Aimbot_Amalgam_Projectile_Mod_ChargeWeapon ? ModifiersEnum::ChargeWeapon : 0) |
+	       ModifiersEnum::CancelCharge |
+	       (CFG::Aimbot_Amalgam_Projectile_Mod_UseArmTime ? ModifiersEnum::UseArmTime : 0) |
+	       (CFG::Aimbot_Amalgam_Projectile_Mod_AirSplash ? ModifiersEnum::AirSplash : 0) |
+	       (CFG::Aimbot_Amalgam_Projectile_Mod_LobAngles ? ModifiersEnum::LobAngles : 0);
+}
 
 // ============================================
 // Bounds Hitboxes (for projectile prediction)
@@ -13,12 +60,6 @@ enum BOUNDS_HITBOXES
     BOUNDS_BODY = 1,
     BOUNDS_FEET = 2
 };
-
-// ============================================
-// Target Type Enum
-// ============================================
-
-Enum(Target, Unknown, Player, Sentry, Dispenser, Teleporter, Sticky, NPC, Bomb)
 
 // ============================================
 // Tick Record (for backtrack compatibility)

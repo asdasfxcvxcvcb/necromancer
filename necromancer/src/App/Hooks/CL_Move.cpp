@@ -10,7 +10,6 @@
 #include "../Features/TickbaseManip/TickbaseManip.h"
 #include "../Features/Networking/Networking.h"
 #include "../Features/RapidFire/RapidFire.h"
-#include "../Features/amalgam_port/Ticks/Ticks.h"
 #include "../Features/Models/Models.h"
 
 MAKE_SIGNATURE(CL_Move, "engine.dll", "40 55 53 48 8D AC 24 ? ? ? ? B8 ? ? ? ? E8 ? ? ? ? 48 2B E0 83 3D", 0x0);
@@ -69,9 +68,14 @@ MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 		nMaxTicks -= F::FakeAngle->AntiAimTicks();
 	nMaxTicks = std::max(nMaxTicks, 1);
 
-	// Apply user's recharge limit or auto settings
+	// Apply user's recharge limit or auto settings. The slider may store past
+	// the server budget - fast rev drains the bank across packets and every
+	// spend path clamps itself; the anticheat profile keeps the budget ceiling
 	const int nUserLimit = F::Ticks->GetOptimalRechargeLimit();
-	nMaxTicks = std::min(nMaxTicks, nUserLimit);
+	const bool bAntiCheat = CFG::Misc_AntiCheat_Enabled && !CFG::Misc_AntiCheat_IgnoreTickLimit;
+	if (bAntiCheat)
+		nMaxTicks = std::min(nMaxTicks, nUserLimit);
+	const int nBankCap = bAntiCheat ? nMaxTicks : nUserLimit;
 
 	auto callOriginal = [&](bool bFinal)
 	{
@@ -81,10 +85,10 @@ MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 
 	// Handle recharging
 	// When fast sticky sets a recharge target, stop at that count instead of the global max
-	const int nRechargeCap = (Shifting::nStickyRechargeTarget > 0) ? std::min(nMaxTicks, Shifting::nStickyRechargeTarget) : nMaxTicks;
+	const int nRechargeCap = (Shifting::nStickyRechargeTarget > 0) ? std::min(nBankCap, Shifting::nStickyRechargeTarget) : nBankCap;
 
-	if (Shifting::nAvailableTicks > nMaxTicks)
-		Shifting::nAvailableTicks = nMaxTicks;
+	if (Shifting::nAvailableTicks > nBankCap)
+		Shifting::nAvailableTicks = nBankCap;
 
 	if (Shifting::bRecharging && !H::Entities->GetWeapon())
 	{
@@ -126,54 +130,8 @@ MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 	}
 	}
 
-	// RapidFire/DoubleTap shifting
+	// Sticky DT shifting
 	{
-		if (Shifting::bRapidFireWantShift)
-		{
-			if (I::ClientState->chokedcommands)
-			{
-				callOriginal(bFinalTick);
-				return;
-			}
-
-			Shifting::bRapidFireWantShift = false;
-			Shifting::bShifting = true;
-
-			const int nTicks = F::RapidFire->GetReleaseTicks();
-	
-			if (nTicks > 0)
-			{
-				Shifting::nTotalShiftTicks = nTicks;
-				Shifting::nCurrentShiftTick = 0;
-				Shifting::bTickbaseFixRecorded = false;
-				Shifting::nReleaseBacklog = I::ClientState->chokedcommands;
-				Shifting::nReleaseSpent = 0;
-				Shifting::bReleasePending = true;
-				Shifting::nShiftCooldownTicks = nTicks;
-	
-				for (int n = 0; n < nTicks && Shifting::nAvailableTicks > 0; n++)
-				{
-					Shifting::nCurrentShiftTick = n;
-					Shifting::nAvailableTicks--;
-					Shifting::nReleaseSpent++;
-					callOriginal(n == nTicks - 1);
-				}
-
-					Shifting::bShifting = false;
-					Shifting::nCurrentShiftTick = 0;
-					Shifting::nTotalShiftTicks = 0;
-					Shifting::bTickbaseFixRecorded = false;
-					Shifting::bReleasePending = false;
-				}
-				else
-				{
-					Shifting::bShifting = false;
-				}
-
-				return;
-			}
-
-			// Sticky DT shifting
 		if (Shifting::bStickyDTWantShift)
 		{
 			if (I::ClientState->chokedcommands)
@@ -201,24 +159,19 @@ MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 					Shifting::nTotalShiftTicks = nTicks;
 					Shifting::nCurrentShiftTick = 0;
 					Shifting::bTickbaseFixRecorded = false;
-					Shifting::nReleaseBacklog = I::ClientState->chokedcommands;
-					Shifting::nReleaseSpent = 0;
-					Shifting::bReleasePending = true;
 					Shifting::nShiftCooldownTicks = nTicks;
-	
+
 					for (int n = 0; n < nTicks && Shifting::nAvailableTicks > 0; n++)
 					{
 						Shifting::nCurrentShiftTick = n;
 						Shifting::nAvailableTicks--;
-						Shifting::nReleaseSpent++;
 						callOriginal(n == nTicks - 1);
 					}
-	
+
 					Shifting::bShifting = false;
 					Shifting::nCurrentShiftTick = 0;
 					Shifting::nTotalShiftTicks = 0;
 					Shifting::bTickbaseFixRecorded = false;
-					Shifting::bReleasePending = false;
 				}
 				else
 				{
@@ -308,5 +261,68 @@ MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 
 	{
 		callOriginal(bFinalTick);
+	}
+
+	// RapidFire/DoubleTap shifting - Amalgam's structure. The fire stays on
+	// the aimbot's validated command, which RapidFire choke-held in this
+	// frame's CreateMove (inside the call above). The batch commands below are
+	// fresh CreateMove passes (the aimbot re-solves on each one, so whatever
+	// command the server actually fires carries a solution validated for that
+	// exact moment) and every one except the last is choked: the final call
+	// releases the fire command plus the whole batch as ONE packet, whose
+	// server-side clock correction backdates the fire and compresses the
+	// cooldown. The aimbot runs during the batch like Amalgam's does.
+	// Fast Rev anchors the minigun's wind-up command the same way: its
+	// prediction sets the spin-up timer, and anchoring it into the backdated
+	// batch completes the spin-up ~a bank's worth of ticks sooner.
+	if ((Shifting::bRapidFireWantShift || Shifting::bFastRevWantShift) && !Shifting::bRecharging && !Shifting::bShifting && !Shifting::bShiftingWarp)
+	{
+		const bool bFastRevBatch = Shifting::bFastRevWantShift;
+		Shifting::bRapidFireWantShift = false;
+		Shifting::bFastRevWantShift = false;
+
+		Shifting::bShifting = true;
+
+		// the batch length must not shrink below the fire rate's clock span or
+		// the second shell misses the batch - Amalgam caps theirs by
+		// sv_maxusrcmdprocessticks-derived m_iMaxShift, not a running estimate,
+		// and the burst (fire + fillers <= 15 new + 7 backup) fits the budget.
+		// The estimate clamp here shaved the span by ticks depending on sag,
+		// another "sometimes it double taps" source.
+		// Fast rev is the exception: it spends the whole bank one full packet
+		// per frame until the drain in RunFastRev stops it
+		int nTicks = bFastRevBatch
+			? std::min(Shifting::nAvailableTicks, std::max(MAX_NEW_COMMANDS + MAX_BACKUP_COMMANDS - I::ClientState->chokedcommands, 1))
+			: std::min(F::RapidFire->GetReleaseTicks(), std::max(MAX_NEW_COMMANDS + MAX_BACKUP_COMMANDS - I::ClientState->chokedcommands, 1));
+
+		if (nTicks > 0)
+		{
+			Shifting::nTotalShiftTicks = nTicks;
+			Shifting::nCurrentShiftTick = 0;
+			Shifting::bTickbaseFixRecorded = false;
+			Shifting::nShiftCooldownTicks = nTicks;
+
+			const int nBacklog = I::ClientState->chokedcommands;
+
+			for (int n = 0; n < nTicks && Shifting::nAvailableTicks > 0; n++)
+			{
+				Shifting::nCurrentShiftTick = n;
+				Shifting::nAvailableTicks--;
+				callOriginal(n == nTicks - 1);
+			}
+
+			// the bank carries the whole burst's server-clock debt: the fillers
+			// spent above plus the choked backlog (the fire command, silent
+			// angle holds) riding the same packet - the bar then drops by
+			// exactly what the DT Ticks slider counts
+			Shifting::nAvailableTicks = std::max(Shifting::nAvailableTicks - nBacklog, 0);
+
+			Shifting::bShifting = false;
+			Shifting::nCurrentShiftTick = 0;
+			Shifting::nTotalShiftTicks = 0;
+			Shifting::bTickbaseFixRecorded = false;
+		}
+		else
+			Shifting::bShifting = false;
 	}
 }

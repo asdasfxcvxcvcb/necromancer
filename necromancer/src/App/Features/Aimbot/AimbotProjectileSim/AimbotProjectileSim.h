@@ -1,9 +1,14 @@
 #pragma once
 
-#include "../AmalgamCompat.h"
-#include "../MoveSim/MoveSimAmalgam.h"
-#include "../AimbotGlobal/AimbotGlobal.h"
-#include "../ProjectileSimulation/ProjectileSimulation.h" // ProjectileInfo (m_tProjInfo)
+#include "../../MoveSim/MoveSim.h"
+#include "AimbotGlobal.h"
+#include "../../ProjectileSimulation/ProjectileSimulation.h" // ProjectileInfo (m_tProjInfo)
+#include "../../CFG.h"
+
+inline int AnticipatedChokeTicks()
+{
+	return CFG::Aimbot_Projectile_Aim_Type == 1 ? 1 : 0;
+}
 
 // ============================================
 // Amalgam's current point/flag architecture
@@ -18,10 +23,30 @@
 //              SetupClip = re-trace the spawn position at the aim angles,
 //              AccountDrag = vphysics drag compensation, LobAngle = high arc)
 
-Enum(PointFlags, None = 0, Regular = 1 << 0, Lob = 1 << 1)
-Enum(PointType, Direct, Geometry, Air)
-Enum(CalculateFlags, None = 0, TwoPass = 1 << 0, SetupClip = 1 << 1, AccountDrag = 1 << 2, LobAngle = 1 << 3, Accuracy = TwoPass | SetupClip | AccountDrag)
-Enum(Calculated, Pending, Good, Time, Bad)
+namespace PointFlagsEnum
+{
+	enum PointFlagsEnum { None = 0, Regular = 1 << 0, Lob = 1 << 1 };
+}
+namespace PointTypeEnum
+{
+	enum PointTypeEnum { Direct, Geometry, Air };
+}
+namespace CalculateFlagsEnum
+{
+	enum CalculateFlagsEnum { None = 0, TwoPass = 1 << 0, SetupClip = 1 << 1, AccountDrag = 1 << 2, LobAngle = 1 << 3, Accuracy = TwoPass | SetupClip | AccountDrag };
+}
+namespace CalculatedEnum
+{
+	enum CalculatedEnum { Pending, Good, Time, Bad };
+}
+namespace SplashPredictionEnum
+{
+	enum SplashPredictionEnum { Off = 0, Include = 1, Prefer = 2, Only = 3 };
+}
+namespace SplashModeEnum
+{
+	enum SplashModeEnum { Trace = 0, Face = 1 };
+}
 
 // ============================================
 // Structures
@@ -123,7 +148,7 @@ struct Info_t
 // and splash detonation windows per tick, then HandleDirect/HandleSplash
 // replay each candidate through ProjSim + TestAngle, best-first.
 
-class CAmalgamAimbotProjectile
+class CAimbotProjectileSim
 {
 private:
     std::vector<Target_t> GetTargets(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon);
@@ -144,15 +169,25 @@ private:
     int CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, bool bUpdate = true);
     bool RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd);
 
-    // Auto airblast path (stubbed - Necromancer has no auto airblast integration yet)
-    bool CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, C_BaseEntity* pProjectile);
-    bool TestAngle(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, C_BaseEntity* pProjectile, Target_t& tTarget, Vec3& vPoint, Vec3& vAngles, int iSimTime, bool bSplash, std::vector<Vec3>* pProjectilePath = nullptr);
+    bool Aim(const Vec3& vCurAngle, const Vec3& vToAngle, Vec3& vOut, int iMethod = AimTypeValue());
+    void Aim(CUserCmd* pCmd, Vec3& vAngles, int iMethod = AimTypeValue());
 
-    bool Aim(const Vec3& vCurAngle, const Vec3& vToAngle, Vec3& vOut, int iMethod = Vars::Aimbot::General::AimType.Value);
-    void Aim(CUserCmd* pCmd, Vec3& vAngles, int iMethod = Vars::Aimbot::General::AimType.Value);
+    struct AimTarget_t
+    {
+        int m_iEntIndex = 0;
+        int m_iTickCount = 0;
+        int m_iDuration = 32;
+    };
+
+    struct AimPoint_t
+    {
+        Vec3 m_vOrigin = {};
+        int m_iTickCount = 0;
+        int m_iDuration = 32;
+    };
 
     Info_t m_tInfo = {};
-    AmalgamMoveStorage m_tMoveStorage = {};
+    MoveSimStorage m_tMoveStorage = {};
     ProjectileInfo m_tProjInfo = {};
     std::vector<Setup_t> m_vSplashPoints = {};
 
@@ -186,7 +221,17 @@ private:
     // multiply the simulation cost by 360/step
     int m_iRollBudget = 0;
 
+    AimTarget_t m_tAimTarget = {};
+    AimPoint_t m_tAimPoint = {};
+
 public:
+    // the current CreateMove tick carries a just-validated solution - the
+    // doubletap may only arm on these ticks, never on carried-angle ones
+    bool HasFreshSolution() const
+    {
+        return m_iLastSolutionTick != -1 && m_iLastSolutionTick == I::GlobalVars->tickcount;
+    }
+
     // Main entry point. Claims every projectile-type weapon Necromancer
     // dispatches here (EWeaponType::PROJECTILE), matching Amalgam's Run; the
     // native projectile aimbot only ever runs for weapons that never reach
@@ -200,4 +245,4 @@ public:
     int m_iLastTickCancel = 0;
 };
 
-MAKE_SINGLETON_SCOPED(CAmalgamAimbotProjectile, AmalgamAimbotProjectile, F);
+MAKE_SINGLETON_SCOPED(CAimbotProjectileSim, AimbotProjectileSim, F);

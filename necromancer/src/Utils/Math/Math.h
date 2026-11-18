@@ -202,6 +202,53 @@ namespace Math
 		return C + (D - C) * cVal;
 	}
 
+	inline float RemapVal(float val, float A, float B, float C, float D, bool bClamp = true)
+	{
+		if (A == B)
+			return val >= B ? D : C;
+
+		float t = (val - A) / (B - A);
+		if (bClamp)
+			t = std::clamp(t, 0.f, 1.f);
+		return C + (D - C) * t;
+	}
+
+	inline Vec3 VectorAngles(const Vec3& forward)
+	{
+		Vec3 angles;
+		VectorAngles(forward, angles);
+		return angles;
+	}
+
+	inline Vec3 RotatePoint(Vec3 vPoint, Vec3 vOrigin, Vec3 vAngles)
+	{
+		vPoint -= vOrigin;
+
+		float sp, sy, sr, cp, cy, cr;
+		SinCos(DEG2RAD(vAngles.x), &sp, &cp);
+		SinCos(DEG2RAD(vAngles.y), &sy, &cy);
+		SinCos(DEG2RAD(vAngles.z), &sr, &cr);
+
+		Vec3 vX = {
+			cy * cp,
+			cy * sp * sr - sy * cr,
+			cy * sp * cr + sy * sr
+		};
+		Vec3 vY = {
+			sy * cp,
+			sy * sp * sr + cy * cr,
+			sy * sp * cr - cy * sr
+		};
+		Vec3 vZ = {
+			-sp,
+			cp * sr,
+			cp * cr
+		};
+
+		return Vec3(vX.Dot(vPoint), vY.Dot(vPoint), vZ.Dot(vPoint)) + vOrigin;
+	}
+
+
 	inline Vec3 VelocityToAngles(const Vec3 &direction)
 	{
 		auto Magnitude = [&](const Vec3 &v) -> float {
@@ -392,6 +439,12 @@ namespace Math
 		flForwardMove = cosf(flYaw) * flSpeed;
 		flSideMove = sinf(flYaw) * flSpeed * (bTargetOOB ? -1.f : 1.f);
 	}
+}
+
+template<typename T>
+inline int sign(T val)
+{
+	return (T(0) < val) - (val < T(0));
 }
 
 #pragma warning (pop)

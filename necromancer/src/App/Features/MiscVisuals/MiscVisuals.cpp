@@ -887,6 +887,12 @@ void CMiscVisuals::Thirdperson(CViewSetup* pSetup)
 
 	if (bShouldDoTP)
 	{
+		// ducking airborne shifts the model origin up by 20*scale (the engine's
+		// air-duck hull change, same constant GetPredictedShootPos compensates
+		// for) - raise the camera by the same units to keep the model framed
+		if (!(pLocal->m_fFlags() & FL_ONGROUND) && (pLocal->m_fFlags() & FL_DUCKING))
+			pSetup->origin.z += 20.f * pLocal->m_flModelScale();
+
 		Vec3 vForward = {}, vRight = {}, vUp = {};
 		Math::AngleVectors(pSetup->angles, &vForward, &vRight, &vUp);
 

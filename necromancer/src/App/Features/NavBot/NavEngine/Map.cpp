@@ -290,7 +290,7 @@ DropdownHint_t CMap::HandleDropdown(const Vec3& vCurrentPos, const Vec3& vNextPo
 				const float flStepHeight = 18.0f;
 
 				// Use world-only trace filter — we only care about solid geometry, not players/entities
-				CTraceFilterWorldAndPropsOnlyAmalgam traceFilter;
+				CTraceFilterWorldAndProps traceFilter;
 				traceFilter.pSkip = nullptr;
 
 				for (flPushDist = 0.0f; flPushDist <= flMaxPushDist; flPushDist += flInc)
@@ -535,7 +535,7 @@ ConnEval_t CMap::BuildConnEval(CNavArea* pCurrentArea, CNavArea* pNextArea)
 	{
 		const Vec3 vHullMin(-NAV_HULL_HALF_WIDTH, -NAV_HULL_HALF_WIDTH, 0.0f);
 		const Vec3 vHullMax(NAV_HULL_HALF_WIDTH, NAV_HULL_HALF_WIDTH, 62.0f);
-		CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
+		CTraceFilterWorldAndProps filter = {};
 		CGameTrace trace = {};
 
 		// Probe the straight walk at one height. 1 = blocked by static world,

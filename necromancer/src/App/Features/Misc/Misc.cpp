@@ -4,7 +4,6 @@
 #include "AntiCheatCompat/AntiCheatCompat.h"
 #include "../Aimbot/AimbotMelee/AimbotMelee.h"
 #include "../FakeAngle/FakeAngle.h"
-#include "../amalgam_port/AmalgamCompat.h"
 
 void CMisc::Bunnyhop(CUserCmd* pCmd)
 {
@@ -84,7 +83,7 @@ void CMisc::AutoJumpbug(C_TFPlayer* pLocal, CUserCmd* pCmd)
 	const float flTraceDistance = flUnduckHeight + 2;
 
 	trace_t trace = {};
-	CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
+	CTraceFilterWorldAndProps filter = {};
 
 	const Vec3 vOrigin = pLocal->m_vecOrigin();
 	H::AimUtils->TraceHull(vOrigin, vOrigin - Vec3(0, 0, flTraceDistance), pLocal->m_vecMins(), pLocal->m_vecMaxs(), MASK_PLAYERSOLID, &filter, &trace);

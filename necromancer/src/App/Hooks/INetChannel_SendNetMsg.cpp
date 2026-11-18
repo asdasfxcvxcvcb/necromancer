@@ -241,14 +241,6 @@ MAKE_HOOK(INetChannel_SendNetMsg, Signatures::INetChannel_SendNetMsg.Get(), bool
 
 	if (bOk)
 	{
-		if (Shifting::bReleasePending)
-		{
-			const int nDelivered = std::max(pMsg->m_nNewCommands - Shifting::nReleaseBacklog, 0);
-			const int nDeficit = std::max(Shifting::nReleaseSpent - nDelivered, 0);
-			if (nDeficit > 0)
-				Shifting::nAvailableTicks = std::max(Shifting::nAvailableTicks - nDeficit, 0);
-			Shifting::bReleasePending = false;
-		}
 		if (nExtraCommands > 0)
 				pNet->m_nChokedPackets -= nExtraCommands;
 

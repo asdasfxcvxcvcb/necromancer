@@ -2,7 +2,7 @@
 
 #include "../../../SDK/SDK.h"
 
-// Renamed to avoid conflict with amalgam_port's ProjectileInfo
+// Renamed to avoid conflict with ProjectileSimulation.h ProjectileInfo
 struct ProjSimInfo
 {
 	ProjectileType_t m_type{};

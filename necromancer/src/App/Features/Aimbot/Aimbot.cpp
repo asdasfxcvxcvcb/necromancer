@@ -4,8 +4,7 @@
 #include "AimbotMelee/AimbotMelee.h"
 #include "AimbotProjectile/AimbotProjectile.h"
 #include "AimbotWrangler/AimbotWrangler.h"
-#include "../amalgam_port/AimbotProjectile/AimbotProjectileAmalgam.h"
-#include "../amalgam_port/AimbotMelee/AimbotMeleeAmalgam.h"
+#include "AimbotProjectileSim/AimbotProjectileSim.h"
 
 #include "../CFG.h"
 #include "../Misc/Misc.h"
@@ -25,10 +24,10 @@ void CAimbot::RunMain(CUserCmd* pCmd)
 	if (Shifting::bRecharging)
 		return;
 
-	// Skip aimbot during doubletap shifts - we use the saved command angles
-	// This is critical for DT to work properly, the reference project does the same
-	if (Shifting::bShifting && !Shifting::bShiftingWarp)
-		return;
+	// No doubletap-shift gate here: Amalgam's aimbot runs on every batch
+	// command, because the server's backdated batch clock can reject the fire
+	// early in the batch and slide it onto a later command - that command must
+	// carry a solution validated for its own moment, not the capture tick's
 
 	// Skip aimbot when AutoFaN is running (it needs to control viewangles for the jump boost)
 	if (F::Misc->IsAutoFaNRunning())
@@ -49,7 +48,7 @@ void CAimbot::RunMain(CUserCmd* pCmd)
 		|| pWeapon->m_iItemDefinitionIndex() == Soldier_m_RocketJumper || pWeapon->m_iItemDefinitionIndex() == Demoman_s_StickyJumper)
 		return;
 
-	F::AmalgamAimbotProjectile->RestoreCancel(pLocal, pCmd);
+	F::AimbotProjectileSim->RestoreCancel(pLocal, pCmd);
 
 	// Check for Wrangler first (it returns EWeaponType::OTHER)
 	if (F::AimbotWrangler->IsWrangler(pWeapon))
@@ -71,7 +70,7 @@ void CAimbot::RunMain(CUserCmd* pCmd)
 			// Amalgam port: claims every projectile weapon unconditionally
 			// (rockets, pipes, stickies, Huntsman, ...) and matches Amalgam's
 			// per-tick prediction, so the native aimbot stays a dead fallback.
-			if (!F::AmalgamAimbotProjectile->Run(pLocal, pWeapon, pCmd))
+			if (!F::AimbotProjectileSim->Run(pLocal, pWeapon, pCmd))
 				F::AimbotProjectile->Run(pCmd, pLocal, pWeapon);
 			break;
 		}

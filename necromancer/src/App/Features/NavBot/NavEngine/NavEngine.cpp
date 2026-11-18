@@ -1,7 +1,6 @@
 #include "NavEngine.h"
 #include "../../../../SDK/SDK.h"
 #include "../../CFG.h"
-#include "../../amalgam_port/AmalgamCompat.h"
 
 #undef min
 #undef max
@@ -200,7 +199,7 @@ bool CNavEngine::NavTo(const Vec3& vDestination, ENavPriority ePriority, bool bS
 			const Vec3 vHullMin(-NAV_HULL_HALF_WIDTH, -NAV_HULL_HALF_WIDTH, 0.0f);
 			const Vec3 vHullMax(NAV_HULL_HALF_WIDTH, NAV_HULL_HALF_WIDTH, 62.0f);
 			const Vec3 vStepHeight(0.0f, 0.0f, 18.0f);
-			CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
+			CTraceFilterWorldAndProps filter = {};
 			CGameTrace trace = {};
 			H::AimUtils->TraceHull(vLocalPos + vStepHeight, pCandidate->m_vCenter + vStepHeight, vHullMin, vHullMax, MASK_PLAYERSOLID_BRUSHONLY, &filter, &trace);
 
@@ -237,7 +236,7 @@ bool CNavEngine::NavTo(const Vec3& vDestination, ENavPriority ePriority, bool bS
 		const Vec3 vHullMin(-NAV_HULL_HALF_WIDTH, -NAV_HULL_HALF_WIDTH, 0.0f);
 		const Vec3 vHullMax(NAV_HULL_HALF_WIDTH, NAV_HULL_HALF_WIDTH, 72.0f);
 		const Vec3 vStepHeight(0.0f, 0.0f, 18.0f);
-		CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
+		CTraceFilterWorldAndProps filter = {};
 		CGameTrace trace = {};
 		H::AimUtils->TraceHull(vLocalPos + vStepHeight, vDest + vStepHeight, vHullMin, vHullMax, MASK_PLAYERSOLID_BRUSHONLY, &filter, &trace);
 
@@ -780,7 +779,7 @@ void CNavEngine::FollowPath(C_TFPlayer* pLocal, CUserCmd* pCmd)
 
 				const Vec3 vHullMinLA(-NAV_HULL_HALF_WIDTH, -NAV_HULL_HALF_WIDTH, 0.0f);
 				const Vec3 vHullMaxLA(NAV_HULL_HALF_WIDTH, NAV_HULL_HALF_WIDTH, 62.0f);
-				CTraceFilterWorldAndPropsOnlyAmalgam filterLA = {};
+				CTraceFilterWorldAndProps filterLA = {};
 				CGameTrace traceLA = {};
 				H::AimUtils->TraceHull(vLocalPos + vLookaheadStep, tSkip.m_vPos + vLookaheadStep, vHullMinLA, vHullMaxLA, MASK_PLAYERSOLID_BRUSHONLY, &filterLA, &traceLA);
 
@@ -871,7 +870,7 @@ void CNavEngine::FollowPath(C_TFPlayer* pLocal, CUserCmd* pCmd)
 					const Vec3 vTo = m_vDestination + Vec3(0.0f, 0.0f, 18.0f);
 					const Vec3 vHullMin(-NAV_HULL_HALF_WIDTH, -NAV_HULL_HALF_WIDTH, 0.0f);
 					const Vec3 vHullMax(NAV_HULL_HALF_WIDTH, NAV_HULL_HALF_WIDTH, 62.0f);
-					CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
+					CTraceFilterWorldAndProps filter = {};
 					CGameTrace trace = {};
 					H::AimUtils->TraceHull(vFrom, vTo, vHullMin, vHullMax, MASK_PLAYERSOLID_BRUSHONLY, &filter, &trace);
 					if (trace.fraction >= 0.85f || trace.startsolid)
@@ -892,7 +891,7 @@ void CNavEngine::FollowPath(C_TFPlayer* pLocal, CUserCmd* pCmd)
 				const Vec3 vTo = m_vDestination + Vec3(0.0f, 0.0f, 18.0f);
 				const Vec3 vHullMin(-NAV_HULL_HALF_WIDTH, -NAV_HULL_HALF_WIDTH, 0.0f);
 				const Vec3 vHullMax(NAV_HULL_HALF_WIDTH, NAV_HULL_HALF_WIDTH, 62.0f);
-				CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
+				CTraceFilterWorldAndProps filter = {};
 				CGameTrace trace = {};
 				H::AimUtils->TraceHull(vFrom, vTo, vHullMin, vHullMax, MASK_PLAYERSOLID_BRUSHONLY, &filter, &trace);
 
@@ -1182,7 +1181,7 @@ Vec3 CNavEngine::AvoidObstacles(C_TFPlayer* pLocal, const Vec3& vGoalPos, const 
 	const Vec3 vHullMin(-flSize, -flSize, 18.1f);
 	const Vec3 vHullMax(flSize, flSize, 62.0f);
 
-	CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
+	CTraceFilterWorldAndProps filter = {};
 	CGameTrace trace = {};
 
 	// Left probe
@@ -1406,7 +1405,7 @@ void CNavEngine::UpdateStuckTime(C_TFPlayer* pLocal)
 		const Vec3 vTo = vBlockCrumbPos + Vec3(0.0f, 0.0f, 18.0f);
 		const Vec3 vHullMin(-NAV_HULL_HALF_WIDTH, -NAV_HULL_HALF_WIDTH, 0.0f);
 		const Vec3 vHullMax(NAV_HULL_HALF_WIDTH, NAV_HULL_HALF_WIDTH, 62.0f);
-		CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
+		CTraceFilterWorldAndProps filter = {};
 		CGameTrace trace = {};
 		H::AimUtils->TraceHull(vFrom, vTo, vHullMin, vHullMax, MASK_PLAYERSOLID_BRUSHONLY, &filter, &trace);
 		bBlockedByWorld = trace.fraction < 0.98f;
@@ -1551,7 +1550,7 @@ bool CNavEngine::IsPlayerPassableNavigation(C_TFPlayer* pLocal, const Vec3& vFro
 
 	const Vec3 vRayMins(0.0f, 0.0f, 0.0f);
 	const Vec3 vRayMaxs(0.0f, 0.0f, 0.0f);
-	CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
+	CTraceFilterWorldAndProps filter = {};
 	CGameTrace trace = {};
 
 	H::AimUtils->TraceHull(vStart - vOffset, vEnd - vOffset, vRayMins, vRayMaxs, MASK_PLAYERSOLID_BRUSHONLY, &filter, &trace);
@@ -1628,7 +1627,7 @@ void CNavEngine::VischeckPath(C_TFPlayer* pLocal)
 		if (pSegFrom && pSegTo && m_pMap->HasDirectConnection(pSegFrom, pSegTo))
 			continue;
 
-		CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
+		CTraceFilterWorldAndProps filter = {};
 		CGameTrace trace = {};
 
 		H::AimUtils->TraceHull(vFrom + vStepHeight, vTo + vStepHeight, vHullMin, vHullMax, MASK_PLAYERSOLID_BRUSHONLY, &filter, &trace);
@@ -2098,7 +2097,7 @@ bool CNavEngine::SmartJump(C_TFPlayer* pLocal, CUserCmd* pCmd, const Vec3& vTarg
 	Vec3 vTraceEnd = vTraceStart + vJumpDirection * flDistTravelled;
 
 	CGameTrace forwardTrace = {};
-	CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
+	CTraceFilterWorldAndProps filter = {};
 	H::AimUtils->TraceHull(vTraceStart, vTraceEnd, vHullMinSjump, vHullMaxSjump, MASK_PLAYERSOLID_BRUSHONLY, &filter, &forwardTrace);
 
 	if (forwardTrace.fraction < 1.0f && !IsSurfaceWalkable(forwardTrace.plane.normal))

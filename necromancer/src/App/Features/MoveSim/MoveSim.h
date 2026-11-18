@@ -1,6 +1,5 @@
 #pragma once
-#include "../../../../SDK/SDK.h"
-#include "../AmalgamCompat.h"
+#include "../../../SDK/SDK.h"
 
 #include <array>
 #include <deque>
@@ -27,10 +26,10 @@ namespace MoveSimMoveEnum
 // IGameMovement.h additionally declares the member block (player/mv/...) and
 // CheckStuck, which the simulation needs. Layout copied 1:1 from Amalgam so
 // the vtable slots and member offsets match the engine's CGameMovement.
-class CGameMovementAmalgam : public IGameMovement
+class CGameMovementSim : public IGameMovement
 {
 public:
-	virtual			~CGameMovementAmalgam(void) {}
+	virtual			~CGameMovementSim(void) {}
 
 	virtual void	ProcessMovement(C_BasePlayer* pPlayer, CMoveData* pMove) = 0;
 	virtual void	StartTrackPredictionErrors(C_BasePlayer* pPlayer) = 0;
@@ -117,7 +116,7 @@ public:
 	float			m_flStuckCheckTime[102][2];
 };
 
-class CTFGameMovementAmalgam : public CGameMovementAmalgam
+class CTFGameMovementSim : public CGameMovementSim
 {
 public:
 	virtual void	PlayerMove() = 0;
@@ -167,7 +166,7 @@ struct MoveSimRecord
 		: m_vDirection(vDirection), m_flSimTime(flSimTime), m_iMode(iMode), m_vVelocity(vVelocity), m_vOrigin(vOrigin) {}
 };
 
-struct AmalgamMoveStorage
+struct MoveSimStorage
 {
 	C_TFPlayer* m_pPlayer = nullptr;
 	CMoveData m_MoveData = {};
@@ -196,26 +195,25 @@ struct AmalgamMoveStorage
 	bool m_bChargeExpired = false;
 };
 
-class CAmalgamMoveSim
+class CMoveSim
 {
 public:
 	void Store();
 
-	bool Initialize(C_BaseEntity* pEntity, AmalgamMoveStorage& tMoveStorage, bool bHitchance = true, bool bStrafe = true, bool bPredict = true);
-	bool SetDuck(AmalgamMoveStorage& tMoveStorage, bool bDuck);
-	void RunTick(AmalgamMoveStorage& tMoveStorage, bool bPath = true, const MoveSimRunTickCallback* pCallback = nullptr);
-	void Restore(AmalgamMoveStorage& tMoveStorage);
+	bool Initialize(C_BaseEntity* pEntity, MoveSimStorage& tMoveStorage, bool bHitchance = true, bool bStrafe = true, bool bPredict = true);
+	bool SetDuck(MoveSimStorage& tMoveStorage, bool bDuck);
+	void RunTick(MoveSimStorage& tMoveStorage, bool bPath = true, const MoveSimRunTickCallback* pCallback = nullptr);
+	void Restore(MoveSimStorage& tMoveStorage);
 	float GetPredictedDelta(C_BaseEntity* pEntity);
 
 private:
-	void StoreState(AmalgamMoveStorage& tMoveStorage);
-	void ResetState(AmalgamMoveStorage& tMoveStorage);
+	void StoreState(MoveSimStorage& tMoveStorage);
+	void ResetState(MoveSimStorage& tMoveStorage);
 
-	void SetupMoveData(AmalgamMoveStorage& tMoveStorage);
-	bool CheckStuck(AmalgamMoveStorage& tMoveStorage);
-	void GetAverageYaw(AmalgamMoveStorage& tMoveStorage, int iSamples);
-	void GetRecentYaw(AmalgamMoveStorage& tMoveStorage, int iSamples);
-	bool StrafePrediction(AmalgamMoveStorage& tMoveStorage, bool bStrafe = true, bool bHitchance = false);
+	void SetupMoveData(MoveSimStorage& tMoveStorage);
+	bool CheckStuck(MoveSimStorage& tMoveStorage);
+	void GetAverageYaw(MoveSimStorage& tMoveStorage, int iSamples);
+	bool StrafePrediction(MoveSimStorage& tMoveStorage, bool bStrafe = true, bool bHitchance = false);
 
 	void SetBounds(C_TFPlayer* pPlayer);
 	void RestoreBounds(C_TFPlayer* pPlayer);
@@ -239,4 +237,4 @@ private:
 	std::unordered_map<int, std::deque<float>> m_mSimTimes = {};
 };
 
-MAKE_SINGLETON_SCOPED(CAmalgamMoveSim, MoveSim, F);
+MAKE_SINGLETON_SCOPED(CMoveSim, MoveSim, F);

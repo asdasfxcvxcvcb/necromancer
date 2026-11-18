@@ -1,13 +1,15 @@
-#include "AimbotProjectileAmalgam.h"
+#include "AimbotProjectileSim.h"
 
-#include "../ProjectileSimulation/ProjectileSimulation.h"
-#include "../World/World.h"
-#include "../Ticks/Ticks.h"
+#include "../../ProjectileSimulation/ProjectileSimulation.h"
+#include "../../WorldFaces/WorldFaces.h"
 #include "../../Players/Players.h"
 #include "../../EnginePrediction/EnginePrediction.h" // RestoreInfo_t
 #include "../../CFG.h"
+#include "Ticks.h"
 #include "../../MoveSimDebug/MoveSimDebug.h"
 #include "../../../../Utils/Math/Math.h" // Math::ClampAngles / CalcFov / AngleVectors
+#include "../../../../Utils/Math/SimMath.h"
+#include "../../../../Utils/Hash/FNV1A.h"
 
 #include <cmath>
 #include <functional>
@@ -18,10 +20,8 @@
 	#define GRENADE_CHECK_INTERVAL 0.195f
 #endif
 
-// world coordinate extent (Amalgam constant, used for the underwater priority)
-#ifndef COORD_EXTENT
-	#define COORD_EXTENT 16384.f
-#endif
+// world coordinate extent, used for the underwater priority
+static constexpr float COORD_EXTENT = 32768.f;
 
 // explosion radii (Amalgam's Definitions.h)
 #ifndef TF_ROCKET_RADIUS
@@ -41,18 +41,71 @@ static constexpr float MATH_E = 2.718281828459f;
 // fallback for the first ticks before it has saved a position
 static Vec3 GetShootPos(C_TFPlayer* pLocal)
 {
-	Vec3 vPos = F::AmalgamTicks->GetShootPos();
+	Vec3 vPos = F::ProjectileTicks->GetShootPos();
 	return vPos.IsZero() ? pLocal->GetShootPos() : vPos;
+}
+
+static matrix3x4_t* GetEntityBones(C_BaseEntity* pEntity)
+{
+	if (!pEntity || !IsPlayer(pEntity))
+		return nullptr;
+
+	static matrix3x4_t bones[128];
+	if (pEntity->As<C_TFPlayer>()->SetupBones(bones, 128, BONE_USED_BY_HITBOX, I::GlobalVars->curtime))
+		return bones;
+
+	return nullptr;
+}
+
+static float FullFraction(const Vec3& vDir, const CGameTrace& trace)
+{
+	if (!trace.DidHit() || FNV1A::Hash32(trace.surface.name) == FNV1A::Hash32Const("**displacement**"))
+		return trace.fraction;
+
+	return trace.fraction - DIST_EPSILON / vDir.Dot(trace.plane.normal);
+}
+static float FullFraction(const Vec3& vStart, const Vec3& vEnd, const CGameTrace& trace)
+{
+	return FullFraction(vEnd - vStart, trace);
+}
+
+static void GetHitboxInfoFromBones(C_BaseAnimating* pEntity, matrix3x4_t* pBones, int nHitbox, Vec3* pCenter, Vec3* pMins, Vec3* pMaxs)
+{
+	if (!pEntity || !pBones)
+		return;
+
+	auto pModel = pEntity->GetModel();
+	if (!pModel)
+		return;
+
+	auto pHDR = I::ModelInfoClient->GetStudiomodel(pModel);
+	if (!pHDR)
+		return;
+
+	auto pSet = pHDR->pHitboxSet(pEntity->m_nHitboxSet());
+	if (!pSet)
+		return;
+
+	auto pBox = pSet->pHitbox(nHitbox);
+	if (!pBox)
+		return;
+
+	if (pMins)
+		*pMins = pBox->bbmin;
+	if (pMaxs)
+		*pMaxs = pBox->bbmax;
+	if (pCenter)
+		Math::VectorTransform((pBox->bbmin + pBox->bbmax) * 0.5f, pBones[pBox->bone], *pCenter);
 }
 
 // Amalgam's ArmTime: sticky arm time when the UseArmTime modifier is set
 static float ArmTime(C_TFWeaponBase* pWeapon)
 {
-	if (Vars::Aimbot::Projectile::Modifiers.Value & Vars::Aimbot::Projectile::ModifiersEnum::UseArmTime && pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)
+	if (ProjectileModifierFlags() & ModifiersEnum::UseArmTime && pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)
 	{
-		static auto tf_grenadelauncher_livetime = U::ConVars.FindVar("tf_grenadelauncher_livetime");
+		static auto tf_grenadelauncher_livetime = I::CVar->FindVar("tf_grenadelauncher_livetime");
 		const float flLiveTime = tf_grenadelauncher_livetime->GetFloat();
-		return SDK::AttribHookValue(flLiveTime, "sticky_arm_time", pWeapon);
+		return SDKUtils::AttribHookValue(flLiveTime, "sticky_arm_time", pWeapon);
 	}
 
 	return 0.f;
@@ -60,17 +113,17 @@ static float ArmTime(C_TFWeaponBase* pWeapon)
 
 static bool ShouldLob(Info_t& tInfo)
 {
-	return tInfo.m_flGravity && Vars::Aimbot::Projectile::Modifiers.Value & Vars::Aimbot::Projectile::ModifiersEnum::LobAngles;
+	return tInfo.m_flGravity && ProjectileModifierFlags() & ModifiersEnum::LobAngles;
 }
 
-static bool ShouldLob(AmalgamMoveStorage& tMoveStorage, Info_t& tInfo)
+static bool ShouldLob(MoveSimStorage& tMoveStorage, Info_t& tInfo)
 {
 	return tInfo.m_bIgnoreTiming && (tMoveStorage.m_bFailed || tMoveStorage.m_pPlayer->m_fFlags() & FL_ONGROUND);
 }
 
 static bool AirSplash(C_TFWeaponBase* pWeapon, Info_t& tInfo)
 {
-	if (!(Vars::Aimbot::Projectile::Modifiers.Value & Vars::Aimbot::Projectile::ModifiersEnum::AirSplash) || tInfo.m_pProjectile)
+	if (!(ProjectileModifierFlags() & ModifiersEnum::AirSplash) || tInfo.m_pProjectile)
 		return false;
 
 	switch (pWeapon->GetWeaponID())
@@ -85,28 +138,28 @@ static bool AirSplash(C_TFWeaponBase* pWeapon, Info_t& tInfo)
 
 static int GetHitboxPriority(int nHitbox, Target_t& tTarget, Info_t& tInfo, C_BaseEntity* pProjectile = nullptr)
 {
-	if (!F::AimbotGlobal->IsHitboxValid(nHitbox, Vars::Aimbot::Projectile::Hitboxes.Value))
+	if (!F::AimbotGlobal->IsHitboxValid(nHitbox, ProjectileHitboxFlags()))
 		return -1;
 
 	int iHeadPriority = 0;
 	int iBodyPriority = 1;
 	int iFeetPriority = 2;
 
-	if (Vars::Aimbot::Projectile::Hitboxes.Value & Vars::Aimbot::Projectile::HitboxesEnum::Auto)
+	if (ProjectileHitboxFlags() & HitboxesEnum::Auto)
 	{
-		bool bHeadshot = Vars::Aimbot::Projectile::Hitboxes.Value & Vars::Aimbot::Projectile::HitboxesEnum::Head
+		bool bHeadshot = ProjectileHitboxFlags() & HitboxesEnum::Head
 			&& tTarget.m_iTargetType == TargetEnum::Player;
 		if (bHeadshot)
 		{
 			if (!pProjectile)
 				bHeadshot = tInfo.m_pWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW;
 			else
-				bHeadshot = pProjectile->GetClassId() == ETFClassIds::CTFProjectile_Arrow && CanHeadshot(pProjectile->As<C_TFProjectile_Arrow>());
+				bHeadshot = pProjectile->GetClassId() == ETFClassIds::CTFProjectile_Arrow && SDKUtils::CanHeadshot(pProjectile->As<C_TFProjectile_Arrow>());
 
 			// Amalgam also runs this for the bow; the charge damage check only
 			// makes sense for the sticky launcher, so gate it on the weapon
 			// instead of reading pipebomb netvars off whatever we hold
-			if (Vars::Aimbot::Projectile::Hitboxes.Value & Vars::Aimbot::Projectile::HitboxesEnum::BodyaimIfLethal
+			if (ProjectileHitboxFlags() & HitboxesEnum::BodyaimIfLethal
 				&& bHeadshot && !pProjectile && tInfo.m_pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER
 				&& tInfo.m_pWeapon->m_hOwner().GetEntryIndex() == I::EngineClient->GetLocalPlayer())
 			{
@@ -124,7 +177,7 @@ static int GetHitboxPriority(int nHitbox, Target_t& tTarget, Info_t& tInfo, C_Ba
 		if (bHeadshot)
 			tTarget.m_nAimedHitbox = HITBOX_HEAD;
 
-		const bool bLower = Vars::Aimbot::Projectile::Hitboxes.Value & Vars::Aimbot::Projectile::HitboxesEnum::PrioritizeFeet
+		const bool bLower = ProjectileHitboxFlags() & HitboxesEnum::PrioritizeFeet
 			&& tInfo.m_flRadius > 0.f
 			&& tTarget.m_iTargetType == TargetEnum::Player && tTarget.m_pEntity->As<C_TFPlayer>()->m_fFlags() & FL_ONGROUND;
 
@@ -145,11 +198,11 @@ static int GetHitboxPriority(int nHitbox, Target_t& tTarget, Info_t& tInfo, C_Ba
 
 // Amalgam's Huntsman head point: bone-accurate head center shifted by the
 // aim-bias vars, clamped into the bbox
-Directs_t CAmalgamAimbotProjectile::GetDirects()
+Directs_t CAimbotProjectileSim::GetDirects()
 {
 	Directs_t mDirects = {};
 
-	if (Vars::Aimbot::Projectile::SplashPrediction.Value == Vars::Aimbot::Projectile::SplashPredictionEnum::Only && m_tInfo.m_flRadius)
+	if (CFG::Aimbot_Amalgam_Projectile_Splash == SplashPredictionEnum::Only && m_tInfo.m_flRadius)
 		return mDirects;
 
 	auto& tTarget = *m_tInfo.m_pTarget;
@@ -169,7 +222,7 @@ Directs_t CAmalgamAimbotProjectile::GetDirects()
 		case BOUNDS_HEAD:
 			if (tTarget.m_nAimedHitbox == HITBOX_HEAD)
 			{
-				auto aBones = F::Backtrack.GetBones(tTarget.m_pEntity);
+				auto aBones = GetEntityBones(tTarget.m_pEntity);
 				if (!aBones)
 					break;
 
@@ -188,24 +241,24 @@ Directs_t CAmalgamAimbotProjectile::GetDirects()
 						flLow = 1.f;
 				}
 
-				const float flLerp = (Vars::Aimbot::Projectile::HuntsmanLerp.Value + (Vars::Aimbot::Projectile::HuntsmanLerpLow.Value - Vars::Aimbot::Projectile::HuntsmanLerp.Value) * flLow) / 100.f;
-				const float flAdd = Vars::Aimbot::Projectile::HuntsmanAdd.Value + (Vars::Aimbot::Projectile::HuntsmanAddLow.Value - Vars::Aimbot::Projectile::HuntsmanAdd.Value) * flLow;
+				const float flLerp = (50.f + (100.f - 50.f) * flLow) / 100.f;
+				const float flAdd = 0.f + (0.f - 0.f) * flLow;
 				vOff.z += flAdd;
 				vOff.z = vOff.z + (vMaxs.z - vOff.z) * flLerp;
 
-				vOff.x = std::clamp(vOff.x, vMins.x + Vars::Aimbot::Projectile::HuntsmanClamp.Value, vMaxs.x - Vars::Aimbot::Projectile::HuntsmanClamp.Value);
-				vOff.y = std::clamp(vOff.y, vMins.y + Vars::Aimbot::Projectile::HuntsmanClamp.Value, vMaxs.y - Vars::Aimbot::Projectile::HuntsmanClamp.Value);
-				vOff.z = std::clamp(vOff.z, vMins.z + Vars::Aimbot::Projectile::HuntsmanClamp.Value, vMaxs.z - Vars::Aimbot::Projectile::HuntsmanClamp.Value);
+				vOff.x = std::clamp(vOff.x, vMins.x + 5.f, vMaxs.x - 5.f);
+				vOff.y = std::clamp(vOff.y, vMins.y + 5.f, vMaxs.y - 5.f);
+				vOff.z = std::clamp(vOff.z, vMins.z + 5.f, vMaxs.z - 5.f);
 				mDirects[iPriority] = { vOff, iFlags };
 			}
 			else
-				mDirects[iPriority] = { Vec3(0, 0, vMaxs.z - Vars::Aimbot::Projectile::VerticalShift.Value), iFlags };
+				mDirects[iPriority] = { Vec3(0, 0, vMaxs.z - 5.f), iFlags };
 			break;
 		case BOUNDS_BODY:
 			mDirects[iPriority] = { Vec3(0, 0, (vMaxs.z - vMins.z) / 2), iFlags };
 			break;
 		case BOUNDS_FEET:
-			mDirects[iPriority] = { Vec3(0, 0, vMins.z + Vars::Aimbot::Projectile::VerticalShift.Value), iFlags };
+			mDirects[iPriority] = { Vec3(0, 0, vMins.z + 5.f), iFlags };
 			break;
 		}
 	}
@@ -213,11 +266,11 @@ Directs_t CAmalgamAimbotProjectile::GetDirects()
 	return mDirects;
 }
 
-Splashes_t CAmalgamAimbotProjectile::GetSplashes()
+Splashes_t CAimbotProjectileSim::GetSplashes()
 {
 	Splashes_t vSplashes = {};
 
-	if (Vars::Aimbot::Projectile::SplashPrediction.Value == Vars::Aimbot::Projectile::SplashPredictionEnum::Off || !m_tInfo.m_flRadius)
+	if (CFG::Aimbot_Amalgam_Projectile_Splash == SplashPredictionEnum::Off || !m_tInfo.m_flRadius)
 		return vSplashes;
 
 	vSplashes.push_back(PointFlagsEnum::Regular);
@@ -236,8 +289,8 @@ static std::vector<Vec3> ComputePoints(float flRadius, int iSamples)
 
 	vPoints.reserve(iSamples + 1);
 
-	const float flRotateX = Vars::Aimbot::Projectile::SplashRotateX.Value < 0.f ? SDK::StdRandomFloat(0.f, 360.f) : Vars::Aimbot::Projectile::SplashRotateX.Value;
-	const float flRotateY = Vars::Aimbot::Projectile::SplashRotateY.Value < 0.f ? SDK::StdRandomFloat(0.f, 360.f) : Vars::Aimbot::Projectile::SplashRotateY.Value;
+	const float flRotateX = SDKUtils::StdRandomFloat(0.f, 360.f);
+	const float flRotateY = SDKUtils::StdRandomFloat(0.f, 360.f);
 
 	constexpr float MATH_PI = 3.14159265358979f; // not "PI" - Utils/Math/Math.h #defines it
 	const float a = MATH_PI * (3.f - sqrtf(5.f));
@@ -263,7 +316,7 @@ static std::vector<Vec3> ComputePoints(float flRadius, int iSamples)
 static void HandleTrace(const Vec3& vPoint, std::vector<Setup_t>& vPoints, const Vec3& vTargetEye, Info_t& tInfo, std::function<bool()> fCheckPointTrace, std::function<bool()> fCheckPointAir, CGameTrace& trace, ITraceFilter& filter)
 {
 	// out
-	SDK::TraceHull(vTargetEye, vPoint, -tInfo.m_vHull, tInfo.m_vHull, MASK_SOLID, &filter, &trace);
+	SDKUtils::TraceHull(vTargetEye, vPoint, -tInfo.m_vHull, tInfo.m_vHull, MASK_SOLID, &filter, &trace);
 
 	if (fCheckPointAir())
 		return;
@@ -275,11 +328,11 @@ static void HandleTrace(const Vec3& vPoint, std::vector<Setup_t>& vPoints, const
 	if ((tInfo.m_vLocalEye - vTargetEye).Dot(vTargetEye - vPoint) > 0.f)
 		return;
 
-	SDK::Trace(vPoint, vTargetEye, MASK_SHOT, &filter, &trace);
+	SDKUtils::Trace(vPoint, vTargetEye, MASK_SHOT, &filter, &trace);
 	if (trace.DidHit())
 		return;
 
-	SDK::TraceHull(vPoint, vTargetEye, -tInfo.m_vHull, tInfo.m_vHull, MASK_SOLID, &filter, &trace);
+	SDKUtils::TraceHull(vPoint, vTargetEye, -tInfo.m_vHull, tInfo.m_vHull, MASK_SOLID, &filter, &trace);
 
 	if (fCheckPointTrace())
 		vPoints.emplace_back(trace.endpos);
@@ -301,9 +354,9 @@ static void HandleFace(Face_t& tFace, std::vector<Setup_t>& vPoints, float flDen
 	if (tFace.m_iType != FaceTypeEnum::Prop)
 		vVertices = tFace.m_vVertices;
 	else
-		Math::ExpandPolygon(vVertices, tFace.m_vVertices, tFace.m_vNormal, SDK::StdRandomFloat(0.f, DIST_EPSILON), &vTargetEye);
+		Math::ExpandPolygon(vVertices, tFace.m_vVertices, tFace.m_vNormal, SDKUtils::StdRandomFloat(0.f, DIST_EPSILON), &vTargetEye);
 
-	for (int i = 0, n = int(tFace.m_vVertices.size()), o = SDK::StdRandomInt(0, n - 1); ++i < n - 1;)
+	for (int i = 0, n = int(tFace.m_vVertices.size()), o = SDKUtils::StdRandomInt(0, n - 1); ++i < n - 1;)
 	{
 		Vec3& vVertex1 = tFace.m_vVertices[o], &vVertex2 = tFace.m_vVertices[(o + i) % n], &vVertex3 = tFace.m_vVertices[(o + i + 1) % n];
 
@@ -315,44 +368,44 @@ static void HandleFace(Face_t& tFace, std::vector<Setup_t>& vPoints, float flDen
 			continue;
 
 		// don't particularly like the hacky random epsilons
-		int iFaceClosest = SDK::StdRandomInt(iSamples < 2 ? 0 : iSamples < 4 ? 1 : 2, iSamples < 2 ? 1 : 2);
-		//int iEdgeClosest = SDK::StdRandomInt(iSamples < 8 ? 0 : iSamples < 16 ? 1 : 2, iSamples < 8 ? 1 : 2); // eats up a bit too much performance for my liking
-		int iEdgeRandom = SDK::StdRandomInt(iSamples < 8 ? 0 : iSamples < 16 ? 1 : 2, iSamples < 3 && iFaceClosest ? 0 : iSamples < 12 ? 1 : 2);
+		int iFaceClosest = SDKUtils::StdRandomInt(iSamples < 2 ? 0 : iSamples < 4 ? 1 : 2, iSamples < 2 ? 1 : 2);
+		//int iEdgeClosest = SDKUtils::StdRandomInt(iSamples < 8 ? 0 : iSamples < 16 ? 1 : 2, iSamples < 8 ? 1 : 2); // eats up a bit too much performance for my liking
+		int iEdgeRandom = SDKUtils::StdRandomInt(iSamples < 8 ? 0 : iSamples < 16 ? 1 : 2, iSamples < 3 ? 0 : iSamples < 12 ? 1 : 2);
 		iEdgeRandom += iFaceClosest; //iEdgeClosest += iFaceClosest, iEdgeRandom += iEdgeClosest; //, iSamples += iEdgeRandom;
 		for (int s = 0; s < iSamples; s++)
 		{
 			Vec3 vPoint, vNormal = tFace.m_vNormal; bool bInside = true;
 			if (s < iFaceClosest) // closest point
 			{
-				float flEpsilon = s == 0 && (tFace.m_iType == FaceTypeEnum::BoxBrush || iFaceClosest != 1 || SDK::StdRandomBool()) ? CALC_EPSILON : DIST_EPSILON;
+				float flEpsilon = s == 0 && (tFace.m_iType == FaceTypeEnum::BoxBrush || iFaceClosest != 1 || SDKUtils::StdRandomBool()) ? CALC_EPSILON : DIST_EPSILON;
 				vPoint = Math::ClosestPointOnTriangle(vTargetOrigin, vVertex1, vVertex2, vVertex3, &bInside);
-				vPoint += Vec3(SDK::StdRandomFloat(-flEpsilon, flEpsilon), SDK::StdRandomFloat(-flEpsilon, flEpsilon), SDK::StdRandomFloat(-flEpsilon, flEpsilon));
+				vPoint += Vec3(SDKUtils::StdRandomFloat(-flEpsilon, flEpsilon), SDKUtils::StdRandomFloat(-flEpsilon, flEpsilon), SDKUtils::StdRandomFloat(-flEpsilon, flEpsilon));
 			}
 			//else if (s < iEdgeClosest) // closest point on edge
 			//{
-			//	float flEpsilon = SDK::StdRandomBool() ? CALC_EPSILON : DIST_EPSILON; bInside = false;
-			//	switch (SDK::StdRandomInt(0, 2))
+			//	float flEpsilon = SDKUtils::StdRandomBool() ? CALC_EPSILON : DIST_EPSILON; bInside = false;
+			//	switch (SDKUtils::StdRandomInt(0, 2))
 			//	{
 			//	case 0: vPoint = Math::ClosestPointOnLine(vTargetOrigin, vVertex1, vVertex2); break;
 			//	case 1: vPoint = Math::ClosestPointOnLine(vTargetOrigin, vVertex2, vVertex3); break;
 			//	case 2: vPoint = Math::ClosestPointOnLine(vTargetOrigin, vVertex3, vVertex1); break;
 			//	}
-			//	vPoint += { SDK::StdRandomFloat(-flEpsilon, flEpsilon), SDK::StdRandomFloat(-flEpsilon, flEpsilon), SDK::StdRandomFloat(-flEpsilon, flEpsilon) };
+			//	vPoint += { SDKUtils::StdRandomFloat(-flEpsilon, flEpsilon), SDKUtils::StdRandomFloat(-flEpsilon, flEpsilon), SDKUtils::StdRandomFloat(-flEpsilon, flEpsilon) };
 			//}
 			else if (s < iEdgeRandom) // random point on edge
 			{
-				float flEpsilon = SDK::StdRandomBool() ? CALC_EPSILON : DIST_EPSILON; bInside = false;
-				switch (SDK::StdRandomInt(0, 2))
+				float flEpsilon = SDKUtils::StdRandomBool() ? CALC_EPSILON : DIST_EPSILON; bInside = false;
+				switch (SDKUtils::StdRandomInt(0, 2))
 				{
-				case 0: vPoint = vVertex1.Lerp(vVertex2, SDK::StdRandomFloat()); break;
-				case 1: vPoint = vVertex2.Lerp(vVertex3, SDK::StdRandomFloat()); break;
-				case 2: vPoint = vVertex3.Lerp(vVertex1, SDK::StdRandomFloat()); break;
+				case 0: vPoint = vVertex1.Lerp(vVertex2, SDKUtils::StdRandomFloat()); break;
+				case 1: vPoint = vVertex2.Lerp(vVertex3, SDKUtils::StdRandomFloat()); break;
+				case 2: vPoint = vVertex3.Lerp(vVertex1, SDKUtils::StdRandomFloat()); break;
 				}
-				vPoint += Vec3(SDK::StdRandomFloat(-flEpsilon, flEpsilon), SDK::StdRandomFloat(-flEpsilon, flEpsilon), SDK::StdRandomFloat(-flEpsilon, flEpsilon));
+				vPoint += Vec3(SDKUtils::StdRandomFloat(-flEpsilon, flEpsilon), SDKUtils::StdRandomFloat(-flEpsilon, flEpsilon), SDKUtils::StdRandomFloat(-flEpsilon, flEpsilon));
 			}
 			else // random point on face
 			{
-				float flRandom1 = SDK::StdRandomFloat(), flRandom2 = SDK::StdRandomFloat();
+				float flRandom1 = SDKUtils::StdRandomFloat(), flRandom2 = SDKUtils::StdRandomFloat();
 				if (flRandom1 + flRandom2 > 1)
 					flRandom1 = 1 - flRandom1, flRandom2 = 1 - flRandom2;
 				vPoint = vVertex1 + vDir21 * flRandom1 + vDir31 * flRandom2;
@@ -367,10 +420,10 @@ static void HandleFace(Face_t& tFace, std::vector<Setup_t>& vPoints, float flDen
 					Math::ExpandPolygon(vEpsilon = vVertices, tFace.m_vNormal, -DIST_EPSILON);
 
 				Vec3 vPolygonNormal = vNormal;
-				vPoint = Math::ClosestPointOnPolygon(vPoint, vEpsilon, vPolygonNormal, &bInside);
+				Math::ClosestPointOnPolygon(vPoint, vEpsilon, vPolygonNormal, &bInside);
 
 				if (tFace.m_iType == FaceTypeEnum::Prop && !bInside)
-					vPoint += tFace.m_vNormal * SDK::StdRandomFloat(0.f, DIST_EPSILON);
+					vPoint += tFace.m_vNormal * SDKUtils::StdRandomFloat(0.f, DIST_EPSILON);
 			}
 
 			if (bInside && I::EngineTrace->GetPointContents(vPoint) & MASK_SOLID)
@@ -380,7 +433,7 @@ static void HandleFace(Face_t& tFace, std::vector<Setup_t>& vPoints, float flDen
 			if (!bInside)
 				vNormal = (vTargetEye - vPoint).Normalized(), nSubMask &= ~CONTENTS_MOVEABLE;
 
-			SDK::Trace(vPoint + vNormal * tInfo.m_flNormalOffset, vTargetEye, nSubMask, &filter, &trace);
+			SDKUtils::Trace(vPoint + vNormal * tInfo.m_flNormalOffset, vTargetEye, nSubMask, &filter, &trace);
 			if (trace.fraction != 1.f)
 				continue;
 
@@ -389,12 +442,12 @@ static void HandleFace(Face_t& tFace, std::vector<Setup_t>& vPoints, float flDen
 	}
 }
 
-void CAmalgamAimbotProjectile::SetupSplashPoints(Vec3& vOrigin, std::vector<Setup_t>& vSplashPoints, int iFlags)
+void CAimbotProjectileSim::SetupSplashPoints(Vec3& vOrigin, std::vector<Setup_t>& vSplashPoints, int iFlags)
 {
 	vSplashPoints.clear();
 
 	CGameTrace trace = {};
-	CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
+	CTraceFilterWorldAndProps filter = {};
 
 	m_tInfo.m_pTarget->m_vPos = vOrigin;
 	const Vec3 vTargetEye = vOrigin + m_tInfo.m_vTargetEye;
@@ -420,13 +473,13 @@ void CAmalgamAimbotProjectile::SetupSplashPoints(Vec3& vOrigin, std::vector<Setu
 
 	// Trace mode samples a sphere around the target with hull traces; Face
 	// mode (default) samples the map's own collision geometry through
-	// F::AmalgamWorld (Amalgam's F::World port) instead - in Face mode the
+	// F::WorldFaces (Amalgam's F::World port) instead - in Face mode the
 	// sphere contributes only its straight-down center point, exactly like
 	// Amalgam: the remaining sphere points would just offer candidates on
 	// geometry the face samples already cover, further from the enemy
-	const bool bFaceMode = Vars::Aimbot::Projectile::SplashMode.Value == Vars::Aimbot::Projectile::SplashModeEnum::Face;
+	const bool bFaceMode = CFG::Aimbot_Amalgam_Projectile_SplashMode == SplashModeEnum::Face;
 	int iPoints = bFaceMode && !bAirSplash ? 0
-		: !m_tInfo.m_flGravity ? Vars::Aimbot::Projectile::SplashPointsDirect.Value : Vars::Aimbot::Projectile::SplashPointsArc.Value;
+		: !m_tInfo.m_flGravity ? CFG::Aimbot_Amalgam_Projectile_SplashPoints : CFG::Aimbot_Amalgam_Projectile_SplashPoints;
 	{
 		auto vPoints = ComputePoints(flRadius, iPoints);
 
@@ -455,12 +508,7 @@ void CAmalgamAimbotProjectile::SetupSplashPoints(Vec3& vOrigin, std::vector<Setu
 			auto fCheckPointAir = [&]()
 			{
 				if (bAirSplash && !trace.DidHit())
-				{
-					if (!Vars::Aimbot::Projectile::SplashAirCount.Value)
-						vSplashPoints.emplace_back(vPoints[i] * SDK::StdRandomFloat(0.f, 1.f) + vTargetCenter, PointTypeEnum::Air);
-					else for (float r = 0; r < Vars::Aimbot::Projectile::SplashAirCount.Value; r++)
-						vSplashPoints.emplace_back(vPoints[i] * r / Vars::Aimbot::Projectile::SplashAirCount.Value + vTargetCenter, PointTypeEnum::Air);
-				}
+					vSplashPoints.emplace_back(vPoints[i] * SDKUtils::StdRandomFloat(0.f, 1.f) + vTargetCenter, PointTypeEnum::Air);
 				if (bFaceMode && i) // Amalgam skips non-center sphere points in Face mode
 					return true;
 				return !trace.DidHit();
@@ -477,7 +525,7 @@ void CAmalgamAimbotProjectile::SetupSplashPoints(Vec3& vOrigin, std::vector<Setu
 	}
 
 	// Face
-	if (float flDensity = !m_tInfo.m_flGravity ? Vars::Aimbot::Projectile::SplashDensityDirect.Value : Vars::Aimbot::Projectile::SplashDensityArc.Value;
+	if (float flDensity = !m_tInfo.m_flGravity ? CFG::Aimbot_Amalgam_Projectile_SplashDensity_Direct : CFG::Aimbot_Amalgam_Projectile_SplashDensity_Arc;
 		bFaceMode && flDensity)
 	{
 		Vec3 vMins = vTargetCenter - flRadius, vMaxs = vTargetCenter + flRadius;
@@ -499,11 +547,11 @@ void CAmalgamAimbotProjectile::SetupSplashPoints(Vec3& vOrigin, std::vector<Setu
 			}
 			return fCheckNormal(vNormal, vPoint, &vAngle);
 		};
-		F::AmalgamWorld->SetNormalValidCallback(&fNormalValid);
-		std::vector<Face_t> vFaces = F::AmalgamWorld->GetFacesInAABB(vMins, vMaxs, MASK_SOLID, &filter);
-		F::AmalgamWorld->SetNormalValidCallback();
+		F::WorldFaces->SetNormalValidCallback(&fNormalValid);
+		std::vector<Face_t> vFaces = F::WorldFaces->GetFacesInAABB(vMins, vMaxs, MASK_SOLID, &filter);
+		F::WorldFaces->SetNormalValidCallback();
 
-		float flCutoff = Vars::Aimbot::Projectile::SplashSamplesCutoff.Value * powf(float(vFaces.size()), 2); s_flTotal = SDK::StdRandomFloat();
+		float flCutoff = 0.0000001f * powf(float(vFaces.size()), 2); s_flTotal = SDKUtils::StdRandomFloat();
 		for (auto& tFace : vFaces)
 		{
 			HandleFace(tFace, vSplashPoints, flDensity, flRadius, flCutoff, vTargetEye, vTargetCenter, vOrigin, m_tInfo, trace, filter);
@@ -513,27 +561,27 @@ void CAmalgamAimbotProjectile::SetupSplashPoints(Vec3& vOrigin, std::vector<Setu
 	if (vSplashPoints.size() > 1)
 	{	// Amalgam shuffles everything but the first point (std::shuffle)
 		for (int i = int(vSplashPoints.size()) - 1; i > 0; i--)
-			std::swap(vSplashPoints[i], vSplashPoints[SDK::StdRandomInt(1, i)]);
+			std::swap(vSplashPoints[i], vSplashPoints[SDKUtils::StdRandomInt(1, i)]);
 	}
 }
 
-std::vector<Point_t> CAmalgamAimbotProjectile::GetSplashPoints(Vec3 vOrigin, std::vector<Setup_t>& vSplashPoints, int iSimTime, int iFlags, bool bFirst)
+std::vector<Point_t> CAimbotProjectileSim::GetSplashPoints(Vec3 vOrigin, std::vector<Setup_t>& vSplashPoints, int iSimTime, int iFlags, bool bFirst)
 {
 	std::vector<Point_t> vPoints = {};
 
 	m_tInfo.m_pTarget->m_vPos = vOrigin;
 	const bool bLob = iFlags & CalculateFlagsEnum::LobAngle;
 	const int iTolerance = m_tInfo.m_bIgnoreTiming && bLob ? std::numeric_limits<int>::max() : m_tInfo.m_iArmTime ? -1 : 0;
-	const int iLimit = !bFirst ? m_tInfo.m_iSplashRestrict : std::max(m_tInfo.m_iSplashRestrict, Vars::Aimbot::Projectile::SplashRestrictFirst.Value);
+	const int iLimit = !bFirst ? m_tInfo.m_iSplashRestrict : std::max(m_tInfo.m_iSplashRestrict, 25);
 	const bool bSort = !bLob || !m_tInfo.m_bIgnoreTiming;
 
 	const float flRadiusSqr = powf(m_tInfo.m_flRadius, 2);
 	float flRadiusAirSqr = flRadiusSqr;
-	if (Vars::Aimbot::Projectile::Modifiers.Value & Vars::Aimbot::Projectile::ModifiersEnum::AirSplash && !m_tInfo.m_pProjectile && m_tInfo.m_pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)
+	if (ProjectileModifierFlags() & ModifiersEnum::AirSplash && !m_tInfo.m_pProjectile && m_tInfo.m_pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)
 	{	// sticky airdet radius ramps in over tf_sticky_radius_ramp_time
-		static auto tf_grenadelauncher_livetime = U::ConVars.FindVar("tf_grenadelauncher_livetime");
-		static auto tf_sticky_radius_ramp_time = U::ConVars.FindVar("tf_sticky_radius_ramp_time");
-		static auto tf_sticky_airdet_radius = U::ConVars.FindVar("tf_sticky_airdet_radius");
+		static auto tf_grenadelauncher_livetime = I::CVar->FindVar("tf_grenadelauncher_livetime");
+		static auto tf_sticky_radius_ramp_time = I::CVar->FindVar("tf_sticky_radius_ramp_time");
+		static auto tf_sticky_airdet_radius = I::CVar->FindVar("tf_sticky_airdet_radius");
 		const float flLiveTime = tf_grenadelauncher_livetime->GetFloat();
 		const float flRampTime = tf_sticky_radius_ramp_time->GetFloat();
 		const float flAirdetRadius = tf_sticky_airdet_radius->GetFloat();
@@ -548,7 +596,9 @@ std::vector<Point_t> CAmalgamAimbotProjectile::GetSplashPoints(Vec3 vOrigin, std
 		if (tPoint.m_tSolution.m_iCalculated != CalculatedEnum::Good)
 		{
 			if (tPoint.m_tSolution.m_iCalculated == CalculatedEnum::Bad)
+			{
 				it = vSplashPoints.erase(it);
+			}
 			else
 				++it;
 			continue;
@@ -601,34 +651,6 @@ std::vector<Point_t> CAmalgamAimbotProjectile::GetSplashPoints(Vec3 vOrigin, std
 	return vPoints;
 }
 
-// Amalgam's PullPoint wrapper: raise the local eye by the trajectory droop,
-// add the spawn offset, then slide the point onto the target AABB
-static Vec3 PullPoint(const Vec3& vPoint, Vec3 vLocalPos, Info_t& tInfo, const Vec3& vTargetPos, const Vec3& vMins, const Vec3& vMaxs)
-{
-	auto fHeightenLocalPos = [&]()
-	{	// basic trajectory pass
-		const float flGrav = tInfo.m_flGravity;
-		if (!flGrav)
-			return vPoint;
-
-		const Vec3 vDelta = vTargetPos - vLocalPos;
-		const float flDist = vDelta.Length2D();
-
-		const float flRoot = powf(tInfo.m_flVelocity, 4) - flGrav * (flGrav * powf(flDist, 2) + 2.f * vDelta.z * powf(tInfo.m_flVelocity, 2));
-		if (flRoot < 0.f)
-			return vPoint;
-		const float flPitch = atan((powf(tInfo.m_flVelocity, 2) - sqrt(flRoot)) / (flGrav * flDist));
-
-		const float flTime = flDist / (cos(flPitch) * tInfo.m_flVelocity) - tInfo.m_flOffsetTime;
-		return vLocalPos + Vec3(0, 0, flGrav * powf(flTime, 2) / 2);
-	};
-
-	vLocalPos = fHeightenLocalPos();
-	Vec3 vForward, vRight, vUp; Math::AngleVectors(Math::CalcAngle(vLocalPos, vPoint), &vForward, &vRight, &vUp);
-	vLocalPos += (vForward * tInfo.m_vOffset.x) + (vRight * tInfo.m_vOffset.y) + (vUp * tInfo.m_vOffset.z);
-	return Math::PullPoint(vPoint, vLocalPos, vTargetPos, vMins, vMaxs);
-}
-
 // vphysics drag compensation factors per projectile model. Amalgam calls these
 // "stupid magic values" themselves - ported verbatim so pipes land where
 // Amalgam's do.
@@ -652,7 +674,7 @@ static float GetDrag(float flVelocity, ProjectileInfo* pInfo, int iFlags)
 			switch (pInfo->m_uType)
 			{
 			case FNV1A::Hash32Const("models/weapons/w_models/w_grenade_grenadelauncher.mdl"):
-				if (!SDK::AttribHookValue(0, "grenade_no_spin", pInfo->m_pWeapon))
+				if (!SDKUtils::AttribHookValue(0, "grenade_no_spin", pInfo->m_pWeapon))
 					return Math::RemapVal(flVelocity, 1217.f, k_flMaxVelocity, 0.120f, 0.200f); // 0.120 normal, 0.200 capped, 0.300 v3000
 				else
 					return Math::RemapVal(flVelocity, 1217.f, k_flMaxVelocity, 0.060f, 0.085f); // 0.060 normal, 0.085 capped, 0.120 v3000
@@ -678,13 +700,13 @@ static float GetDrag(float flVelocity, ProjectileInfo* pInfo, int iFlags)
 		};
 		auto fGetLobDrag = [&]()
 		{
-			if (!(Vars::Aimbot::Projectile::Modifiers.Value & Vars::Aimbot::Projectile::ModifiersEnum::LobAngles))
+			if (!(ProjectileModifierFlags() & ModifiersEnum::LobAngles))
 				return 0.f;
 
 			switch (pInfo->m_uType)
 			{
 			case FNV1A::Hash32Const("models/weapons/w_models/w_grenade_grenadelauncher.mdl"):
-				if (!SDK::AttribHookValue(0, "grenade_no_spin", pInfo->m_pWeapon))
+				if (!SDKUtils::AttribHookValue(0, "grenade_no_spin", pInfo->m_pWeapon))
 					return Math::RemapVal(flVelocity, 1217.f, k_flMaxVelocity, 0.056f, 0.062f);
 				else
 					return Math::RemapVal(flVelocity, 1217.f, k_flMaxVelocity, 0.030f, 0.033f);
@@ -765,16 +787,13 @@ static bool GetAngle(const Vec3& vLocalPos, const Vec3& vTargetPos, int iFlags, 
 
 	flTime = flDist / (flVelocity * cos(flPitch));
 
-	if (Vars::Aimbot::Projectile::TimeOverride.Value)
-		flTime *= Vars::Aimbot::Projectile::TimeOverride.Value;
-
 	return true;
 }
 
 // Amalgam's CalculateAngle: basic trajectory pass, then (when the weapon
 // spawns the projectile off the eye) a second pass from the real spawn
 // position including the spawn-clip correction
-void CAmalgamAimbotProjectile::CalculateAngle(const Vec3& vLocalPos, const Vec3& vTargetPos, int iSimTime, Solution_t& tOut, int iFlags, int iTolerance, float flRoll)
+void CAimbotProjectileSim::CalculateAngle(const Vec3& vLocalPos, const Vec3& vTargetPos, int iSimTime, Solution_t& tOut, int iFlags, int iTolerance, float flRoll)
 {
 	if (tOut.m_iCalculated != CalculatedEnum::Pending)
 		return;
@@ -868,7 +887,7 @@ void CAmalgamAimbotProjectile::CalculateAngle(const Vec3& vLocalPos, const Vec3&
 // Amalgam's TestAngle: simulates the projectile along the solution angle and
 // requires the first contact to be the point itself (direct), near the point
 // on a static surface (geometry), or near the point in mid-air (airdet)
-bool CAmalgamAimbotProjectile::TestAngle(const Vec3& vPoint, const Vec3& vAngles, int iSimTime, int iType, int iFlags, bool bSecondTest)
+bool CAimbotProjectileSim::TestAngle(const Vec3& vPoint, const Vec3& vAngles, int iSimTime, int iType, int iFlags, bool bSecondTest)
 {
 	auto pLocal = m_tInfo.m_pLocal;
 	auto pWeapon = m_tInfo.m_pWeapon;
@@ -919,8 +938,8 @@ bool CAmalgamAimbotProjectile::TestAngle(const Vec3& vPoint, const Vec3& vAngles
 
 	if (!m_tProjInfo.m_flGravity)
 	{
-		SDK::TraceHull(m_tProjInfo.m_vPos, vPoint, -m_tProjInfo.m_vHull, m_tProjInfo.m_vHull, nMask, &filter, &trace);
-		if (Math::FullFraction(m_tProjInfo.m_vPos, vPoint, trace) < 0.999f && trace.m_pEnt != tTarget.m_pEntity)
+		SDKUtils::TraceHull(m_tProjInfo.m_vPos, vPoint, -m_tProjInfo.m_vHull, m_tProjInfo.m_vHull, nMask, &filter, &trace);
+		if (FullFraction(m_tProjInfo.m_vPos, vPoint, trace) < 0.999f && trace.m_pEnt != tTarget.m_pEntity)
 		{
 			// straight-line shots (rockets etc.) fail here, before the flight
 			// loop below ever runs - still counts as "cover blocked the shot"
@@ -934,9 +953,9 @@ bool CAmalgamAimbotProjectile::TestAngle(const Vec3& vPoint, const Vec3& vAngles
 	Vec3 vNew = F::ProjSim.GetOrigin();
 	const int iTimingTolerance = TIME_TO_TICKS(m_tInfo.m_flBoundsTime);
 	const float flRadiusSqr = iType != PointTypeEnum::Direct ? powf(m_tProjInfo.m_flVelocity * TICK_INTERVAL + m_tProjInfo.m_vHull.z, 2) : std::numeric_limits<float>::max();
-	const int iTraceInterval = iFlags == PointFlagsEnum::Lob ? Vars::Aimbot::Projectile::LobTraceInterval.Value
-		: iType != PointTypeEnum::Direct ? Vars::Aimbot::Projectile::SplashTraceInterval.Value
-		: Vars::Aimbot::Projectile::DirectTraceInterval.Value;
+	const int iTraceInterval = iFlags == PointFlagsEnum::Lob ? 20
+		: iType != PointTypeEnum::Direct ? 10
+		: 1;
 
 	const RestoreInfo_t tOriginal = { tTarget.m_pEntity->GetAbsOrigin(), tTarget.m_pEntity->m_vecMins(), tTarget.m_pEntity->m_vecMaxs() };
 	tTarget.m_pEntity->SetAbsOrigin(tTarget.m_vPos);
@@ -955,7 +974,7 @@ bool CAmalgamAimbotProjectile::TestAngle(const Vec3& vPoint, const Vec3& vAngles
 			continue;
 
 		const Vec3 vOld = vNew; vNew = F::ProjSim.GetOrigin();
-		SDK::TraceHull(vOld, vNew, -m_tProjInfo.m_vHull, m_tProjInfo.m_vHull, nMask, &filter, &trace);
+		SDKUtils::TraceHull(vOld, vNew, -m_tProjInfo.m_vHull, m_tProjInfo.m_vHull, nMask, &filter, &trace);
 
 		bool bHit = false;
 		switch (iType)
@@ -988,11 +1007,11 @@ bool CAmalgamAimbotProjectile::TestAngle(const Vec3& vPoint, const Vec3& vAngles
 			if (bValid && iType != PointTypeEnum::Direct)
 			{
 				CGameTrace trace2 = {};
-				SDK::Trace(trace.endpos + trace.plane.normal * m_tInfo.m_flNormalOffset, tTarget.m_vPos + m_tInfo.m_vTargetEye, MASK_SHOT, &filter, &trace2);
+				SDKUtils::Trace(trace.endpos + trace.plane.normal * m_tInfo.m_flNormalOffset, tTarget.m_vPos + m_tInfo.m_vTargetEye, MASK_SHOT, &filter, &trace2);
 				bValid = trace2.fraction == 1.f;
 			}
 
-			if (bValid && Vars::Aimbot::Projectile::IntervalRetest.Value && iTraceInterval != 1)
+			if (bValid && true && iTraceInterval != 1)
 			{	// retest the skipped ticks so a wall crossed between intervals voids the hit
 				CGameTrace trace2 = {}; Vec3 vRetestOld, vRetestNew;
 				int iTicks = int(m_tProjInfo.m_vPath.size());
@@ -1002,7 +1021,7 @@ bool CAmalgamAimbotProjectile::TestAngle(const Vec3& vPoint, const Vec3& vAngles
 				for (int i = 1; i < iTicks; i++)
 				{
 					vRetestOld = m_tProjInfo.m_vPath[i - 1], vRetestNew = m_tProjInfo.m_vPath[i];
-					SDK::TraceHull(vRetestOld, vRetestNew, -m_tProjInfo.m_vHull, m_tProjInfo.m_vHull, nMask, &filter, &trace2);
+					SDKUtils::TraceHull(vRetestOld, vRetestNew, -m_tProjInfo.m_vHull, m_tProjInfo.m_vHull, nMask, &filter, &trace2);
 					bValid = !trace2.DidHit();
 
 					if (!bValid)
@@ -1010,23 +1029,23 @@ bool CAmalgamAimbotProjectile::TestAngle(const Vec3& vPoint, const Vec3& vAngles
 				}
 			}
 
-			if (bValid)
-			{
-				if (iTraceInterval != 1 && iType != PointTypeEnum::Direct)
+				if (bValid)
 				{
-					const int iInterval = n % iTraceInterval ? n % iTraceInterval : iTraceInterval;
-					const int iPopCount = ceilf(iInterval - trace.fraction * iInterval);
-					for (int i = 0; i < iPopCount && !m_tProjInfo.m_vPath.empty(); i++)
-						m_tProjInfo.m_vPath.pop_back();
-				}
+					if (iTraceInterval != 1 && iType != PointTypeEnum::Direct)
+					{
+						const int iInterval = n % iTraceInterval ? n % iTraceInterval : iTraceInterval;
+						const int iPopCount = ceilf(iInterval - trace.fraction * iInterval);
+						for (int i = 0; i < iPopCount && !m_tProjInfo.m_vPath.empty(); i++)
+							m_tProjInfo.m_vPath.pop_back();
+					}
 
 				// head retest for smooth/assistive aim (Amalgam: closest hitbox
 				// to the impact must actually be the aimed head)
 				if (tTarget.m_nAimedHitbox == HITBOX_HEAD && !bSecondTest
-					&& (Vars::Aimbot::General::AimType.Value == Vars::Aimbot::General::AimTypeEnum::Smooth
-					|| Vars::Aimbot::General::AimType.Value == Vars::Aimbot::General::AimTypeEnum::Assistive))
+					&& (AimTypeValue() == AimTypeEnum::Smooth
+					|| AimTypeValue() == AimTypeEnum::Assistive))
 				{
-					auto aBones = F::Backtrack.GetBones(tTarget.m_pEntity);
+					auto aBones = GetEntityBones(tTarget.m_pEntity);
 					if (!aBones)
 						break;
 
@@ -1087,7 +1106,7 @@ bool CAmalgamAimbotProjectile::TestAngle(const Vec3& vPoint, const Vec3& vAngles
 	return bDidHit;
 }
 
-bool CAmalgamAimbotProjectile::HandlePoint(const Vec3& vOrigin, int iSimTime, float flPitch, float flYaw, float flTime, const Vec3& vPoint, int iType, int iFlags)
+bool CAimbotProjectileSim::HandlePoint(const Vec3& vOrigin, int iSimTime, float flPitch, float flYaw, float flTime, const Vec3& vPoint, int iType, int iFlags)
 {
 	bool bReturn = false;
 
@@ -1125,10 +1144,10 @@ bool CAmalgamAimbotProjectile::HandlePoint(const Vec3& vOrigin, int iSimTime, fl
 		// Anti-cheat compatibility force-disables this: extreme viewangle roll
 		// on an attack command is a trivial community-anticheat detection.
 		if (!m_iResult && m_bObstructed
-			&& Vars::Aimbot::General::AimType.Value == Vars::Aimbot::General::AimTypeEnum::Silent
-			&& Vars::Aimbot::Projectile::Neckbreaker.Value && !CFG::Misc_AntiCheat_Enabled)
+			&& AimTypeValue() == AimTypeEnum::Silent
+			&& CFG::Aimbot_Projectile_Neckbreaker && !CFG::Misc_AntiCheat_Enabled)
 		{
-			const int iStep = std::max(Vars::Aimbot::Projectile::NeckbreakerStep.Value, 15);
+			const int iStep = std::max(CFG::Aimbot_Projectile_NeckbreakerStep, 15);
 			const bool bLob = iFlags & PointFlagsEnum::Lob;
 			int iSolveFlags = CalculateFlagsEnum::Accuracy;
 			if (bLob)
@@ -1158,13 +1177,13 @@ bool CAmalgamAimbotProjectile::HandlePoint(const Vec3& vOrigin, int iSimTime, fl
 		// yet, so it can't downgrade an already-solved point
 		if (!m_iResult)
 		{
-			switch (Vars::Aimbot::General::AimType.Value)
+			switch (AimTypeValue())
 			{
-			case Vars::Aimbot::General::AimTypeEnum::Smooth:
-				if (Vars::Aimbot::General::AssistStrength.Value == 100.f)
+			case AimTypeEnum::Smooth:
+				if (AIM_ASSIST_STRENGTH == 100.f)
 					break;
 				[[fallthrough]];
-			case Vars::Aimbot::General::AimTypeEnum::Assistive:
+			case AimTypeEnum::Assistive:
 			{
 				const Vec3 vPlainAngles = { flPitch, flYaw, 0.f };
 				if (TestAngle(vPoint, vPlainAngles, iSimTime, iType, PointFlagsEnum::Regular, true))
@@ -1202,7 +1221,7 @@ bool CAmalgamAimbotProjectile::HandlePoint(const Vec3& vOrigin, int iSimTime, fl
 	return bReturn && m_iResult == 1;
 }
 
-bool CAmalgamAimbotProjectile::HandleDirect(DirectHistory_t& mDirectHistory)
+bool CAimbotProjectileSim::HandleDirect(DirectHistory_t& mDirectHistory)
 {
 	bool bReturn = false;
 	if (mDirectHistory.empty())
@@ -1226,7 +1245,7 @@ bool CAmalgamAimbotProjectile::HandleDirect(DirectHistory_t& mDirectHistory)
 		});
 	m_flTimeTo = vDirectHistory.front().m_flTime + m_tInfo.m_flLatency;
 
-	m_iRollBudget = 360 / std::max(Vars::Aimbot::Projectile::NeckbreakerStep.Value, 15);
+	m_iRollBudget = 360 / std::max(CFG::Aimbot_Projectile_NeckbreakerStep, 15);
 	for (auto& tHistory : vDirectHistory)
 	{
 		if (HandlePoint(tHistory.m_vOrigin, tHistory.m_iSimtime, tHistory.m_flPitch, tHistory.m_flYaw, tHistory.m_flTime, tHistory.m_vPoint, PointTypeEnum::Direct, iType))
@@ -1240,7 +1259,7 @@ bool CAmalgamAimbotProjectile::HandleDirect(DirectHistory_t& mDirectHistory)
 	return bReturn;
 }
 
-bool CAmalgamAimbotProjectile::HandleSplash(SplashHistory_t& mSplashHistory)
+bool CAimbotProjectileSim::HandleSplash(SplashHistory_t& mSplashHistory)
 {
 	bool bReturn = false;
 	if (mSplashHistory.empty())
@@ -1259,7 +1278,7 @@ bool CAmalgamAimbotProjectile::HandleSplash(SplashHistory_t& mSplashHistory)
 	if (iType == PointFlagsEnum::Lob)
 		iFlags |= CalculateFlagsEnum::LobAngle;
 	// capped pool of roll attempts shared by every point this evaluation
-	m_iRollBudget = 360 / std::max(Vars::Aimbot::Projectile::NeckbreakerStep.Value, 15);
+	m_iRollBudget = 360 / std::max(CFG::Aimbot_Projectile_NeckbreakerStep, 15);
 	SetupSplashPoints(vSplashHistory.front().m_vOrigin, m_vSplashPoints, iFlags);
 	if (!m_vSplashPoints.empty())
 	{
@@ -1290,7 +1309,7 @@ bool CAmalgamAimbotProjectile::HandleSplash(SplashHistory_t& mSplashHistory)
 	return bReturn;
 }
 
-int CAmalgamAimbotProjectile::CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, bool bUpdate)
+int CAimbotProjectileSim::CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, bool bUpdate)
 {
 	m_tMoveStorage = {};
 
@@ -1319,8 +1338,13 @@ int CAmalgamAimbotProjectile::CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TF
 	}
 
 	m_tInfo = { pLocal, pWeapon, &tTarget };
-	m_tInfo.m_vLocalEye = GetShootPos(pLocal);
-	m_tInfo.m_flLatency = F::Backtrack.GetReal() + TICKS_TO_TIME(F::Backtrack.GetAnticipatedChoke());
+	// Amalgam's CanHit anchors the solution to the LIVE eye (pLocal->
+	// GetShootPos); their frozen Ticks::GetShootPos is only for targeting. The
+	// frozen batch value here made a mid-batch fire validate against the
+	// batch's first-command eye instead of the firing command's own position
+	m_tInfo.m_vLocalEye = (Shifting::bShifting && Shifting::nCurrentShiftTick)
+		? pLocal->GetShootPos() : GetShootPos(pLocal);
+	m_tInfo.m_flLatency = SDKUtils::GetLatency() + TICKS_TO_TIME(AnticipatedChokeTicks());
 	tTarget.m_vPos = tTarget.m_pEntity->m_vecOrigin();
 
 	if (bIsPlayer)
@@ -1347,8 +1371,8 @@ int CAmalgamAimbotProjectile::CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TF
 	// Amalgam's DEFAULT_GRAVITY (800) feeds them. Without this every arcing
 	// solution (pipes/stickies) solved flat and the simulated shot fell short.
 	m_tInfo.m_flGravity = m_tProjInfo.m_flGravity * 800.f;
-	m_tInfo.m_iSplashRestrict = !m_tInfo.m_flGravity ? Vars::Aimbot::Projectile::SplashRestrictDirect.Value : Vars::Aimbot::Projectile::SplashRestrictArc.Value;
-	m_tInfo.m_flRadius = GetSplashRadius(pWeapon, pLocal, Vars::Aimbot::Projectile::SplashRadius.Value / 100);
+	m_tInfo.m_iSplashRestrict = !m_tInfo.m_flGravity ? 100 : 5;
+	m_tInfo.m_flRadius = GetSplashRadius(pWeapon, pLocal, CFG::Aimbot_Amalgam_Projectile_SplashRadius / 100);
 	m_tInfo.m_flBoundsTime = tTarget.m_pEntity->GetSize().Length() / m_tInfo.m_flVelocity;
 	m_tInfo.m_flRadiusTime = m_tInfo.m_flBoundsTime + m_tInfo.m_flRadius / m_tInfo.m_flVelocity;
 	m_tInfo.m_iArmTime = TIME_TO_TICKS(ArmTime(pWeapon));
@@ -1359,7 +1383,7 @@ int CAmalgamAimbotProjectile::CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TF
 	case TF_WEAPON_PARTICLE_CANNON:
 		m_tInfo.m_flNormalOffset = 1.f;
 	}
-	m_tInfo.m_bIgnoreTiming = Vars::Aimbot::Projectile::LobAnglesUnderpredict.Value && m_tInfo.m_flRadius;
+	m_tInfo.m_bIgnoreTiming = true && m_tInfo.m_flRadius;
 
 	Directs_t mDirects = GetDirects();
 	Splashes_t vSplashes = GetSplashes();
@@ -1368,7 +1392,7 @@ int CAmalgamAimbotProjectile::CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TF
 	SplashHistory_t mSplashHistory = {};
 
 	// Amalgam's exact horizon: min(projectile lifetime, user max sim time)
-	const int iMaxTime = TIME_TO_TICKS(std::min(m_tProjInfo.m_flLifetime, Vars::Aimbot::Projectile::MaxSimulationTime.Value));
+	const int iMaxTime = TIME_TO_TICKS(std::min(m_tProjInfo.m_flLifetime, CFG::Aimbot_Projectile_Max_Simulation_Time));
 	for (int i = 1 - TIME_TO_TICKS(m_tInfo.m_flLatency); i <= iMaxTime; i++)
 	{
 		if (!m_tMoveStorage.m_bFailed)
@@ -1389,12 +1413,6 @@ int CAmalgamAimbotProjectile::CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TF
 			const int iType = tOffset.m_iFlags & -tOffset.m_iFlags;
 
 			Vec3 vPoint = tTarget.m_vPos + vOffset;
-			if (Vars::Aimbot::Projectile::HuntsmanPullPoint.Value && tTarget.m_nAimedHitbox == HITBOX_HEAD)
-			{
-				vPoint = PullPoint(vPoint, m_tInfo.m_vLocalEye, m_tInfo, tTarget.m_vPos, tTarget.m_pEntity->m_vecMins() + m_tInfo.m_vHull, tTarget.m_pEntity->m_vecMaxs() - m_tInfo.m_vHull);
-				if (Vars::Aimbot::Projectile::HuntsmanPullNoZ.Value)
-					vPoint.z = tTarget.m_vPos.z + vOffset.z;
-			}
 
 			int iFlags = CalculateFlagsEnum::Accuracy;
 			if (iType == PointFlagsEnum::Lob)
@@ -1467,7 +1485,7 @@ int CAmalgamAimbotProjectile::CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TF
 	}
 
 	m_iResult = false, m_bUpdate = bUpdate;
-	if (!m_tInfo.m_flRadius || Vars::Aimbot::Projectile::SplashPrediction.Value < Vars::Aimbot::Projectile::SplashPredictionEnum::Prefer)
+	if (!m_tInfo.m_flRadius || CFG::Aimbot_Amalgam_Projectile_Splash < SplashPredictionEnum::Prefer)
 		goto direct;
 	else
 		goto splash;
@@ -1494,27 +1512,27 @@ int CAmalgamAimbotProjectile::CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TF
 	return m_iResult;
 }
 
-bool CAmalgamAimbotProjectile::Aim(const Vec3& vCurAngle, const Vec3& vToAngle, Vec3& vOut, int iMethod)
+bool CAimbotProjectileSim::Aim(const Vec3& vCurAngle, const Vec3& vToAngle, Vec3& vOut, int iMethod)
 {
 	bool bReturn = false;
 	switch (iMethod)
 	{
-	case Vars::Aimbot::General::AimTypeEnum::Plain:
-	case Vars::Aimbot::General::AimTypeEnum::Silent:
-	case Vars::Aimbot::General::AimTypeEnum::Locking:
+	case AimTypeEnum::Plain:
+	case AimTypeEnum::Silent:
+	case AimTypeEnum::Locking:
 		vOut = vToAngle;
 		break;
-	case Vars::Aimbot::General::AimTypeEnum::Smooth:
-		vOut = vCurAngle.LerpAngle(vToAngle, Vars::Aimbot::General::AssistStrength.Value / 100.f);
+	case AimTypeEnum::Smooth:
+		vOut = vCurAngle.LerpAngle(vToAngle, AIM_ASSIST_STRENGTH / 100.f);
 		bReturn = true;
 		break;
-	case Vars::Aimbot::General::AimTypeEnum::Assistive:
+	case AimTypeEnum::Assistive:
 	{
 		Vec3 vMouseDelta = G::CurrentUserCmd->viewangles.DeltaAngle(G::LastUserCmd->viewangles);
 		Vec3 vTargetDelta = vToAngle.DeltaAngle(G::LastUserCmd->viewangles);
 		const float flMouseDelta = vMouseDelta.Length2DSqr(), flTargetDelta = vTargetDelta.Length2DSqr();
 		vTargetDelta = vTargetDelta.Normalized() * sqrtf(std::min(flMouseDelta, flTargetDelta));
-		vOut = vCurAngle - vMouseDelta + vMouseDelta.LerpAngle(vTargetDelta, Vars::Aimbot::General::AssistStrength.Value / 100.f);
+		vOut = vCurAngle - vMouseDelta + vMouseDelta.LerpAngle(vTargetDelta, AIM_ASSIST_STRENGTH / 100.f);
 		bReturn = true;
 		break;
 	}
@@ -1525,40 +1543,40 @@ bool CAmalgamAimbotProjectile::Aim(const Vec3& vCurAngle, const Vec3& vToAngle, 
 
 	// silent aim needs the angles unclamped for the packet, unless anticheat
 	// compatibility is on (Amalgam's AntiCheatCompatibility::Active)
-	if (iMethod != Vars::Aimbot::General::AimTypeEnum::Silent || CFG::Misc_AntiCheat_Enabled)
+	if (iMethod != AimTypeEnum::Silent || CFG::Misc_AntiCheat_Enabled)
 		Math::ClampAngles(vOut);
 	return bReturn;
 }
 
 // assumes the angle was calculated with the other overload
-void CAmalgamAimbotProjectile::Aim(CUserCmd* pCmd, Vec3& vAngles, int iMethod)
+void CAimbotProjectileSim::Aim(CUserCmd* pCmd, Vec3& vAngles, int iMethod)
 {
-	const bool bUnsure = F::AmalgamTicks->IsTimingUnsure();
+	const bool bUnsure = F::ProjectileTicks->IsTimingUnsure();
 	switch (iMethod)
 	{
-	case Vars::Aimbot::General::AimTypeEnum::Plain:
+	case AimTypeEnum::Plain:
 		if (G::Attacking != 1 && !bUnsure)
 			break;
 		[[fallthrough]];
-	case Vars::Aimbot::General::AimTypeEnum::Smooth:
-	case Vars::Aimbot::General::AimTypeEnum::Assistive:
+	case AimTypeEnum::Smooth:
+	case AimTypeEnum::Assistive:
 		pCmd->viewangles = vAngles;
 		// hot path every aiming tick - skip instead of AVing if the engine
 		// pointer or its vtable is garbage (see Memory::IsInModule comment)
 		if (Memory::IsInModule("engine.dll", I::EngineClient, true))
 			I::EngineClient->SetViewAngles(vAngles);
 		break;
-	case Vars::Aimbot::General::AimTypeEnum::Silent:
+	case AimTypeEnum::Silent:
 		if (auto pWeapon = H::Entities->GetWeapon();
 			G::Attacking == 1 || bUnsure || pWeapon && pWeapon->GetWeaponID() == TF_WEAPON_FLAMETHROWER)
 		{
-			SDK::FixMovement(pCmd, vAngles);
+			SDKUtils::FixMovement(pCmd, vAngles);
 			pCmd->viewangles = vAngles;
 			G::bPSilentAngles = true;
 		}
 		break;
-	case Vars::Aimbot::General::AimTypeEnum::Locking:
-		SDK::FixMovement(pCmd, vAngles);
+	case AimTypeEnum::Locking:
+		SDKUtils::FixMovement(pCmd, vAngles);
 		pCmd->viewangles = vAngles;
 		G::bSilentAngles = true;
 	}
@@ -1591,23 +1609,24 @@ static void CancelShot(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pC
 	}
 }
 
-std::vector<Target_t> CAmalgamAimbotProjectile::GetTargets(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
+std::vector<Target_t> CAimbotProjectileSim::GetTargets(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
 {
 	std::vector<Target_t> vTargets = {};
 
 	const Vec3 vLocalPos = GetShootPos(pLocal);
 	const Vec3 vLocalAngles = I::EngineClient->GetViewAngles();
-	const int iTarget = Vars::Aimbot::General::Target.Value;
+	const bool bTargetPlayers = CFG::Aimbot_Target_Players;
+	const bool bTargetBuildings = CFG::Aimbot_Target_Buildings;
 	const int nWeaponID = pWeapon->GetWeaponID();
 	const float flMaxFOV = CFG::Aimbot_Projectile_FOV;
 
 	// players (+ crossbow/sandvich healing when enabled)
 	{
 		int eGroup = -1;
-		if (iTarget & Vars::Aimbot::General::TargetEnum::Players)
+		if (bTargetPlayers)
 			eGroup = !F::AimbotGlobal->FriendlyFire() ? int(EEntGroup::PLAYERS_ENEMIES) : int(EEntGroup::PLAYERS_ALL);
 		const bool bHeal = nWeaponID == TF_WEAPON_CROSSBOW;
-		if (nWeaponID == TF_WEAPON_CROSSBOW && Vars::Aimbot::Healing::AutoArrow.Value)
+		if (nWeaponID == TF_WEAPON_CROSSBOW && CFG::Aimbot_Projectile_AutoArrow)
 			eGroup = eGroup != -1 ? int(EEntGroup::PLAYERS_ALL) : int(EEntGroup::PLAYERS_TEAMMATES);
 
 		if (eGroup != -1)
@@ -1681,7 +1700,7 @@ std::vector<Target_t> CAmalgamAimbotProjectile::GetTargets(C_TFPlayer* pLocal, C
 					// priority needs an entity friend list Necromancer lacks)
 					if (pPlayer->m_iHealth() >= pPlayer->GetMaxHealth())
 						continue;
-					if (Vars::Aimbot::Healing::AutoArrow.Value && CFG::Aimbot_Projectile_AutoArrow_FriendsOnly && !pPlayer->IsPlayerOnSteamFriendsList())
+					if (CFG::Aimbot_Projectile_AutoArrow && CFG::Aimbot_Projectile_AutoArrow_FriendsOnly && !pPlayer->IsPlayerOnSteamFriendsList())
 						continue;
 				}
 
@@ -1704,9 +1723,9 @@ std::vector<Target_t> CAmalgamAimbotProjectile::GetTargets(C_TFPlayer* pLocal, C
 	// buildings (+ rescue ranger repair when enabled)
 	{
 		int eGroup = -1;
-		if (iTarget & Vars::Aimbot::General::TargetEnum::Building)
+		if (bTargetBuildings)
 			eGroup = int(EEntGroup::BUILDINGS_ENEMIES);
-		if (Vars::Aimbot::Healing::AutoRepair.Value && nWeaponID == TF_WEAPON_SHOTGUN_BUILDING_RESCUE)
+		if (CFG::Aimbot_Projectile_AutoRepair && nWeaponID == TF_WEAPON_SHOTGUN_BUILDING_RESCUE)
 			eGroup = eGroup != -1 ? int(EEntGroup::BUILDINGS_ALL) : int(EEntGroup::BUILDINGS_TEAMMATES);
 
 		if (eGroup != -1)
@@ -1735,65 +1754,25 @@ std::vector<Target_t> CAmalgamAimbotProjectile::GetTargets(C_TFPlayer* pLocal, C
 		}
 	}
 
-	// stickies (detonate-stickies pipes / scorch shot flares)
-	if (iTarget & Vars::Aimbot::General::TargetEnum::Stickies)
-	{
-		bool bShouldAim = false;
-		switch (nWeaponID)
-		{
-		case TF_WEAPON_PIPEBOMBLAUNCHER:
-			if (SDK::AttribHookValue(0, "stickies_detonate_stickies", pWeapon) == 1)
-				bShouldAim = true;
-			break;
-		case TF_WEAPON_FLAREGUN:
-		case TF_WEAPON_FLAREGUN_REVENGE:
-			if (pWeapon->As<C_TFFlareGun>()->GetFlareGunType() == FLAREGUN_SCORCHSHOT)
-				bShouldAim = true;
-		}
-
-		if (bShouldAim)
-		{
-			for (auto pEntity : H::Entities->GetGroup(EEntGroup::PROJECTILES_ENEMIES))
-			{
-				if (!pEntity)
-					continue;
-
-				const bool bSticky = pEntity->GetClassId() == ETFClassIds::CTFGrenadePipebombProjectile
-					&& pEntity->As<C_TFGrenadePipebombProjectile>()->HasStickyEffects();
-				const bool bFlare = pEntity->GetClassId() == ETFClassIds::CTFProjectile_Flare;
-				if (!bSticky && !bFlare)
-					continue;
-
-				const Vec3 vPos = pEntity->GetCenter();
-				const Vec3 vAngleTo = Math::CalcAngle(vLocalPos, vPos);
-				const float flFOVTo = Math::CalcFov(vLocalAngles, vAngleTo);
-				if (flFOVTo > flMaxFOV)
-					continue;
-
-				vTargets.emplace_back(pEntity, TargetEnum::Sticky, vPos, vAngleTo, flFOVTo, vLocalPos.DistToSqr(vPos), 0);
-			}
-		}
-	}
-
 	// Amalgam also targets world NPCs, which Necromancer has no entity group for
 
 	return vTargets;
 }
 
-std::vector<Target_t> CAmalgamAimbotProjectile::SortTargets(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
+std::vector<Target_t> CAimbotProjectileSim::SortTargets(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
 {
 	auto vTargets = GetTargets(pLocal, pWeapon);
 
 	// Amalgam's ManageTargets: sort by the selection method, cap the count,
 	// then apply player-list priority on top
-	F::AimbotGlobal->SortTargets(vTargets, Vars::Aimbot::General::TargetSelection.Value);
-	vTargets.resize(std::min(vTargets.size(), size_t(Vars::Aimbot::General::MaxTargets.Value)));
+	F::AimbotGlobal->SortTargets(vTargets, CFG::Aimbot_Projectile_Sort);
+	vTargets.resize(std::min(vTargets.size(), size_t(CFG::Aimbot_Projectile_Max_Processing_Targets)));
 	F::AimbotGlobal->SortPriority(vTargets);
 
 	return vTargets;
 }
 
-bool CAmalgamAimbotProjectile::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd)
+bool CAimbotProjectileSim::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd)
 {
 	const int nWeaponID = pWeapon->GetWeaponID();
 
@@ -1812,23 +1791,23 @@ bool CAmalgamAimbotProjectile::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeap
 	// and since this port claims every projectile weapon from the dispatcher,
 	// it must reproduce the same gate the native aimbot checks first.
 	const bool bKeyAim = CFG::Aimbot_Always_On || H::Input->IsDown(CFG::Aimbot_Key);
-	if (!Vars::Aimbot::General::AimType.Value
+	if (!AimTypeValue()
 		|| !bKeyAim
 		|| !F::AimbotGlobal->ShouldAim() && nWeaponID != TF_WEAPON_FLAMETHROWER)
 	{
 		G::bFiring = false;
-		G::Attacking = SDK::IsAttacking(pLocal, pWeapon, pCmd, true);
+		G::Attacking = SDKUtils::IsAttacking(pLocal, pWeapon, pCmd, true);
 		return false;
 	}
 
-	if (Vars::Aimbot::Projectile::Modifiers.Value & Vars::Aimbot::Projectile::ModifiersEnum::ChargeWeapon
+	if (ProjectileModifierFlags() & ModifiersEnum::ChargeWeapon
 		&& (nWeaponID == TF_WEAPON_COMPOUND_BOW || nWeaponID == TF_WEAPON_PIPEBOMBLAUNCHER || nWeaponID == TF_WEAPON_CANNON && G::LastUserCmd->buttons & IN_ATTACK))
 	{
 		pCmd->buttons |= IN_ATTACK;
-		if (!G::CanPrimaryAttack && !G::Reloading && Vars::Aimbot::General::AimType.Value == Vars::Aimbot::General::AimTypeEnum::Silent)
+		if (!G::bCanPrimaryAttack && !G::bReloading && AimTypeValue() == AimTypeEnum::Silent)
 		{
 			G::bFiring = false;
-			G::Attacking = SDK::IsAttacking(pLocal, pWeapon, pCmd, true);
+			G::Attacking = SDKUtils::IsAttacking(pLocal, pWeapon, pCmd, true);
 			return false;
 		}
 	}
@@ -1837,12 +1816,12 @@ bool CAmalgamAimbotProjectile::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeap
 	if (vTargets.empty())
 	{
 		G::bFiring = false;
-		G::Attacking = SDK::IsAttacking(pLocal, pWeapon, pCmd, true);
+		G::Attacking = SDKUtils::IsAttacking(pLocal, pWeapon, pCmd, true);
 		return false;
 	}
 
-	if (!G::AimTarget.m_iEntIndex && vTargets.front().m_pEntity)
-		G::AimTarget = { vTargets.front().m_pEntity->entindex(), I::GlobalVars->tickcount, 0 };
+	if (!m_tAimTarget.m_iEntIndex && vTargets.front().m_pEntity)
+		m_tAimTarget = { vTargets.front().m_pEntity->entindex(), I::GlobalVars->tickcount, 0 };
 
 	for (auto& tTarget : vTargets)
 	{
@@ -1850,7 +1829,7 @@ bool CAmalgamAimbotProjectile::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeap
 		m_vPlayerPath.clear(); m_vProjectilePath.clear();
 
 		const int iResult = CanHit(tTarget, pLocal, pWeapon);
-		if (iResult != 1 && nWeaponID == TF_WEAPON_CANNON && Vars::Aimbot::Projectile::Modifiers.Value & Vars::Aimbot::Projectile::ModifiersEnum::ChargeWeapon
+		if (iResult != 1 && nWeaponID == TF_WEAPON_CANNON && ProjectileModifierFlags() & ModifiersEnum::ChargeWeapon
 			&& !(G::OriginalCmd.buttons & (IN_ATTACK | IN_USE)))
 		{	// loose cannon: decide now whether the double-detonate will land in time
 			float flTime = m_flTimeTo - GRENADE_CHECK_INTERVAL;
@@ -1884,12 +1863,12 @@ bool CAmalgamAimbotProjectile::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeap
 
 		if (iResult == 2)
 		{	// smooth/assistive fallback - aim only, no swing
-			G::AimTarget = { tTarget.m_pEntity->entindex(), I::GlobalVars->tickcount, 0 };
+			m_tAimTarget = { tTarget.m_pEntity->entindex(), I::GlobalVars->tickcount, 0 };
 			Aim(pCmd, tTarget.m_vAngleTo);
 			break;
 		}
 
-		if (Vars::Aimbot::General::AutoShoot.Value)
+		if (CFG::Aimbot_AutoShoot)
 		{
 			switch (nWeaponID)
 			{
@@ -1905,7 +1884,7 @@ bool CAmalgamAimbotProjectile::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeap
 				{
 					if (m_iLastTickCancel)
 						pCmd->weaponselect = m_iLastTickCancel = 0;
-					if (Vars::Aimbot::Projectile::Modifiers.Value & Vars::Aimbot::Projectile::ModifiersEnum::ChargeWeapon)
+					if (ProjectileModifierFlags() & ModifiersEnum::ChargeWeapon)
 					{	// rerun, if we won't hit in the future, fire
 						int iResult2 = 0;
 
@@ -1952,16 +1931,16 @@ bool CAmalgamAimbotProjectile::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeap
 			}
 		}
 
-		G::Attacking = SDK::IsAttacking(pLocal, pWeapon, pCmd, true);
+		G::Attacking = SDKUtils::IsAttacking(pLocal, pWeapon, pCmd, true);
 		G::bFiring = (pCmd->buttons & IN_ATTACK) != 0 && G::bCanPrimaryAttack;
 
 		if (iResult == 1)
 		{
 			if (G::Attacking == 1)
-				G::AimTarget = { tTarget.m_pEntity->entindex(), I::GlobalVars->tickcount };
+				m_tAimTarget = { tTarget.m_pEntity->entindex(), I::GlobalVars->tickcount };
 			else
-				G::AimTarget = { tTarget.m_pEntity->entindex(), I::GlobalVars->tickcount, 0 };
-			G::AimPoint = { tTarget.m_vPos, I::GlobalVars->tickcount };
+				m_tAimTarget = { tTarget.m_pEntity->entindex(), I::GlobalVars->tickcount, 0 };
+			m_tAimPoint = { tTarget.m_vPos, I::GlobalVars->tickcount };
 			m_iLastSolutionTick = I::GlobalVars->tickcount;
 		}
 
@@ -2010,7 +1989,7 @@ bool CAmalgamAimbotProjectile::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeap
 		// compat's angle history then has nothing to flag
 		if (G::Attacking != 1 && (pCmd->buttons & IN_ATTACK))
 		{
-			SDK::FixMovement(pCmd, tTarget.m_vAngleTo);
+			SDKUtils::FixMovement(pCmd, tTarget.m_vAngleTo);
 			pCmd->viewangles = tTarget.m_vAngleTo;
 			G::bSilentAngles = true;
 		}
@@ -2042,17 +2021,17 @@ bool CAmalgamAimbotProjectile::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeap
 	if ((G::OriginalCmd.buttons & IN_ATTACK) && m_iLastSolutionTick != -1
 		&& I::GlobalVars->tickcount - m_iLastSolutionTick <= 3)
 	{
-		SDK::FixMovement(pCmd, m_vAngleTo);
+		SDKUtils::FixMovement(pCmd, m_vAngleTo);
 		pCmd->viewangles = m_vAngleTo;
 		G::bSilentAngles = true;
 	}
 
 	G::bFiring = false;
-	G::Attacking = SDK::IsAttacking(pLocal, pWeapon, pCmd, true);
+	G::Attacking = SDKUtils::IsAttacking(pLocal, pWeapon, pCmd, true);
 	return false;
 }
 
-	bool CAmalgamAimbotProjectile::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd)
+	bool CAimbotProjectileSim::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd)
 	{
 		// respect the menu toggle: the port used to claim every projectile
 		// weapon even with "Projectile Aimbot Active" unchecked and paid the
@@ -2072,11 +2051,11 @@ bool CAmalgamAimbotProjectile::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeap
 		if (pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)
 		{
 			const float flCharge = pWeapon->As<C_TFPipebombLauncher>()->m_flChargeBeginTime() > 0.f ? I::GlobalVars->curtime - pWeapon->As<C_TFPipebombLauncher>()->m_flChargeBeginTime() : 0.f;
-			flAmount = Math::RemapVal(flCharge, 0.f, SDK::AttribHookValue(4.f, "stickybomb_charge_rate", pWeapon), 0.f, 1.f);
+			flAmount = Math::RemapVal(flCharge, 0.f, SDKUtils::AttribHookValue(4.f, "stickybomb_charge_rate", pWeapon), 0.f, 1.f);
 		}
 		else if (pWeapon->GetWeaponID() == TF_WEAPON_CANNON)
 		{
-			const float flMortar = SDK::AttribHookValue(0.f, "grenade_launcher_mortar_mode", pWeapon);
+			const float flMortar = SDKUtils::AttribHookValue(0.f, "grenade_launcher_mortar_mode", pWeapon);
 			const float flCharge = pWeapon->As<C_TFGrenadeLauncher>()->m_flDetonateTime() > 0.f ? I::GlobalVars->curtime - pWeapon->As<C_TFGrenadeLauncher>()->m_flDetonateTime() : -flMortar;
 			flAmount = flMortar ? Math::RemapVal(flCharge, -flMortar, 0.f, 0.f, 1.f) : 0.f;
 		}
@@ -2084,9 +2063,7 @@ bool CAmalgamAimbotProjectile::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeap
 		const bool bKeyAim = CFG::Aimbot_Always_On || H::Input->IsDown(CFG::Aimbot_Key);
 		const bool bUserAttacking = G::OriginalCmd.buttons & IN_ATTACK;
 
-		if (pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER && G::OriginalCmd.buttons & IN_ATTACK && Vars::Aimbot::Projectile::AutoRelease.Value && flAmount > Vars::Aimbot::Projectile::AutoRelease.Value / 100)
-			pCmd->buttons &= ~IN_ATTACK;
-		else if (G::CanPrimaryAttack && Vars::Aimbot::Projectile::Modifiers.Value & Vars::Aimbot::Projectile::ModifiersEnum::CancelCharge)
+		if (G::bCanPrimaryAttack && ProjectileModifierFlags() & ModifiersEnum::CancelCharge)
 		{
 			const bool bAimbotCharging = !bUserAttacking && (pCmd->buttons & IN_ATTACK);
 			const bool bReleased = G::LastUserCmd->buttons & IN_ATTACK && !(pCmd->buttons & IN_ATTACK);
@@ -2103,7 +2080,7 @@ bool CAmalgamAimbotProjectile::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeap
 			}
 		}
 
-		m_bLastTickHeld = bKeyAim && Vars::Aimbot::General::AimType.Value;
+		m_bLastTickHeld = bKeyAim && AimTypeValue();
 		m_bLastTickAimbotCharge = !bUserAttacking && (pCmd->buttons & IN_ATTACK);
 
 	// every weapon Necromancer classifies as projectile is claimed here, so
@@ -2111,12 +2088,12 @@ bool CAmalgamAimbotProjectile::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeap
 	return true;
 }
 
-void CAmalgamAimbotProjectile::RestoreCancel(C_TFPlayer* pLocal, CUserCmd* pCmd)
+void CAimbotProjectileSim::RestoreCancel(C_TFPlayer* pLocal, CUserCmd* pCmd)
 {
 	if (!m_iLastTickCancel)
 		return;
 
-	if (!pLocal || pLocal->deadflag() || !Vars::Aimbot::General::AimType.Value)
+	if (!pLocal || pLocal->deadflag() || !AimTypeValue())
 	{
 		m_iLastTickCancel = 0;
 		return;
@@ -2133,23 +2110,8 @@ void CAmalgamAimbotProjectile::RestoreCancel(C_TFPlayer* pLocal, CUserCmd* pCmd)
 	m_bManualBailLatch = false;
 }
 
-// ============================================
-// Stubs for the auto airblast path
-// ============================================
 
-bool CAmalgamAimbotProjectile::TestAngle(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, C_BaseEntity* pProjectile, Target_t& tTarget, Vec3& vPoint, Vec3& vAngles, int iSimTime, bool bSplash, std::vector<Vec3>* pProjectilePath)
-{
-	// Stub for auto airblast
-	return false;
-}
-
-bool CAmalgamAimbotProjectile::CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, C_BaseEntity* pProjectile)
-{
-	// Stub for auto airblast
-	return false;
-}
-
-float CAmalgamAimbotProjectile::GetSplashRadius(C_TFWeaponBase* pWeapon, C_TFPlayer* pPlayer, float flScale)
+float CAimbotProjectileSim::GetSplashRadius(C_TFWeaponBase* pWeapon, C_TFPlayer* pPlayer, float flScale)
 {
 	float flRadius = 0.f;
 	switch (pWeapon->GetWeaponID())
@@ -2173,19 +2135,19 @@ float CAmalgamAimbotProjectile::GetSplashRadius(C_TFWeaponBase* pWeapon, C_TFPla
 	if (!flRadius)
 		return 0.f;
 
-	flRadius = SDK::AttribHookValue(flRadius, "mult_explosion_radius", pWeapon);
+	flRadius = SDKUtils::AttribHookValue(flRadius, "mult_explosion_radius", pWeapon);
 	switch (pWeapon->GetWeaponID())
 	{
 	case TF_WEAPON_ROCKETLAUNCHER:
 	case TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT:
 	case TF_WEAPON_PARTICLE_CANNON:
-		if (pPlayer->InCond(TF_COND_BLASTJUMPING) && SDK::AttribHookValue(1.f, "rocketjump_attackrate_bonus", pWeapon) != 1.f)
+		if (pPlayer->InCond(TF_COND_BLASTJUMPING) && SDKUtils::AttribHookValue(1.f, "rocketjump_attackrate_bonus", pWeapon) != 1.f)
 			flRadius *= 0.8f;
 	}
 	return flRadius * flScale;
 }
 
-float CAmalgamAimbotProjectile::GetSplashRadius(C_BaseEntity* pProjectile, C_TFWeaponBase* pWeapon, C_TFPlayer* pPlayer, float flScale)
+float CAimbotProjectileSim::GetSplashRadius(C_BaseEntity* pProjectile, C_TFWeaponBase* pWeapon, C_TFPlayer* pPlayer, float flScale)
 {
 	float flRadius = 0.f;
 	switch (pProjectile->GetClassId())
@@ -2212,12 +2174,12 @@ float CAmalgamAimbotProjectile::GetSplashRadius(C_BaseEntity* pProjectile, C_TFW
 	}
 	if (pPlayer && pWeapon)
 	{
-		flRadius = SDK::AttribHookValue(flRadius, "mult_explosion_radius", pWeapon);
+		flRadius = SDKUtils::AttribHookValue(flRadius, "mult_explosion_radius", pWeapon);
 		switch (pProjectile->GetClassId())
 		{
 		case ETFClassIds::CTFProjectile_Rocket:
 		case ETFClassIds::CTFProjectile_SentryRocket:
-			if (pPlayer->InCond(TF_COND_BLASTJUMPING) && SDK::AttribHookValue(1.f, "rocketjump_attackrate_bonus", pWeapon) != 1.f)
+			if (pPlayer->InCond(TF_COND_BLASTJUMPING) && SDKUtils::AttribHookValue(1.f, "rocketjump_attackrate_bonus", pWeapon) != 1.f)
 				flRadius *= 0.8f;
 		}
 	}

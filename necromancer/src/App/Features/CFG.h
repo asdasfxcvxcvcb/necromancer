@@ -812,9 +812,9 @@ namespace CFG
 	CFGVAR(Exploits_RapidFire_Key, 0);
 	CFGVAR(Exploits_FastSticky_Key, 0);
 	CFGVAR(Exploits_FastSticky_Ticks, 0);
-	CFGVAR(Exploits_RapidFire_Ticks, 21);
-	CFGVAR(Exploits_RapidFire_Min_Ticks_Target_Same, 3);
+	CFGVAR(Exploits_RapidFire_Ticks, 22);
 	CFGVAR(Exploits_RapidFire_Antiwarp, true);
+	CFGVAR(Exploits_FastRev, false);
 	
 	CFGVAR(Exploits_Warp_Key, 0);
 	CFGVAR(Exploits_Warp_Mode, 1); //0 Slow 1 Full
@@ -897,6 +897,7 @@ namespace CFG
 	CFGVAR(Misc_Auto_Rejoin_On_Kick, false);
 	CFGVAR(Misc_Anti_AFK, true);
 	CFGVAR(Misc_PDA_Exploit_Sniper, false);
+	CFGVAR(Misc_Disable_Scroll_Input, false);
 
 	// Region Selector (Force Regions)
 	CFGVAR(Exploits_Region_Selector_Active, false);

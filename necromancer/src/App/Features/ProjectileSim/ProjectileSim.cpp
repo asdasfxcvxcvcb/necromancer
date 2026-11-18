@@ -1,5 +1,4 @@
 #include "ProjectileSim.h"
-#include "../amalgam_port/AmalgamCompat.h"
 
 static IPhysicsEnvironment* env{};
 static IPhysicsObject* obj{};
@@ -26,7 +25,7 @@ bool CProjectileSim::GetInfo(C_TFPlayer* player, C_TFWeaponBase* weapon, const V
 		ducking = true;
 
 	// Use predicted shoot position for consistent duck handling
-	const Vec3 vPredictedShootPos = SDK::GetPredictedShootPos(player);
+	const Vec3 vPredictedShootPos = SDKUtils::GetPredictedShootPos(player);
 
 	Vec3 pos{};
 	Vec3 ang{};

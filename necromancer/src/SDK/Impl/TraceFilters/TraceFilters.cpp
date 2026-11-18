@@ -223,44 +223,35 @@ bool CTraceFilterCollideable::ShouldHitEntity(IHandleEntity* pServerEntity, int 
 	return false;
 }
 
-// Amalgam-style CTraceFilterWorldAndPropsOnlyAmalgam implementation
-bool CTraceFilterWorldAndPropsOnlyAmalgam::ShouldHitEntity(IHandleEntity* pServerEntity, int contentsMask)
+bool CTraceFilterWorldAndProps::ShouldHitEntity(IHandleEntity* pServerEntity, int contentsMask)
 {
 	if (!pServerEntity || pServerEntity == pSkip)
 		return false;
-	
-	// Check for world entity (serial number check from Amalgam)
 	if (pServerEntity->GetRefEHandle().GetSerialNumber() == (1 << 15))
-		return I::ClientEntityList->GetClientEntity(0) != pSkip;
+		return contentsMask & CONTENTS_SOLID && pServerEntity->GetRefEHandle().GetEntryIndex() != iTeam;
 
 	auto pEntity = static_cast<IClientEntity*>(pServerEntity)->As<C_BaseEntity>();
 	if (!pEntity)
 		return false;
 
-	// Get team from skip entity if not set
-	int nTeam = iTeam;
-	if (nTeam == -1 && pSkip)
-		nTeam = pSkip->m_iTeamNum();
+	if (iTeam == -1 && pSkip)
+		iTeam = pSkip->m_iTeamNum();
 
 	switch (pEntity->GetClassId())
 	{
-	// World props that block projectiles
 	case ETFClassIds::CBaseEntity:
+		return contentsMask & CONTENTS_SOLID;
+	case ETFClassIds::CFunc_LOD:
 	case ETFClassIds::CBaseDoor:
 	case ETFClassIds::CDynamicProp:
 	case ETFClassIds::CPhysicsProp:
 	case ETFClassIds::CPhysicsPropMultiplayer:
-	case ETFClassIds::CFunc_LOD:
 	case ETFClassIds::CObjectCartDispenser:
 	case ETFClassIds::CFuncTrackTrain:
 	case ETFClassIds::CFuncConveyor:
-		return true;
-	
-	// Respawn room visualizer - check team
+		return contentsMask & CONTENTS_MOVEABLE;
 	case ETFClassIds::CFuncRespawnRoomVisualizer:
-		if (contentsMask & CONTENTS_PLAYERCLIP)
-			return pEntity->m_iTeamNum() != nTeam;
-		break;
+		return contentsMask & CONTENTS_PLAYERCLIP && pEntity->m_iTeamNum() != iTeam;
 	}
 
 	return false;

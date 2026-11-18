@@ -2,7 +2,6 @@
 #include "NavEngine/NavEngine.h"
 #include "../../../SDK/SDK.h"
 #include "../CFG.h"
-#include "../amalgam_port/AmalgamCompat.h"
 #include "../Players/Players.h"
 #include "../MovementSimulation/MovementSimulation.h"
 
@@ -11,7 +10,7 @@
 #include <algorithm>
 #include <cmath>
 
-// Max reserve ammo per WEAPON (Unibox SDK::GetWeaponMaxReserveAmmo). Keyed by
+// Max reserve ammo per WEAPON (Unibox SDKUtils::GetWeaponMaxReserveAmmo). Keyed by
 // weapon ID, not class: the old per-class table assumed class IDs run
 // Scout..Engineer (they actually run Scout=1, Sniper=2, Soldier=3, Demoman=4,
 // Medic=5, Heavy=6, Pyro=7, Spy=8, Engineer=9) and that m_iAmmo indexes
@@ -2504,7 +2503,7 @@ Vec3 CNavBot::PickBlindWanderPoint(C_TFPlayer* pLocal)
 
 	Vec3 vLocalPos = pLocal->m_vecOrigin();
 
-	CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
+	CTraceFilterWorldAndProps filter = {};
 	const Vec3 vHullMin(-20.0f, -20.0f, 18.0f);  // lifted above step height — stairs read as clear
 	const Vec3 vHullMax(20.0f, 20.0f, 62.0f);
 
@@ -3090,7 +3089,7 @@ namespace
 
 	bool StalkTraceVisible(const Vec3& vFrom, const Vec3& vTo)
 	{
-		CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
+		CTraceFilterWorldAndProps filter = {};
 		trace_t trace = {};
 		H::AimUtils->Trace(vFrom, vTo, MASK_SHOT, &filter, &trace);
 		return trace.fraction >= 1.0f;
@@ -5535,7 +5534,7 @@ void CNavBot::AutoScope(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* p
 	auto CheckVisibility = [&](const Vec3& vTo, int iEntIndex) -> bool
 	{
 		CGameTrace trace = {};
-		CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
+		CTraceFilterWorldAndProps filter = {};
 
 		// Trace from local pos first
 		Vec3 vLocalEye = Vec3(vLocalOrigin.x, vLocalOrigin.y, vLocalOrigin.z + PLAYER_JUMP_HEIGHT);

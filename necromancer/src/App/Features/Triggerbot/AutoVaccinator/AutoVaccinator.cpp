@@ -2,7 +2,6 @@
 
 #include "../../AutoUberPop/AutoUberPop.h"
 #include "../../Players/Players.h"
-#include "../../amalgam_port/MoveSim/MoveSimAmalgam.h"
 #include "../../CFG.h"
 
 #include <cfloat>

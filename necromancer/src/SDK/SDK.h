@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <unordered_map>
 #include <vector>
+#include <random>
 
 #include "TF2/IMatSystemSurface.h"
 #include "TF2/cdll_int.h"
@@ -44,8 +45,15 @@
 #include "TF2/CTFGCClientSystem.h"
 #include "TF2/glow_outline_effect.h"
 
+#include "TF2/c_tf_flaregun.h"
+#include "TF2/collisionproperty.h"
+#include "TF2/cpredictioncopy.h"
+#include "TF2/tf_gamerules.h"
+
 #include "Helpers/Draw/Draw.h"
 #include "Helpers/Entities/Entities.h"
+#include "Helpers/Entities/EntityChecks.h"
+#include "Helpers/Entities/EntityMotion.h"
 #include "Helpers/Fonts/Fonts.h"
 #include "Helpers/Input/Input.h"
 #include "Helpers/AimUtils/AimUtils.h"
@@ -345,6 +353,7 @@ namespace G
 	inline CUserCmd* CurrentUserCmd = nullptr;
 	inline CUserCmd* LastUserCmd = nullptr;  // Amalgam: previous tick's user cmd
 	inline CUserCmd OriginalCmd = {};  // Amalgam: unmodified user cmd for this tick
+	inline float Lerp = 0.015f;
 
 	// Smooth aimbot view angles - used to restore view when AA is active
 	inline Vec3 vSmoothAimAngles = {};
@@ -368,7 +377,6 @@ namespace G
 
 	inline bool bFiring = false;
 	inline bool bAutoScopeWaitActive = false;  // AutoScope wait-after-shot: aimbot should not fire
-	inline int nTicksTargetSame = 0;
 	inline int nTargetIndexEarly = 0;
 	inline int nTicksSinceCanFire = 0;
 
@@ -388,7 +396,7 @@ namespace G
 	// Amalgam-style path storage for visualization
 	// ============================================
 
-	// Path drawing styles (matches Amalgam's Vars::Visuals::Simulation::StyleEnum)
+	// Path drawing styles
 	namespace PathStyle {
 		enum {
 			Off = 0,
@@ -478,6 +486,242 @@ namespace G
 	}
 }
 
+namespace SDKUtils
+{
+	inline void Trace(const Vec3& start, const Vec3& end, int mask, ITraceFilter* filter, CGameTrace* trace)
+	{
+		Ray_t ray;
+		ray.Init(start, end);
+		I::EngineTrace->TraceRay(ray, mask, filter, trace);
+	}
+
+	inline void TraceHull(const Vec3& start, const Vec3& end, const Vec3& mins, const Vec3& maxs, int mask, ITraceFilter* filter, CGameTrace* trace)
+	{
+		Ray_t ray;
+		ray.Init(start, end, mins, maxs);
+		I::EngineTrace->TraceRay(ray, mask, filter, trace);
+	}
+
+	inline bool VisPosWorld(C_BaseEntity* pSkip, C_BaseEntity* pTarget, const Vec3& from, const Vec3& to, int mask)
+	{
+		CGameTrace trace;
+		CTraceFilterWorldOnly filter;
+
+		Ray_t ray;
+		ray.Init(from, to);
+		I::EngineTrace->TraceRay(ray, mask, &filter, &trace);
+
+		return trace.fraction >= 1.0f || trace.m_pEnt == pTarget;
+	}
+
+	inline float StdRandomFloat(float min = 0.f, float max = 1.f)
+	{
+		static std::random_device rd;
+		static std::mt19937 gen(rd());
+		std::uniform_real_distribution<float> dis(min, max);
+		return dis(gen);
+	}
+
+	inline int StdRandomInt(int min, int max)
+	{
+		static std::random_device rd;
+		static std::mt19937 gen(rd());
+		std::uniform_int_distribution<int> dis(min, max);
+		return dis(gen);
+	}
+
+	inline bool StdRandomBool()
+	{
+		return StdRandomInt(0, 1) != 0;
+	}
+
+	inline int SeedFileLineHash(int nSeed, const char* szFile, int nLine)
+	{
+		unsigned int uCRC = 0xFFFFFFFFu;
+		auto fProcessByte = [&](unsigned char uByte)
+		{
+			uCRC ^= uByte;
+			for (int i = 0; i < 8; ++i)
+				uCRC = (uCRC >> 1) ^ (0xEDB88320u & (0u - (uCRC & 1u)));
+		};
+		auto fProcess = [&](const void* pBuffer, int iLength)
+		{
+			const unsigned char* pb = static_cast<const unsigned char*>(pBuffer);
+			for (int i = 0; i < iLength; ++i)
+				fProcessByte(pb[i]);
+		};
+		fProcess(&nSeed, sizeof(int));
+		fProcess(&nLine, sizeof(int));
+		for (const char* p = szFile; *p; ++p)
+			fProcessByte(static_cast<unsigned char>(*p));
+		return static_cast<int>(uCRC ^ 0xFFFFFFFFu);
+	}
+
+	inline bool CanHeadshot(C_TFProjectile_Arrow* pArrow)
+	{
+		if (!pArrow)
+			return false;
+		return pArrow->m_iProjectileType() != TF_PROJECTILE_BUILDING_REPAIR_BOLT;
+	}
+
+	inline int IsAttacking(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd, bool bTickBase = false)
+	{
+		if (!pLocal || !pWeapon || pCmd->weaponselect)
+			return 0;
+
+		int iTickBase = bTickBase ? I::GlobalVars->tickcount : pLocal->m_nTickBase();
+		float flTickBase = bTickBase ? I::GlobalVars->curtime : TICKS_TO_TIME(iTickBase);
+
+		if (pWeapon->GetSlot() == WEAPON_SLOT_MELEE)
+		{
+			switch (pWeapon->GetWeaponID())
+			{
+			case TF_WEAPON_KNIFE:
+				return G::bCanPrimaryAttack && (pCmd->buttons & IN_ATTACK) ? 1 : 0;
+
+			case TF_WEAPON_BAT_WOOD:
+			case TF_WEAPON_BAT_GIFTWRAP:
+			{
+				static int iThrowTick = -5;
+				{
+					static int iLastTickBase = iTickBase;
+					if (iTickBase != iLastTickBase)
+						iThrowTick = std::max(iThrowTick - 1, -5);
+					iLastTickBase = iTickBase;
+				}
+
+				if (G::bCanPrimaryAttack && pWeapon->HasPrimaryAmmoForShot() && (pCmd->buttons & IN_ATTACK2) && iThrowTick == -5)
+					iThrowTick = 12;
+				if (iThrowTick > -5)
+					G::Throwing = G::bCanSecondaryAttack = true;
+				if (iThrowTick > 1)
+					G::Throwing = 2;
+				if (iThrowTick == 1)
+					return 1;
+			}
+			}
+
+			return TIME_TO_TICKS(pWeapon->m_flSmackTime()) == iTickBase - 1 ? 1 : 0;
+		}
+
+		switch (pWeapon->GetWeaponID())
+		{
+		case TF_WEAPON_COMPOUND_BOW:
+			return !(pCmd->buttons & IN_ATTACK) && pWeapon->As<C_TFPipebombLauncher>()->m_flChargeBeginTime() > 0.f;
+
+		case TF_WEAPON_PIPEBOMBLAUNCHER:
+		{
+			float flCharge = pWeapon->As<C_TFPipebombLauncher>()->m_flChargeBeginTime() > 0.f
+				? flTickBase - pWeapon->As<C_TFPipebombLauncher>()->m_flChargeBeginTime() : 0.f;
+			const float flAmount = Math::RemapVal(flCharge, 0.f, SDKUtils::AttribHookValue(4.f, "stickybomb_charge_rate", pWeapon), 0.f, 1.f);
+			return (!(pCmd->buttons & IN_ATTACK) && flAmount > 0.f) || flAmount >= 1.f;
+		}
+
+		case TF_WEAPON_CANNON:
+		{
+			float flMortar = SDKUtils::AttribHookValue(0.f, "grenade_launcher_mortar_mode", pWeapon);
+			if (!flMortar)
+				return G::bCanPrimaryAttack && (pCmd->buttons & IN_ATTACK) ? 1 : (G::bReloading && (pCmd->buttons & IN_ATTACK) ? 2 : 0);
+
+			float flCharge = pWeapon->As<C_TFGrenadeLauncher>()->m_flDetonateTime() > 0.f
+				? flMortar - (pWeapon->As<C_TFGrenadeLauncher>()->m_flDetonateTime() - flTickBase) : 0.f;
+			const float flAmount = Math::RemapVal(flCharge, 0.f, flMortar, 0.f, 1.f);
+			return (!(pCmd->buttons & IN_ATTACK) && flAmount > 0.f) || flAmount >= 1.f;
+		}
+
+		case TF_WEAPON_MINIGUN:
+		{
+			switch (pWeapon->As<C_TFMinigun>()->m_iWeaponState())
+			{
+			case AC_STATE_FIRING:
+			case AC_STATE_SPINNING:
+				if (pWeapon->HasPrimaryAmmoForShot())
+					return G::bCanPrimaryAttack && (pCmd->buttons & IN_ATTACK) ? 1 : (G::bReloading && (pCmd->buttons & IN_ATTACK) ? 2 : 0);
+			}
+			return 0;
+		}
+
+		default:
+			if (pCmd->buttons & IN_ATTACK)
+				return G::bCanPrimaryAttack ? 1 : (G::bReloading ? 2 : 0);
+			return 0;
+		}
+	}
+
+	inline void FixMovement(CUserCmd* pCmd, const Vec3& vTargetAngles)
+	{
+		Vec3 vMove = { pCmd->forwardmove, pCmd->sidemove, pCmd->upmove };
+		Vec3 vMoveAng = {};
+		Math::VectorAngles(vMove, vMoveAng);
+
+		float flSpeed = vMove.Length();
+		float flYaw = DEG2RAD(vTargetAngles.y - pCmd->viewangles.y + vMoveAng.y);
+
+		pCmd->forwardmove = cosf(flYaw) * flSpeed;
+		pCmd->sidemove = sinf(flYaw) * flSpeed;
+	}
+
+	inline void FixMovement(CUserCmd* pCmd, const Vec3& vOldAngles, const Vec3& vNewAngles)
+	{
+		Vec3 vMove = { pCmd->forwardmove, pCmd->sidemove, pCmd->upmove };
+		Vec3 vMoveAng = {};
+		Math::VectorAngles(vMove, vMoveAng);
+
+		float flSpeed = vMove.Length();
+		float flYaw = DEG2RAD(vNewAngles.y - vOldAngles.y + vMoveAng.y);
+
+		pCmd->forwardmove = cosf(flYaw) * flSpeed;
+		pCmd->sidemove = sinf(flYaw) * flSpeed;
+	}
+
+	inline float MaxSpeed(C_TFPlayer* pPlayer, bool bIgnoreCrouch = false, bool bIgnoreSpecialAbility = false)
+	{
+		if (!pPlayer)
+			return 0.f;
+
+		float flSpeed = pPlayer->TeamFortress_CalculateMaxSpeed(bIgnoreSpecialAbility);
+
+		if (pPlayer->InCond(TF_COND_SPEED_BOOST) || pPlayer->InCond(TF_COND_HALLOWEEN_SPEED_BOOST))
+			flSpeed *= 1.35f;
+
+		if (!bIgnoreCrouch && pPlayer->m_bDucked() && IsOnGround(pPlayer))
+			flSpeed /= 3.f;
+
+		return flSpeed;
+	}
+
+	inline Vec3 GetPredictedShootPos(C_TFPlayer* pPlayer, const CUserCmd* pCmd = nullptr)
+	{
+		if (!pPlayer)
+			return {};
+
+		Vec3 vShootPos = pPlayer->GetShootPos();
+
+		const CUserCmd* cmd = pCmd ? pCmd : G::CurrentUserCmd;
+		if (cmd)
+		{
+			const bool bCurrentlyDucking = (pPlayer->m_fFlags() & FL_DUCKING) != 0;
+			const bool bWantsToDuck = (cmd->buttons & IN_DUCK) != 0;
+			const bool bOnGround = (pPlayer->m_fFlags() & FL_ONGROUND) != 0;
+
+			if (bWantsToDuck && !bCurrentlyDucking && !bOnGround)
+			{
+				const float flScale = pPlayer->m_flModelScale();
+				const float flCurrentViewZ = pPlayer->m_vecViewOffset().z;
+				vShootPos.z += (20.0f * flScale + 45.0f * flScale) - flCurrentViewZ;
+			}
+		}
+
+		return vShootPos;
+	}
+
+	inline void GetProjectileFireSetup(C_TFPlayer* pPlayer, const Vec3& vAngles, const Vec3& vOffset, Vec3& vPosOut, Vec3& vAngOut, bool bPipes = false, bool bQuick = false, bool bAllowFlip = true)
+	{
+		const Vec3 vShootPos = GetPredictedShootPos(pPlayer);
+		SDKUtils::GetProjectileFireSetupRebuilt(pPlayer, vOffset, vAngles, vPosOut, vAngOut, bPipes, vShootPos);
+	}
+}
+
 namespace Shifting
 {
 	inline int nAvailableTicks = 0;
@@ -485,6 +729,7 @@ namespace Shifting
 	inline bool bShifting = false;
 	inline bool bRapidFireWantShift = false;
 	inline bool bStickyDTWantShift = false;   // Sticky DT wants to shift (uses all available ticks)
+	inline bool bFastRevWantShift = false;   // Fast Rev wants to shift (the rev's wind-up command anchored into the batch)
 	inline int nStickyDTTicksToUse = 0;       // How many ticks to use for sticky DT (set by RapidFire)
 	inline int nStickyRechargeTarget = 0;     // When > 0, stop recharging at this count instead of global max
 	inline bool bShiftingWarp = false;
@@ -492,9 +737,6 @@ namespace Shifting
 	inline int nCurrentShiftTick = 0;        // Current tick index during rapid fire shift (0-indexed)
 	inline int nTotalShiftTicks = 0;         // Total ticks being shifted
 	inline bool bTickbaseFixRecorded = false;
-	inline int nReleaseBacklog = 0;
-	inline int nReleaseSpent = 0;
-	inline bool bReleasePending = false;
 	inline int nShiftCooldownTicks = 0;
 
 	// Saved command state (from Amalgam)
@@ -542,9 +784,6 @@ namespace Shifting
 		nCurrentShiftTick = 0;
 		nTotalShiftTicks = 0;
 		bTickbaseFixRecorded = false;
-		nReleaseBacklog = 0;
-		nReleaseSpent = 0;
-		bReleasePending = false;
 		nShiftCooldownTicks = 0;
 		nServerBudgetEstimate = 24;
 		// Reset saved command state

@@ -9,16 +9,15 @@
 #include "../../Hitchance/Hitchance.h"
 #include "../../Players/Players.h"
 #include "../../../../Utils/CrashHandler/CrashHandler.h"
-#include "../../amalgam_port/AmalgamCompat.h"
 #include <algorithm>
 
 // Get the predicted shoot position accounting for duck state in the command
 // This is critical for CrouchWhileAirborne - the command may have IN_DUCK set
 // but the entity's current state doesn't reflect that yet
-// Uses the centralized SDK::GetPredictedShootPos for correct Source SDK duck math
+// Uses the centralized SDKUtils::GetPredictedShootPos for correct Source SDK duck math
 static Vec3 GetPredictedShootPos(C_TFPlayer* pLocal, const CUserCmd* pCmd)
 {
-	return SDK::GetPredictedShootPos(pLocal, pCmd);
+	return SDKUtils::GetPredictedShootPos(pLocal, pCmd);
 }
 
 static bool HasFirstPersonSpectator(C_TFPlayer* pLocal)
@@ -633,7 +632,7 @@ bool CAimbotHitscan::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, cons
 		{
 			// Quick world-only trace to check if target position is visible
 			CGameTrace trace = {};
-			CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
+			CTraceFilterWorldAndProps filter = {};
 			H::AimUtils->Trace(vLocalEye, t.Position, MASK_SHOT | CONTENTS_GRATE, &filter, &trace);
 			return trace.fraction < 1.0f;  // Occluded by world — remove
 		});
@@ -960,7 +959,7 @@ bool CAimbotHitscan::ShouldFire(const CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWe
 		// Check if RapidFire/DoubleTap is active
 		const bool bRapidFireKey = CFG::Exploits_RapidFire_Key != 0 && H::Input->IsDown(CFG::Exploits_RapidFire_Key);
 		const int nStoredTicks = F::RapidFire->GetTicks(pWeapon);
-		const bool bRapidFireActive = bRapidFireKey && F::RapidFire->GetShotsWithinPacket(pWeapon, nStoredTicks) > 1;
+		const bool bRapidFireActive = bRapidFireKey && F::RapidFire->GetShotsWithinPacket(pWeapon, nStoredTicks + 1) > 1;
 		const int nRapidFireShots = bRapidFireActive ? 2 : 1; // DoubleTap fires 2 shots
 
 		// Fakelag uncertainty: reduce effective hitbox radius when enemy is choking
@@ -1389,10 +1388,11 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 	else if (nAimType == 3)
 		G::flAimbotFOV = 0.0f; // Disable FOV circle for triggerbot
 
-	// Skip during doubletap shifting (but not warp)
-	if (Shifting::bShifting && !Shifting::bShiftingWarp)
-		return;
-
+	// No doubletap-shift gate: Amalgam's hitscan aimbot runs on every batch
+	// command. The batch fillers are fresh CreateMove passes and multi-shell
+	// DTs (Force-A-Nature's second shell at fire rate 0.3125s = exactly the
+	// batch's clock span) need IN_ATTACK written on the last batch command -
+	// a tap alone doesn't carry it
 	const bool isFiring = IsFiring(pCmd, pWeapon);
 	const auto aimKeyDown = CFG::Aimbot_Always_On || H::Input->IsDown(CFG::Aimbot_Key);
 	const bool canFireDuringReload = CFG::Aimbot_AutoShoot && aimKeyDown && CanInterruptReload(pWeapon);
@@ -1452,10 +1452,16 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 			{
 				HandleMinigun(pCmd, pLocal, pWeapon, target, bCanFireNow, bUserAttack2, aimKeyDown);
 			}
-			else if (bCanFireNow || bCanInterruptReload)
+			// Amalgam's shape: the fire write is gated by ShouldFire alone (no
+			// can-fire check). Writing the attack on every solution tick means
+			// it is already sitting in the command when a shell's cooldown
+			// window opens mid-batch - the bCanFireNow gate made the write land
+			// one tick late (the +1 tickbase probe), the server rejected it,
+			// and every shell of a multi-shell doubletap slipped, dropping the
+			// last one out of the batch entirely
+			else if (ShouldFire(pCmd, pLocal, pWeapon, target))
 			{
-				if (ShouldFire(pCmd, pLocal, pWeapon, target))
-					HandleFire(pCmd, pWeapon);
+				HandleFire(pCmd, pWeapon);
 			}
 
 			const bool bIsFiring = IsFiring(pCmd, pWeapon);

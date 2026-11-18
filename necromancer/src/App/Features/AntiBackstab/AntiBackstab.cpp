@@ -2,7 +2,6 @@
 
 #include "../CFG.h"
 #include "../Players/Players.h"
-#include "../amalgam_port/AmalgamCompat.h"
 
 namespace
 {
@@ -21,7 +20,7 @@ namespace
 		return F::Players->GetInfo(iIndex, priority) && priority.Cheater;
 	}
 
-	// Amalgam SDK::MaxSpeed (the crouch branch is not needed here)
+	// Amalgam SDKUtils::MaxSpeed (the crouch branch is not needed here)
 	float MaxSpeed(C_TFPlayer* pPlayer)
 	{
 		float flSpeed = pPlayer->TeamFortress_CalculateMaxSpeed(false);
@@ -45,7 +44,7 @@ int CAntiBackstab::Run(C_TFPlayer* pLocal, CUserCmd* pCmd, bool* pbSendPacket)
 		return 0;
 
 	// G::Attacking can be 0 on the tick a swing cmd gets its IN_ATTACK
-	// (SDK::IsAttacking requires bCanPrimaryAttack, which engine prediction can
+	// (SDKUtils::IsAttacking requires bCanPrimaryAttack, which engine prediction can
 	// have already consumed) - for the pitch modes the button check keeps those
 	// swing cmds from being pitched 269/271, otherwise the melee aimbot whiffs
 	// every stab vs spies
@@ -88,8 +87,8 @@ int CAntiBackstab::Run(C_TFPlayer* pLocal, CUserCmd* pCmd, bool* pbSendPacket)
 		const auto pWeapon = pActiveWpn ? pActiveWpn->As<C_TFWeaponBase>() : nullptr;
 		if (!pWeapon
 			|| pWeapon->GetWeaponID() != TF_WEAPON_KNIFE
-			&& !(H::AimUtils->GetWeaponType(pLocalWpn) == EWeaponType::MELEE && SDK::AttribHookValue(0, "crit_from_behind", pWeapon) > 0)
-			&& !(pWeapon->GetWeaponID() == TF_WEAPON_FLAMETHROWER && SDK::AttribHookValue(0, "set_flamethrower_back_crit", pWeapon) == 1)
+			&& !(H::AimUtils->GetWeaponType(pLocalWpn) == EWeaponType::MELEE && SDKUtils::AttribHookValue(0, "crit_from_behind", pWeapon) > 0)
+			&& !(pWeapon->GetWeaponID() == TF_WEAPON_FLAMETHROWER && SDKUtils::AttribHookValue(0, "set_flamethrower_back_crit", pWeapon) == 1)
 			|| IsIgnoredIndex(pPlayer->entindex()))
 			continue;
 
@@ -98,8 +97,8 @@ int CAntiBackstab::Run(C_TFPlayer* pLocal, CUserCmd* pCmd, bool* pbSendPacket)
 		const Vec3 vTargetPos2 = vTargetPos1 + pPlayer->m_vecVelocity() * SDKUtils::GetRealLatency();
 		const float flDistance = std::max(std::max(MaxSpeed(pPlayer), MaxSpeed(pLocal)), pPlayer->m_vecVelocity().Length());
 		const float flDistanceSqr = powf(flDistance, 2);
-		if ((vLocalPos.DistToSqr(vTargetPos1) > flDistanceSqr || !SDK::VisPosWorld(pLocal, pPlayer, vLocalPos, vTargetPos1, MASK_SHOT | CONTENTS_GRATE))
-			&& (vLocalPos.DistToSqr(vTargetPos2) > flDistanceSqr || !SDK::VisPosWorld(pLocal, pPlayer, vLocalPos, vTargetPos2, MASK_SHOT | CONTENTS_GRATE)))
+		if ((vLocalPos.DistToSqr(vTargetPos1) > flDistanceSqr || !SDKUtils::VisPosWorld(pLocal, pPlayer, vLocalPos, vTargetPos1, MASK_SHOT | CONTENTS_GRATE))
+			&& (vLocalPos.DistToSqr(vTargetPos2) > flDistanceSqr || !SDKUtils::VisPosWorld(pLocal, pPlayer, vLocalPos, vTargetPos2, MASK_SHOT | CONTENTS_GRATE)))
 			continue;
 
 		vTargets.emplace_back(vTargetPos2, pEntity);

@@ -2,7 +2,6 @@
 
 #include "../CFG.h"
 #include "../Menu/Menu.h"
-#include "../amalgam_port/AmalgamCompat.h"
 
 MAKE_SIGNATURE(CTFPlayerShared_UpdateCritBoostEffect, "client.dll", "48 8B C4 48 89 58 ? 48 89 70 ? 48 89 78 ? 41 56 48 81 EC ? ? ? ? 48 89 68", 0x0);
 
@@ -390,9 +389,10 @@ void CCritHack::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd)
 	if (pLocal->IsCritBoosted() || pWeapon->m_flCritTime() > I::GlobalVars->curtime || !WeaponCanCrit(pWeapon))
 		return;
 
-	// Attack detection - check for doubletap/shifting first
+	// Attack detection - doubletap context still relaxes the rapid-fire check
+	// below, but the seek itself keys on the actual attack state like Amalgam's
 	bool bDoubletap = (Shifting::bShifting && !Shifting::bShiftingWarp) || Shifting::bRapidFireWantShift;
-	bool bAttacking = bDoubletap;
+	bool bAttacking = false;
 	
 	if (!bAttacking)
 	{

@@ -1,4 +1,6 @@
-#include "World.h"
+#include "WorldFaces.h"
+
+#include "../../../Utils/Math/SimMath.h"
 
 #include <algorithm>
 #include <numeric>
@@ -115,7 +117,7 @@ static void GetFacesForCollision(CPhysCollide* pCollision, std::vector<Face_t>& 
 		GetFacesForConvex(s_aConvexes[iConvex], vFaces, flResize, iType);
 }
 
-bool CAmalgamWorld::FaceValid(const std::vector<Vec3>& vVertices, const Vec3* pNormal, const Vec3* pMins, const Vec3* pMaxs)
+bool CWorldFaces::FaceValid(const std::vector<Vec3>& vVertices, const Vec3* pNormal, const Vec3* pMins, const Vec3* pMaxs)
 {
 	if (vVertices.size() < 3)
 		return false;
@@ -142,17 +144,18 @@ bool CAmalgamWorld::FaceValid(const std::vector<Vec3>& vVertices, const Vec3* pN
 	return true;
 }
 
-void CAmalgamWorld::Cache()
+void CWorldFaces::Cache()
 {
 	if (!m_iNeedsCache)
 		return;
 
 	CacheBoxBrushes();
 	CachePlaneBrushes();
+	CacheProps();
 	CacheEntities();
 }
 
-void CAmalgamWorld::CacheBoxBrushes()
+void CWorldFaces::CacheBoxBrushes()
 {
 	if (!(m_iNeedsCache & FaceTypeEnum::BoxBrush))
 		return;
@@ -205,7 +208,7 @@ void CAmalgamWorld::CacheBoxBrushes()
 	}
 }
 
-void CAmalgamWorld::CachePlaneBrushes()
+void CWorldFaces::CachePlaneBrushes()
 {
 	if (!(m_iNeedsCache & FaceTypeEnum::PlaneBrush))
 		return;
@@ -237,7 +240,38 @@ void CAmalgamWorld::CachePlaneBrushes()
 	}
 }
 
-void CAmalgamWorld::CacheEntities()
+void CWorldFaces::CacheProps()
+{
+	if (!(m_iNeedsCache & FaceTypeEnum::Prop))
+		return;
+
+	m_iNeedsCache &= ~FaceTypeEnum::Prop;
+
+	CEntityEnumerator tProps;
+	I::SpatialPartition->EnumerateElementsInBox(I::EngineTrace->SpatialPartitionMask(), { -16384.f, -16384.f, -16384.f }, { 16384.f, 16384.f, 16384.f }, false, &tProps);
+	for (auto pHandleEntity : tProps.m_vEntities)
+	{
+		if (!I::StaticPropMgr->IsStaticProp(pHandleEntity))
+			continue;
+
+		ICollideable* pCollideable = I::StaticPropMgr->GetStaticProp(pHandleEntity);
+		if (!pCollideable || !pCollideable->IsSolid())
+			continue;
+
+		vcollide_t* pCollide = I::ModelInfoClient->GetVCollide(pCollideable->GetCollisionModel());
+		if (!pCollide || m_mCollideCache.contains(pCollide))
+			continue;
+
+		for (int iSolid = 0; iSolid < pCollide->solidCount; iSolid++)
+		{
+			CPhysCollide* pCollision = pCollide->solids[iSolid];
+			if (pCollision)
+				GetFacesForCollision(pCollision, m_mCollideCache[pCollide], 0.f, FaceTypeEnum::Prop);
+		}
+	}
+}
+
+void CWorldFaces::CacheEntities()
 {
 	if (!(m_iNeedsCache & FaceTypeEnum::Entity))
 		return;
@@ -260,7 +294,7 @@ void CAmalgamWorld::CacheEntities()
 	}
 }
 
-void CAmalgamWorld::Uncache()
+void CWorldFaces::Uncache()
 {
 	if (m_iNeedsCache == FaceTypeEnum::Cache)
 		return;
@@ -271,7 +305,7 @@ void CAmalgamWorld::Uncache()
 	m_iNeedsCache = FaceTypeEnum::Cache;
 }
 
-std::vector<Face_t> CAmalgamWorld::GetFacesInAABB(const Vec3& vMins, const Vec3& vMaxs, int iMask, ITraceFilter* pFilter, int iFlags)
+std::vector<Face_t> CWorldFaces::GetFacesInAABB(const Vec3& vMins, const Vec3& vMaxs, int iMask, ITraceFilter* pFilter, int iFlags)
 {
 	std::vector<Face_t> vFaces;
 
@@ -332,50 +366,54 @@ std::vector<Face_t> CAmalgamWorld::GetFacesInAABB(const Vec3& vMins, const Vec3&
 			if (pDispTree->m_nPower < 0 || pDispTree->m_nPower > 4)
 				continue;
 
-			if (!Math::IsBoxIntersectingBox(vMins, vMaxs, pDispTree->m_mins, pDispTree->m_maxs))
-				continue;
-
-			const int iFaces = std::min(pDispTree->GetFaceCount(), pDispTree->m_aTris.Count());
-			for (int iFace = 0; iFace < iFaces; iFace++)
-			{
-				CDispCollTri* pTri = &pDispTree->m_aTris[iFace];
-				if (pTri->GetVert(0) >= pDispTree->m_aVerts.Count() || pTri->GetVert(1) >= pDispTree->m_aVerts.Count() || pTri->GetVert(2) >= pDispTree->m_aVerts.Count())
+				if (!Math::IsBoxIntersectingBox(vMins, vMaxs, pDispTree->m_mins, pDispTree->m_maxs))
 					continue;
 
-				std::vector<Vec3> vVertices = { pDispTree->m_aVerts[pTri->GetVert(0)], pDispTree->m_aVerts[pTri->GetVert(1)], pDispTree->m_aVerts[pTri->GetVert(2)] };
+				const int iFaces = std::min(pDispTree->GetFaceCount(), pDispTree->m_aTris.Count());
+				for (int iFace = 0; iFace < iFaces; iFace++)
+				{
+					CDispCollTri* pTri = &pDispTree->m_aTris[iFace];
+					if (pTri->GetVert(0) >= pDispTree->m_aVerts.Count() || pTri->GetVert(1) >= pDispTree->m_aVerts.Count() || pTri->GetVert(2) >= pDispTree->m_aVerts.Count())
+						continue;
 
-				if (FaceValid(vVertices, &pTri->m_vecNormal, &vMins, &vMaxs))
-					vFaces.emplace_back(vVertices, pTri->m_vecNormal, FaceTypeEnum::Displacement);
-			}
+					std::vector<Vec3> vVertices = { pDispTree->m_aVerts[pTri->GetVert(0)], pDispTree->m_aVerts[pTri->GetVert(1)], pDispTree->m_aVerts[pTri->GetVert(2)] };
+
+					if (FaceValid(vVertices, &pTri->m_vecNormal, &vMins, &vMaxs))
+						vFaces.emplace_back(vVertices, pTri->m_vecNormal, FaceTypeEnum::Displacement);
+				}
 		}
 	}
 
 	if (iFlags & (FaceTypeEnum::Entity | FaceTypeEnum::Prop))
 	{
-		// two enumerations stand in for Amalgam's single SpatialPartitionMask +
-		// IsStaticProp pass - the list mask itself splits props from entities
-		auto fHandleHandle = [&](IHandleEntity* pHandleEntity, const bool bProp)
+		CEntityEnumerator tEnumerator;
+		I::SpatialPartition->EnumerateElementsInBox(I::EngineTrace->SpatialPartitionMask(), vMins, vMaxs, false, &tEnumerator);
+		for (auto pHandleEntity : tEnumerator.m_vEntities)
 		{
 			if (pFilter && !pFilter->ShouldHitEntity(pHandleEntity, iMask))
-				return;
+				continue;
+
+			const bool bProp = I::StaticPropMgr->IsStaticProp(pHandleEntity);
+			if (!(iFlags & (bProp ? FaceTypeEnum::Prop : FaceTypeEnum::Entity)))
+				continue;
 
 			ICollideable* pCollideable = nullptr;
 			if (!bProp)
 			{
 				C_BaseEntity* pEntity = reinterpret_cast<C_BaseEntity*>(pHandleEntity);
 				if (!pEntity->GetAbsVelocity().IsZero())
-					return;
+					continue;
 
 				pCollideable = pEntity->GetCollideable();
 			}
 			else
-				pCollideable = reinterpret_cast<IClientUnknown*>(pHandleEntity)->GetCollideable();
+				pCollideable = I::StaticPropMgr->GetStaticProp(pHandleEntity);
 			if (!pCollideable || !pCollideable->IsSolid())
-				return;
+				continue;
 
 			vcollide_t* pCollide = I::ModelInfoClient->GetVCollide(pCollideable->GetCollisionModel());
 			if (!pCollide)
-				return;
+				continue;
 
 			// props build lazily per vcollide (Amalgam pre-walks all of MDLCache
 			// for the same result); brush entities come from CacheEntities with
@@ -390,7 +428,7 @@ std::vector<Face_t> CAmalgamWorld::GetFacesInAABB(const Vec3& vMins, const Vec3&
 				}
 			}
 			if (!m_mCollideCache.contains(pCollide))
-				return;
+				continue;
 
 			auto& vCache = m_mCollideCache[pCollide];
 			for (auto& tFace : vCache)
@@ -405,7 +443,11 @@ std::vector<Face_t> CAmalgamWorld::GetFacesInAABB(const Vec3& vMins, const Vec3&
 				else
 				{
 					for (auto& vVertex : vVertices)
-						vVertex = Math::VectorTransform(vVertex, pCollideable->CollisionToWorldTransform());
+					{
+						Vec3 vTransformed;
+						Math::VectorTransform(vVertex, pCollideable->CollisionToWorldTransform(), vTransformed);
+						vVertex = vTransformed;
+					}
 					vNormal = (vVertices[0] - vVertices[2]).Cross(vVertices[0] - vVertices[1]).Normalized();
 				}
 
@@ -414,15 +456,6 @@ std::vector<Face_t> CAmalgamWorld::GetFacesInAABB(const Vec3& vMins, const Vec3&
 			}
 		};
 
-		CEntityEnumerator tProps;
-		I::SpatialPartition->EnumerateElementsInBox(PARTITION_CLIENT_STATIC_PROPS, vMins, vMaxs, false, &tProps);
-		for (auto pHandleEntity : tProps.m_vEntities)
-			fHandleHandle(pHandleEntity, true);
-
-		CEntityEnumerator tEntities;
-		I::SpatialPartition->EnumerateElementsInBox(PARTITION_CLIENT_SOLID_EDICTS | PARTITION_CLIENT_NON_STATIC_EDICTS | PARTITION_CLIENT_RESPONSIVE_EDICTS, vMins, vMaxs, false, &tEntities);
-		for (auto pHandleEntity : tEntities.m_vEntities)
-			fHandleHandle(pHandleEntity, false);
 	}
 
 	return vFaces;

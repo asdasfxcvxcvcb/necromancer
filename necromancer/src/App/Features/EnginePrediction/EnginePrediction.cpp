@@ -2,7 +2,6 @@
 
 #include "../CFG.h"
 #include "../Misc/Misc.h"
-#include "../amalgam_port/AmalgamCompat.h"
 
 // Account for interp and origin compression when simulating local player
 void CEnginePrediction::AdjustPlayers(C_BaseEntity* pLocal)

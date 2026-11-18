@@ -1,20 +1,25 @@
 #pragma once
 
-#include "../AmalgamCompat.h"
+#include "../../../SDK/SDK.h"
+#include "../../../Utils/Math/Math.h"
 
 // ============================================
 // Projectile Simulation Flags
 // ============================================
 
-Enum(ProjSim,
-    None = 0,
-    Trace = 1 << 0,         // Trace when doing GetProjectileFireSetup
-    InitCheck = 1 << 1,     // Validate starting position
-    Quick = 1 << 2,         // Use interpolation
-    NoRandomAngles = 1 << 3, // Don't do angle stuff for aimbot, nospread will pick that up
-    PredictCmdNum = 1 << 4,  // Use crithack to predict command number
-    MaxSpeed = 1 << 5       // Default projectile speeds to their maximum
-)
+namespace ProjSimEnum
+{
+    enum ProjSimEnum
+    {
+        None = 0,
+        Trace = 1 << 0,         // Trace when doing GetProjectileFireSetup
+        InitCheck = 1 << 1,     // Validate starting position
+        Quick = 1 << 2,         // Use interpolation
+        NoRandomAngles = 1 << 3, // Don't do angle stuff for aimbot, nospread will pick that up
+        PredictCmdNum = 1 << 4,  // Use crithack to predict command number
+        MaxSpeed = 1 << 5       // Default projectile speeds to their maximum
+    };
+}
 
 // ============================================
 // Projectile Info Structure
@@ -63,7 +68,7 @@ struct PhysicsObject_t
 // Projectile Simulation Class
 // ============================================
 
-class CAmalgamProjectileSimulation
+class CProjectileSimulation
 {
 private:
     bool GetInfoMain(C_TFPlayer* pPlayer, C_TFWeaponBase* pWeapon, Vec3 vAngles, ProjectileInfo& tProjInfo, int iFlags, float flAutoCharge);
@@ -211,7 +216,7 @@ public:
         
         float flReturn = 0.f;
         
-        static auto sv_gravity = U::ConVars.FindVar("sv_gravity");
+        static auto sv_gravity = I::CVar->FindVar("sv_gravity");
         float flGravity = sv_gravity ? sv_gravity->GetFloat() / 800.f : 1.f;
         
         switch (pProjectile->GetClassId())
@@ -246,10 +251,10 @@ public:
             flReturn = 0.2f * flGravity;
             break;
         case ETFClassIds::CTFProjectile_Flare:
-            flReturn = (pWeapon && pWeapon->As<CTFFlareGun>()->GetFlareGunType() == FLAREGUN_GRORDBORT ? 0.45f : 0.3f) * flGravity;
+            flReturn = (pWeapon && pWeapon->As<C_TFFlareGun>()->GetFlareGunType() == FLAREGUN_GRORDBORT ? 0.45f : 0.3f) * flGravity;
             break;
         case ETFClassIds::CTFProjectile_Arrow:
-            flReturn = CanHeadshot(pProjectile->As<C_TFProjectile_Arrow>())
+            flReturn = SDKUtils::CanHeadshot(pProjectile->As<C_TFProjectile_Arrow>())
                 ? Math::RemapVal(pProjectile->As<C_TFProjectile_Arrow>()->m_vInitialVelocity().Length(), 1800.f, 2600.f, 0.5f, 0.1f) * flGravity
                 : 0.2f * flGravity;
             break;
@@ -261,9 +266,9 @@ public:
     IPhysicsObject* m_pObj = nullptr;
 };
 
-MAKE_SINGLETON_SCOPED(CAmalgamProjectileSimulation, AmalgamProjSim, F);
+MAKE_SINGLETON_SCOPED(CProjectileSimulation, ProjectileSimulation, F);
 
 // Alias for compatibility with Amalgam code
 namespace F {
-    inline CAmalgamProjectileSimulation& ProjSim = *F::AmalgamProjSim;
+    inline CProjectileSimulation& ProjSim = *F::ProjectileSimulation;
 }

@@ -19,17 +19,10 @@ int CTickbaseManip::GetProcessableTicks() const
 
 int CTickbaseManip::GetOptimalRechargeLimit()
 {
-	const int nServerCap = (std::max)(Shifting::GetServerProcessBudget(0), 1);
-	return std::min(CFG::Exploits_Shifting_Recharge_Limit, nServerCap);
+	return CFG::Exploits_Shifting_Recharge_Limit;
 }
 
 int CTickbaseManip::GetOptimalDTTicks()
 {
 	return CFG::Exploits_RapidFire_Ticks;
-}
-
-int CTickbaseManip::GetOptimalDelayTicks()
-{
-	// User controls delay ticks directly via the slider.
-	return CFG::Exploits_RapidFire_Min_Ticks_Target_Same;
 }

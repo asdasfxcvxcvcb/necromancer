@@ -1,7 +1,6 @@
 #include "MovementSimulation.h"
 
 #include "../CFG.h"
-#include "../amalgam_port/AmalgamCompat.h"
 
 #include <algorithm>
 #include <cmath>
@@ -29,7 +28,7 @@ namespace
 
 	float GetFrictionScale(C_TFPlayer* pPlayer)
 	{
-		static ConVar* sv_friction = U::ConVars.FindVar("sv_friction");
+		static ConVar* sv_friction = I::CVar->FindVar("sv_friction");
 		if (!sv_friction || !pPlayer)
 			return 1.f;
 
@@ -60,7 +59,7 @@ namespace
 		if (flVelocityZ <= 0.f || flVelocityZ > 250.f)
 			return 1.f;
 
-		static ConVar* sv_airaccelerate = U::ConVars.FindVar("sv_airaccelerate");
+		static ConVar* sv_airaccelerate = I::CVar->FindVar("sv_airaccelerate");
 		const float flAccel = std::max(sv_airaccelerate ? sv_airaccelerate->GetFloat() : 10.f, 1.f);
 		const float flMin = 50.f * flAccel;
 		const float flMax = 150.f * flAccel;
@@ -144,12 +143,12 @@ namespace
 				const Vec3 vTraceStart = tPrevious.m_vOrigin;
 				const Vec3 vTraceEnd = vTraceStart + tPrevious.m_vVelocity * TICK_INTERVAL;
 
-				CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
+				CTraceFilterWorldAndProps filter = {};
 				filter.pSkip = pPlayer;
 
 				trace_t trace = {};
 				const Vec3 vCompression(PlayerOriginCompression, PlayerOriginCompression, 0.f);
-				SDK::TraceHull(vTraceStart, vTraceEnd, pPlayer->m_vecMins() + vCompression, pPlayer->m_vecMaxs() - vCompression, SolidMask(pPlayer), &filter, &trace);
+				SDKUtils::TraceHull(vTraceStart, vTraceEnd, pPlayer->m_vecMins() + vCompression, pPlayer->m_vecMaxs() - vCompression, SolidMask(pPlayer), &filter, &trace);
 
 				if (trace.DidHit() && trace.plane.normal.z < 0.7f)
 				{
@@ -347,7 +346,7 @@ void CMovementSimulation::Store()
 			const float flSpeedSqr = vVelocity.Length2DSqr();
 			if (flSpeedSqr > flMaxPossibleSpeed * flMaxPossibleSpeed)
 			{
-				const float flMaxSpeed = SDK::MaxSpeed(pPlayer);
+				const float flMaxSpeed = SDKUtils::MaxSpeed(pPlayer);
 				const float flMaxSpeedSqr = flMaxSpeed * flMaxSpeed;
 				if (flSpeedSqr > flMaxSpeedSqr)
 				{
@@ -512,7 +511,7 @@ bool CMovementSimulation::Initialize(C_TFPlayer* pPlayer, MoveStorage& tMoveStor
 		tMoveStorage.m_vOldOrigin = pPlayer->m_vecOrigin();
 		tMoveStorage.m_bHasBackup = true;
 
-		if (Vec3* pAverage = g_AmalgamEntitiesExt.GetAvgVelocity(pPlayer->entindex()); pAverage && !pAverage->IsZero())
+		if (Vec3* pAverage = g_EntityMotionExt.GetAvgVelocity(pPlayer->entindex()); pAverage && !pAverage->IsZero())
 			pPlayer->m_vecVelocity() = *pAverage;
 
 		// Duck fix: remove FL_DUCKING (breaks origin Z in ProcessMovement) — Amalgam approach
@@ -685,7 +684,7 @@ void CMovementSimulation::SetupMoveData(MoveStorage& tMoveStorage, bool bStrafe)
 	tMoveData.m_nPlayerHandle = pPlayer->GetRefEHandle();
 	tMoveData.m_vecVelocity = pPlayer->m_vecVelocity();
 	tMoveData.m_vecAbsOrigin = pPlayer->m_vecOrigin();
-	tMoveData.m_flMaxSpeed = SDK::MaxSpeed(pPlayer);
+	tMoveData.m_flMaxSpeed = SDKUtils::MaxSpeed(pPlayer);
 	tMoveData.m_flClientMaxSpeed = tMoveData.m_flMaxSpeed;
 	tMoveData.m_nButtons = 0;
 	tMoveData.m_nOldButtons = 0;

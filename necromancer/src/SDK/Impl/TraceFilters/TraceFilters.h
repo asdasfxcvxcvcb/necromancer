@@ -87,7 +87,7 @@ public:
 // Amalgam-style trace filter for projectile aimbot
 // Only hits world geometry and props, not players/buildings
 // Named differently to avoid conflict with CTraceFilterWorldAndPropsOnly in IEngineTrace.h
-class CTraceFilterWorldAndPropsOnlyAmalgam : public CTraceFilter
+class CTraceFilterWorldAndProps : public CTraceFilter
 {
 public:
 	bool ShouldHitEntity(IHandleEntity* pServerEntity, int contentsMask) override;

@@ -40,7 +40,6 @@ public:
 	float GetPingMs();
 	int GetOptimalRechargeLimit();
 	int GetOptimalDTTicks();
-	int GetOptimalDelayTicks();
 };
 
 MAKE_SINGLETON_SCOPED(CTickbaseManip, Ticks, F);

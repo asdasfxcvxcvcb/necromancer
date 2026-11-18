@@ -3,10 +3,9 @@
 #include "../CFG.h"
 #include "../Players/Players.h"
 #include "../Crits/Crits.h"
-#include "../amalgam_port/AmalgamCompat.h"
-#include "../amalgam_port/ProjectileSimulation/ProjectileSimulation.h"
-#include "../amalgam_port/AimbotProjectile/AimbotProjectileAmalgam.h"
-#include "../amalgam_port/MoveSim/MoveSimAmalgam.h"
+#include "../ProjectileSimulation/ProjectileSimulation.h"
+#include "../Aimbot/AimbotProjectileSim/AimbotProjectileSim.h"
+#include "../MoveSim/MoveSim.h"
 
 // Port of Amalgam's CAutoHeal::AutoVaccinator/GetDangers, retargeted to the
 // stock medigun uber. Differences from the original:
@@ -29,7 +28,7 @@ namespace
 		return c + (d - c) * t;
 	}
 
-	// Amalgam SDK::PredictOrigin
+	// Amalgam SDKUtils::PredictOrigin
 	Vec3 PredictOrigin(const Vec3& vOrigin, const Vec3& vVelocity, float flLatency, bool bTrace = true,
 		const Vec3& vMins = {}, const Vec3& vMaxs = {}, unsigned int nMask = MASK_SOLID)
 	{
@@ -41,8 +40,8 @@ namespace
 			return vOut;
 
 		CGameTrace trace = {};
-		CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
-		SDK::TraceHull(vOrigin, vOut, vMins, vMaxs, nMask, &filter, &trace);
+		CTraceFilterWorldAndProps filter = {};
+		SDKUtils::TraceHull(vOrigin, vOut, vMins, vMaxs, nMask, &filter, &trace);
 		return trace.endpos;
 	}
 
@@ -88,7 +87,7 @@ namespace
 		bool bEntityIsPlayer, unsigned int nMask = MASK_SHOT | CONTENTS_GRATE)
 	{
 		CGameTrace trace = {};
-		CTraceFilterWorldAndPropsOnlyAmalgam filter = {};
+		CTraceFilterWorldAndProps filter = {};
 
 		if (bEntityIsPlayer)
 		{
@@ -110,14 +109,14 @@ namespace
 			};
 			for (auto& vPoint : vPoints)
 			{
-				SDK::Trace(vPlayerOrigin + vPoint, vEntityOrigin, nMask, &filter, &trace);
+				SDKUtils::Trace(vPlayerOrigin + vPoint, vEntityOrigin, nMask, &filter, &trace);
 				if (trace.fraction == 1.f)
 					return true;
 			}
 		}
 		else
 		{
-			SDK::Trace(vPlayerOrigin, vEntityOrigin, nMask, &filter, &trace);
+			SDKUtils::Trace(vPlayerOrigin, vEntityOrigin, nMask, &filter, &trace);
 			return trace.fraction == 1.f;
 		}
 
@@ -195,7 +194,7 @@ namespace
 				*pType = MEDIGUN_BULLET_RESIST;
 		}
 		if (pWeapon)
-			flReturn *= SDK::AttribHookValue(1, "mult_dmg", pWeapon);
+			flReturn *= SDKUtils::AttribHookValue(1, "mult_dmg", pWeapon);
 		return flReturn;
 	}
 
@@ -231,7 +230,7 @@ namespace
 			if (pProjectile->As<C_TFProjectile_Rocket>()->m_bCritical())
 				flReturn = 3.f;
 			else if (pProjectile->As<C_TFBaseRocket>()->m_iDeflected()
-				|| pTarget->InCond(TF_COND_BLASTJUMPING) && pWeapon && SDK::AttribHookValue(0, "mini_crit_airborne", pWeapon) == 1)
+				|| pTarget->InCond(TF_COND_BLASTJUMPING) && pWeapon && SDKUtils::AttribHookValue(0, "mini_crit_airborne", pWeapon) == 1)
 				flReturn = 1.36f;
 			break;
 		case ETFClassIds::CTFProjectile_EnergyBall:
@@ -255,8 +254,8 @@ namespace ProjectileDanger
 	bool IsWorldVisible(const Vec3& vFrom, const Vec3& vTo)
 	{
 		CGameTrace trace = {};
-		CTraceFilterWorldAndPropsOnly filter = {};
-		SDK::Trace(vFrom, vTo, MASK_SHOT, &filter, &trace);
+		CTraceFilterWorldAndProps filter = {};
+		SDKUtils::Trace(vFrom, vTo, MASK_SHOT, &filter, &trace);
 		return trace.fraction >= 0.99f;
 	}
 
@@ -293,7 +292,7 @@ namespace ProjectileDanger
 
 		vecPath.push_back(pPlayer->m_vecOrigin());
 
-		AmalgamMoveStorage tStorage;
+		MoveSimStorage tStorage;
 		if (F::MoveSim->Initialize(pPlayer, tStorage, false, true, false))
 		{
 			for (int i = 0; i < static_cast<int>(SIM_TICKS); i++)
@@ -371,8 +370,8 @@ namespace ProjectileDanger
 		tOut = Integrate(nTicks);
 
 		CGameTrace impactTrace = {};
-		CTraceFilterWorldAndPropsOnly impactFilter = {};
-		SDK::Trace(pEntity->m_vecOrigin(), tOut.vEnd, MASK_SOLID, &impactFilter, &impactTrace);
+		CTraceFilterWorldAndProps impactFilter = {};
+		SDKUtils::Trace(pEntity->m_vecOrigin(), tOut.vEnd, MASK_SOLID, &impactFilter, &impactTrace);
 		if (impactTrace.fraction < 1.0f)
 		{
 			const int nCapped = std::max(1, static_cast<int>(nTicks * impactTrace.fraction));
@@ -431,7 +430,7 @@ namespace ProjectileDanger
 				{
 					const auto pLauncher = pRocket->m_hLauncher().Get() ? pRocket->m_hLauncher().Get()->As<C_TFWeaponBase>() : nullptr;
 					if (pLauncher)
-						tOut.flRadius = SDK::AttribHookValue(ROCKET_RADIUS, "mult_explosion_radius", pLauncher);
+						tOut.flRadius = SDKUtils::AttribHookValue(ROCKET_RADIUS, "mult_explosion_radius", pLauncher);
 					tOut.flDamage = pLauncher && pLauncher->GetWeaponID() == TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT ? ROCKET_DH_DAMAGE : ROCKET_DAMAGE;
 				}
 			}
@@ -622,11 +621,11 @@ void CAutoUberPop::GetDangers(C_TFPlayer* pTarget, bool bVaccinator, float& flBu
 		{
 			// no sniper dots in Necromancer's entity cache: zoomed snipers are
 			// scored at full headshot potential, unzoomed at bodyshot damage
-			const bool bPiss = SDK::AttribHookValue(0, "jarate_duration", pWeapon) > 0;
-			if (SDK::AttribHookValue(0, "sniper_only_fire_zoomed", pWeapon) && !bZoom)
+			const bool bPiss = SDKUtils::AttribHookValue(0, "jarate_duration", pWeapon) > 0;
+			if (SDKUtils::AttribHookValue(0, "sniper_only_fire_zoomed", pWeapon) && !bZoom)
 				flDamage = 0.f;
 			else if (nWeaponID == TF_WEAPON_SNIPERRIFLE_CLASSIC || !bZoom)
-				flDamage = SDK::AttribHookValue(50.f, "bodyshot_damage_modify", pWeapon);
+				flDamage = SDKUtils::AttribHookValue(50.f, "bodyshot_damage_modify", pWeapon);
 			else
 			{
 				flDamage = 150.f;
@@ -649,7 +648,7 @@ void CAutoUberPop::GetDangers(C_TFPlayer* pTarget, bool bVaccinator, float& flBu
 		case EWeaponType::HITSCAN:
 		{
 			flMult = flBulletResist > 0.f ? 1.f - flBulletResist : flMult + flBulletResist;
-			flDamage *= flMult * SDK::AttribHookValue(1, "mult_dmg", pWeapon);
+			flDamage *= flMult * SDKUtils::AttribHookValue(1, "mult_dmg", pWeapon);
 
 			const float flSpread = std::clamp(pWeapon->GetWeaponSpread(), 0.001f, 1.f);
 			const float flMappedCount = RemapVal(flDistance, 20 / flSpread, 100 / flSpread, iBulletCount, 1);
@@ -665,7 +664,7 @@ void CAutoUberPop::GetDangers(C_TFPlayer* pTarget, bool bVaccinator, float& flBu
 		case EWeaponType::PROJECTILE:
 		{
 			ProjectileInfo tProjInfo = {};
-			if (!F::AmalgamProjSim->GetInfo(pPlayer, pWeapon, {}, tProjInfo, ProjSimEnum::NoRandomAngles | ProjSimEnum::MaxSpeed))
+			if (!F::ProjSim.GetInfo(pPlayer, pWeapon, {}, tProjInfo, ProjSimEnum::NoRandomAngles | ProjSimEnum::MaxSpeed))
 				continue;
 
 			int iType = MEDIGUN_BLAST_RESIST;
@@ -688,9 +687,9 @@ void CAutoUberPop::GetDangers(C_TFPlayer* pTarget, bool bVaccinator, float& flBu
 			case MEDIGUN_BLAST_RESIST: flMult = flBlastResist > 0.f ? 1.f - flBlastResist : flMult + flBlastResist; break;
 			case MEDIGUN_FIRE_RESIST: flMult = flFireResist > 0.f ? 1.f - flFireResist : flMult + flFireResist; break;
 			}
-			flDamage *= flMult * SDK::AttribHookValue(1, "mult_dmg", pWeapon);
+			flDamage *= flMult * SDKUtils::AttribHookValue(1, "mult_dmg", pWeapon);
 
-			const float flRadius = tProjInfo.m_flVelocity * flLatency + F::AmalgamAimbotProjectile->GetSplashRadius(pWeapon, pPlayer) + (pTarget->m_vecMaxs() - pTarget->m_vecMins()).Length() / 2;
+			const float flRadius = tProjInfo.m_flVelocity * flLatency + F::AimbotProjectileSim->GetSplashRadius(pWeapon, pPlayer) + (pTarget->m_vecMaxs() - pTarget->m_vecMins()).Length() / 2;
 			const float flDamageInLatency = flDamage * iBulletCount * iShotsWithinTime;
 			const float flDamageDanger = flDamageInLatency / iPlayerHealth;
 			const float flDistanceDanger = RemapVal(flDistance, flRadius, flRadius, 1.f, 0.001f);
@@ -826,8 +825,8 @@ void CAutoUberPop::GetDangers(C_TFPlayer* pTarget, bool bVaccinator, float& flBu
 			|| pWeapon && !pWeapon->GetDamage())
 			continue;
 
-		const Vec3 vVelocity = F::AmalgamProjSim->GetVelocity(pEntity);
-		float flRadius = F::AmalgamAimbotProjectile->GetSplashRadius(pEntity, pWeapon, pOwner);
+		const Vec3 vVelocity = F::ProjSim.GetVelocity(pEntity);
+		float flRadius = F::AimbotProjectileSim->GetSplashRadius(pEntity, pWeapon, pOwner);
 
 		const Vec3 vProjectileOrigin = PredictOrigin(pEntity->m_vecOrigin(), vVelocity, flLatency, true, pEntity->m_vecMins(), pEntity->m_vecMaxs());
 		if (!TraceToEntity(pTarget, pEntity, vTargetEye, vProjectileOrigin, false, MASK_SHOT))

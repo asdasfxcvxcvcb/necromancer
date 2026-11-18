@@ -3,7 +3,6 @@
 #include "../Misc/Misc.h"
 #include "../Players/Players.h"
 #include "../FakeAngle/FakeAngle.h"
-#include "../amalgam_port/AmalgamCompat.h"
 
 constexpr int SIGHTLINE_DEADBAND_TICKS = 16;
 

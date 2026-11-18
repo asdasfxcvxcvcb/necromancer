@@ -7,8 +7,7 @@
 #include "../Features/MiscVisuals/MiscVisuals.h"
 #include "../Features/Crits/Crits.h"
 #include "../Features/Weather/Weather.h"
-#include "../Features/amalgam_port/AmalgamCompat.h"
-#include "../Features/amalgam_port/MoveSim/MoveSimAmalgam.h"
+#include "../Features/MoveSim/MoveSim.h"
 #include "../Features/NavBot/NavBot.h"
 #include "../Features/Misc/SkinChanger/SkinChanger.h"
 #include "../../Utils/CrashHandler/CrashHandler.h"
@@ -264,7 +263,7 @@ MAKE_HOOK(IBaseClientDLL_FrameStageNotify, Memory::GetVFunc(I::BaseClientDLL, 35
 			// Clear amalgam tracking data when not in-game to prevent memory leaks
 			if (!bInGame)
 			{
-				g_AmalgamEntitiesExt.Clear();
+				g_EntityMotionExt.Clear();
 			}
 
 			break;
@@ -356,12 +355,12 @@ MAKE_HOOK(IBaseClientDLL_FrameStageNotify, Memory::GetVFunc(I::BaseClientDLL, 35
 
 						// Push origin record for accurate velocity computation (Amalgam-style)
 						// Uses GetSize().z offset like Amalgam's VelFixRecord
-						g_AmalgamEntitiesExt.PushOrigin(n,
+						g_EntityMotionExt.PushOrigin(n,
 							pPlayer->m_vecOrigin() + Vec3(0, 0, pPlayer->m_vecMaxs().z),
 							pPlayer->m_flSimulationTime());
 					}
 					else
-						g_AmalgamEntitiesExt.ClearOrigins(n);
+						g_EntityMotionExt.ClearOrigins(n);
 
 					// Do manual animation updates if Disable Interp is on
 					// EXTREME: Skip anim updates entirely; saves CPU but breaks visual accuracy.

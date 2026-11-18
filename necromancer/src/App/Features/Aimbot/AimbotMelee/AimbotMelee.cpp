@@ -3,7 +3,6 @@
 #include "../../CFG.h"
 #include "../../Crits/Crits.h"
 #include "../../Players/Players.h"
-#include "../../amalgam_port/AmalgamCompat.h"
 
 int CAimbotMelee::GetSwingTime(C_TFWeaponBase* pWeapon)
 {
@@ -85,7 +84,7 @@ bool CAimbotMelee::CanHit(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, MeleeTarg
 	Vec3 vSwingMins = { -flHull, -flHull, -flHull };
 	Vec3 vSwingMaxs = { flHull, flHull, flHull };
 
-	const Vec3 vEyePos = SDK::GetPredictedShootPos(pLocal);
+	const Vec3 vEyePos = SDKUtils::GetPredictedShootPos(pLocal);
 	const bool bIsPlayer = target.Entity && H::Entities->IsEntityValid(target.Entity) && target.Entity->GetClassId() == ETFClassIds::CTFPlayer;
 
 	// For players with lag records, we need to test against the record's position
@@ -165,7 +164,7 @@ bool CAimbotMelee::CanHit(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, MeleeTarg
 
 bool CAimbotMelee::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, MeleeTarget_t& outTarget)
 {
-	const Vec3 vLocalPos = SDK::GetPredictedShootPos(pLocal);
+	const Vec3 vLocalPos = SDKUtils::GetPredictedShootPos(pLocal);
 	const Vec3 vLocalAngles = I::EngineClient->GetViewAngles();
 
 	m_vecTargets.clear();

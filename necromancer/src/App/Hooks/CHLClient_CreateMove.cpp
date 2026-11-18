@@ -20,8 +20,7 @@
 #include "../Features/NavBot/NavBot.h"
 #include "../Features/NavBot/NavEngine/NavEngine.h"
 #include "../Features/Misc/AntiCheatCompat/AntiCheatCompat.h"
-#include "../Features/amalgam_port/AmalgamCompat.h"
-#include "../Features/amalgam_port/Ticks/Ticks.h"
+#include "../Features/Aimbot/AimbotProjectileSim/Ticks.h"
 #include "../Features/AutoUberPop/AutoUberPop.h"
 #include "../Features/AntiBackstab/AntiBackstab.h"
 #include "../Features/Players/Players.h"
@@ -29,11 +28,6 @@
 #include "../../Utils/CrashHandler/CrashHandler.h"
 
 extern void ProcessTauntDelay();
-
-namespace TickbaseFix
-{
-	void Add(int nStartCommandNumber, int nTickbaseShift);
-}
 
 MAKE_SIGNATURE(ValidateUserCmd_, "client.dll", "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 20 48 8B F9 41 8B D8", 0, 0);
 MAKE_HOOK(ValidateUserCmd, Signatures::ValidateUserCmd_.Get(), void, __fastcall, void* rcx, CUserCmd* cmd,
@@ -191,13 +185,13 @@ static CMFlow SectionCacheAndInput(CClientModeShared* ecx, float flInputSampleTi
 	if (Shifting::bShifting && !Shifting::bShiftingWarp)
 	{
 		bRapidFireExit = F::RapidFire->ShouldExitCreateMove(pCmd);
-		pCmd->random_seed = MD5_PseudoRandom(pCmd->command_number) & 0x7fffffff;
-
-		if (bRapidFireExit && !Shifting::bTickbaseFixRecorded && Shifting::nCurrentShiftTick == 0 && Shifting::nTotalShiftTicks > 0)
+		if (!bRapidFireExit)
 		{
-			TickbaseFix::Add(pCmd->command_number, Shifting::nTotalShiftTicks);
-			Shifting::bTickbaseFixRecorded = true;
+			const auto pLocalBatch = H::Entities->GetLocal();
+			if (pLocalBatch)
+				F::RapidFire->RunBatchCommand(pLocalBatch, pCmd);
 		}
+		pCmd->random_seed = MD5_PseudoRandom(pCmd->command_number) & 0x7fffffff;
 	}
 
 	I::Prediction->Update(
@@ -208,6 +202,17 @@ static CMFlow SectionCacheAndInput(CClientModeShared* ecx, float flInputSampleTi
 	);
 
 	F::AutoVaccinator->PreventReload(pCmd);
+
+	{
+		static bool bScrollUnbound = false;
+		if (CFG::Misc_Disable_Scroll_Input != bScrollUnbound)
+		{
+			I::EngineClient->ClientCmd_Unrestricted(CFG::Misc_Disable_Scroll_Input
+				? "unbind mwheelup; unbind mwheeldown"
+				: "bind mwheelup invprev; bind mwheeldown invnext");
+			bScrollUnbound = CFG::Misc_Disable_Scroll_Input;
+		}
+	}
 
 	if (CFG::Triggerbot_AutoVaccinator_Always_On)
 	{
@@ -241,10 +246,11 @@ static CMFlow SectionShiftShortCircuit(CClientModeShared* ecx, float flInputSamp
 	{
 		if (pCmd->buttons & IN_JUMP)
 			pCmd->buttons &= ~IN_JUMP;
-		if (pCmd->buttons & IN_ATTACK)
-			pCmd->buttons &= ~IN_ATTACK;
-		if (pCmd->buttons & IN_ATTACK2)
-			pCmd->buttons &= ~IN_ATTACK2;
+		// attacks are NOT stripped during recharge (Amalgam doesn't strip
+		// either): a shot fired while the bank refills goes out immediately
+		// as a normal command - stripping it here suppressed the first shot
+		// of a reload-interrupt double tap and the second shot of a DT pair
+		// (which lands while the drained bank refills) for the whole refill
 		return CMFlow::CALL_ORIGINAL_EXIT;
 	}
 
@@ -285,7 +291,7 @@ static CMFlow SectionWeaponSnapshot(CClientModeShared* ecx, float flInputSampleT
 				CGameTrace trace;
 				CTraceFilterHitscan filter;
 				filter.m_pIgnore = ctx.pLocal;
-				SDK::Trace(vStart, vEnd, MASK_SOLID, &filter, &trace);
+				SDKUtils::Trace(vStart, vEnd, MASK_SOLID, &filter, &trace);
 
 				if (trace.m_pEnt)
 				{
@@ -346,7 +352,7 @@ static CMFlow SectionWeaponSnapshot(CClientModeShared* ecx, float flInputSampleT
 				G::bCanPrimaryAttack = true;
 		}
 
-		G::Attacking = SDK::IsAttacking(ctx.pLocal, ctx.pWeapon, pCmd, false);
+		G::Attacking = SDKUtils::IsAttacking(ctx.pLocal, ctx.pWeapon, pCmd, false);
 	}
 	else
 	{
@@ -460,7 +466,7 @@ static CMFlow SectionCombatInPrediction(CClientModeShared* ecx, float flInputSam
 
 	F::Misc->CrouchWhileAirborne(pCmd);
 
-	F::AmalgamTicks->SaveShootPos(ctx.pLocal);
+	F::ProjectileTicks->SaveShootPos(ctx.pLocal);
 
 	{
 		F::Misc->AutoMedigun(pCmd);
@@ -480,7 +486,7 @@ static CMFlow SectionCombatInPrediction(CClientModeShared* ecx, float flInputSam
 		return CMFlow::SKIP_TO_S10;
 	}
 
-	G::Attacking = SDK::IsAttacking(ctx.pLocal, ctx.pWeapon, pCmd, true);
+	G::Attacking = SDKUtils::IsAttacking(ctx.pLocal, ctx.pWeapon, pCmd, true);
 
 	F::Misc->PDAExploit(pCmd);
 
@@ -509,21 +515,6 @@ static CMFlow SectionPostAimCorrections(CClientModeShared* ecx, float flInputSam
 
 	{
 		F::SeedPred->AdjustAngles(pCmd);
-	}
-
-	{
-		static int nOldTargetIndex = G::nTargetIndexEarly;
-		if (G::nTargetIndexEarly != nOldTargetIndex)
-		{
-			G::nTicksTargetSame = 0;
-			nOldTargetIndex = G::nTargetIndexEarly;
-		}
-		else
-		{
-			G::nTicksTargetSame++;
-		}
-		if (G::nTargetIndexEarly <= 1)
-			G::nTicksTargetSame = 0;
 	}
 
 	if (CFG::Misc_Taunt_Slide && ctx.pLocal)
@@ -622,7 +613,12 @@ static CMFlow SectionMaskingAndExploits(CClientModeShared* ecx, float flInputSam
 	{
 		static bool bWasSet = false;
 
-		if (G::bPSilentAngles)
+		if (Shifting::bShifting && !Shifting::bShiftingWarp)
+		{
+			if (G::bPSilentAngles)
+				bWasSet = true;
+		}
+		else if (G::bPSilentAngles)
 		{
 			ctx.bSendPacket = false;
 			bWasSet = true;
@@ -649,7 +645,14 @@ static CMFlow SectionMaskingAndExploits(CClientModeShared* ecx, float flInputSam
 
 		F::RapidFire->RunFastSticky(pCmd, &ctx.bSendPacket);
 		F::RapidFire->Run(pCmd, &ctx.bSendPacket);
+		F::RapidFire->RunFastRev(pCmd, &ctx.bSendPacket);
 	}
+
+	// Amalgam's ManagePacket owns the packet during a doubletap batch: choke
+	// every command, then force the release on the last one so the fire
+	// command and the whole batch leave as a single packet
+	if (Shifting::bShifting && !Shifting::bShiftingWarp)
+		ctx.bSendPacket = Shifting::nTotalShiftTicks > 0 && Shifting::nCurrentShiftTick == Shifting::nTotalShiftTicks - 1;
 
 	return CMFlow::CONTINUE;
 }

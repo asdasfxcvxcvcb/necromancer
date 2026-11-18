@@ -108,6 +108,8 @@ enum
 	TF_CLASS_RANDOM
 };
 
+#define TF_CLASS_HEAVY 6
+
 enum ETFFlagType
 {
 	TF_FLAGTYPE_CTF = 0,

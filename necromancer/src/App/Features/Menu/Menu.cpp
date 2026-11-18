@@ -4376,17 +4376,16 @@ void CMenu::MainWindow()
 			InputKey("Rapid Fire Key", CFG::Exploits_RapidFire_Key);
 			InputKey("Fast Sticky Key", CFG::Exploits_FastSticky_Key);
 			InputKey("Warp Key", CFG::Exploits_Warp_Key);
-			const int nMaxRecharge = std::max(Shifting::nMaxUsrCmdProcessTicks - 1, 2);
+			const int nMaxRecharge = 24;
 			if (CFG::Exploits_Shifting_Recharge_Limit > nMaxRecharge)
 				CFG::Exploits_Shifting_Recharge_Limit = nMaxRecharge;
 			SliderInt("Recharge Limit", CFG::Exploits_Shifting_Recharge_Limit, 2, nMaxRecharge, 1);
 			SliderInt(CFG::Exploits_FastSticky_Ticks ? "Sticky Ticks" : "Sticky Ticks (Auto)", CFG::Exploits_FastSticky_Ticks, 0, nMaxRecharge, 1);
 			const bool bLimitTicks = CFG::Misc_AntiCheat_Enabled && !CFG::Misc_AntiCheat_IgnoreTickLimit;
-			const int nMaxSlider = bLimitTicks ? 8 : std::max(Shifting::nMaxUsrCmdProcessTicks - 1, 2);
+			const int nMaxSlider = bLimitTicks ? 8 : 22;
 			if (CFG::Exploits_RapidFire_Ticks > nMaxSlider)
 				CFG::Exploits_RapidFire_Ticks = nMaxSlider;
 			SliderInt(bLimitTicks ? "DT Ticks (Safe)" : "DT Ticks", CFG::Exploits_RapidFire_Ticks, 2, nMaxSlider, 1);
-			SliderInt("DT Delay Ticks", CFG::Exploits_RapidFire_Min_Ticks_Target_Same, 0, 5, 1);
 			SelectSingle("Warp Mode", CFG::Exploits_Warp_Mode, {
 				{ "Slow", 0 }, { "Full", 1 }
 			});
@@ -4394,6 +4393,7 @@ void CMenu::MainWindow()
 				{ "None", 0 }, { "Fake Peek", 1 }, { "0 Velocity", 2 }
 			});
 			CheckBox("DT Antiwarp", CFG::Exploits_RapidFire_Antiwarp);
+			CheckBox("Fast Rev", CFG::Exploits_FastRev);
 			CheckBox("Draw Indicator", CFG::Exploits_Shifting_Draw_Indicator);
 			if (CFG::Exploits_Shifting_Draw_Indicator)
 			{
@@ -4640,6 +4640,7 @@ void CMenu::MainWindow()
 			CheckBox("Extend Queue", CFG::Misc_Extend_Queue);
 			CheckBox("Anti-AFK", CFG::Misc_Anti_AFK);
 			CheckBox("PDA Exploit - Sniper", CFG::Misc_PDA_Exploit_Sniper);
+			CheckBox("Disable Scroll Input", CFG::Misc_Disable_Scroll_Input);
 			if (Button("Unlock CVars"))
 			{
 				auto iter = ICvar::Iterator(I::CVar);

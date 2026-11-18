@@ -4,6 +4,7 @@
 #include "../Crits/Crits.h"
 #include "../FakeAngle/FakeAngle.h"
 #include "../TickbaseManip/TickbaseManip.h"
+#include "../Aimbot/AimbotProjectileSim/AimbotProjectileSim.h"
 
 bool IsRapidFireWeapon(C_TFWeaponBase* pWeapon)
 {
@@ -131,13 +132,6 @@ void CRapidFire::Run(CUserCmd* pCmd, bool* pSendPacket)
 
 	if (ShouldStart(pLocal, pWeapon))
 	{
-		if (G::nTicksTargetSame < CFG::Exploits_RapidFire_Min_Ticks_Target_Same)
-		{
-			pCmd->buttons &= ~IN_ATTACK;
-			G::bFiring = false;
-			return;
-		}
-
 		Shifting::bRapidFireWantShift = true;
 
 		m_ShiftCmd = *pCmd;
@@ -145,9 +139,14 @@ void CRapidFire::Run(CUserCmd* pCmd, bool* pSendPacket)
 		m_bShiftSilentAngles = G::bSilentAngles || G::bPSilentAngles;
 		m_bSetCommand = false;
 
-		if (!(IsRapidFireWeapon(pWeapon) && F::CritHack->m_bForcingCrit && F::CritHack->m_iForcedCommandNumber != 0))
-			pCmd->buttons &= ~IN_ATTACK;
-		*pSendPacket = true;
+		// Amalgam structure: the fire stays on the aimbot's validated command
+		// (same command number, same crit seed, same predicted shootpos) and
+		// that command is choke-held. The shift batch released after it hands
+		// the server the whole burst in one packet, so the server's clock
+		// correction (player.cpp AdjustPlayerTimeBase) backdates the fire and
+		// compresses the cooldown - without ever moving the fire off the
+		// validated solution
+		*pSendPacket = false;
 
 		m_vShiftStart = pLocal->m_vecOrigin();
 		m_vAntiWarpVelocity = pLocal->m_vecVelocity();
@@ -165,27 +164,18 @@ bool CRapidFire::ShouldExitCreateMove(CUserCmd* pCmd)
 	if (!(Shifting::bShifting && !Shifting::bShiftingWarp))
 		return false;
 
-	m_ShiftCmd.command_number = pCmd->command_number;
-
 	const auto pWeapon = H::Entities->GetWeapon();
 	const bool bChargeWeapon = IsStickyWeapon(pWeapon);
 
-	if (bChargeWeapon)
-	{
-		if (!m_bSetCommand)
-		{
-			*pCmd = m_ShiftCmd;
-			m_bSetCommand = true;
-		}
-	}
-	else
-	{
-		const float flForward = pCmd->forwardmove;
-		const float flSide = pCmd->sidemove;
+	if (!bChargeWeapon)
+		return false;
 
+	m_ShiftCmd.command_number = pCmd->command_number;
+
+	if (!m_bSetCommand)
+	{
 		*pCmd = m_ShiftCmd;
-		pCmd->forwardmove = flForward;
-		pCmd->sidemove = flSide;
+		m_bSetCommand = true;
 	}
 
 	if (CFG::Exploits_RapidFire_Antiwarp && m_bStartedShiftOnGround)
@@ -196,6 +186,18 @@ bool CRapidFire::ShouldExitCreateMove(CUserCmd* pCmd)
 	}
 
 	return true;
+}
+
+void CRapidFire::RunBatchCommand(C_TFPlayer* pLocal, CUserCmd* pCmd)
+{
+	if (Shifting::bShiftingWarp || IsStickyWeapon(H::Entities->GetWeapon()))
+		return;
+
+	if (CFG::Exploits_RapidFire_Antiwarp && m_bStartedShiftOnGround)
+	{
+		const int nRemainingTicks = std::max(Shifting::nTotalShiftTicks - Shifting::nCurrentShiftTick, 0);
+		AntiWarp(pLocal, pCmd, nRemainingTicks);
+	}
 }
 
 bool CRapidFire::IsWeaponSupported(C_TFWeaponBase* pWeapon)
@@ -303,6 +305,13 @@ bool CRapidFire::CanDoubleTapNow(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
 	const int nBankTicks = std::clamp(Shifting::nAvailableTicks, 0, Shifting::nMaxUsrCmdProcessTicks);
 	const int nPacketTicks = std::min(nBankTicks + 1, Shifting::nMaxUsrCmdProcessTicks);
 	const int nRateShots = GetShotsWithinPacket(pWeapon, nPacketTicks);
+
+	// Amalgam's comparison: their iTicks = shiftedTicks + 1 (the banked ticks
+	// plus the fire command) must reach TickLimit before the DT arms - the
+	// burst's clock span (the fire command + the fillers) has to cover the
+	// weapon's fire rate for the second shell to land on the last batch
+	// command. The slider counts the whole burst, so the bank needs
+	// slider - 1 stored ticks
 	if (!(nPacketTicks >= CFG::Exploits_RapidFire_Ticks || nRateShots > 1))
 		return false;
 
@@ -322,12 +331,17 @@ bool CRapidFire::CanDoubleTapNow(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
 	const bool bCanFireNextTick = pWeapon->CanPrimaryAttack(pLocal) && pWeapon->HasPrimaryAmmoForShot();
 	pLocal->m_nTickBase() = nSavedTickBase;
 
+	// Amalgam's Doubletap has no reload-specific gate: it arms whenever the
+	// weapon can fire now, next tick, or the reload is interruptible, and the
+	// engine's own reload-interrupt timing decides when the batch's shots land
 	return G::bCanPrimaryAttack || bCanFireNextTick || CanInterruptReload(pWeapon);
 }
 
 int CRapidFire::GetReleaseTicks()
 {
-	return (std::min)({ CFG::Exploits_RapidFire_Ticks, std::max(Shifting::nAvailableTicks, 0), MAX_NEW_COMMANDS + MAX_BACKUP_COMMANDS });
+	// the slider counts the whole burst (the fire command included, Amalgam's
+	// TickLimit semantic) - the fillers are one less
+	return (std::min)({ CFG::Exploits_RapidFire_Ticks - 1, std::max(Shifting::nAvailableTicks, 0), MAX_NEW_COMMANDS + MAX_BACKUP_COMMANDS - 1 });
 }
 
 int CRapidFire::GetTicks(C_TFWeaponBase* pWeapon)
@@ -466,4 +480,81 @@ void CRapidFire::RunFastSticky(CUserCmd* pCmd, bool* pSendPacket)
 		m_nAntiWarpMaxTicks = 0;
 		*pSendPacket = true;
 	}
+}
+
+void CRapidFire::RunFastRev(CUserCmd* pCmd, bool* pSendPacket)
+{
+	Shifting::bFastRevWantShift = false;
+	if (!CFG::Exploits_FastRev || !pSendPacket)
+	{
+		m_bFastRevDraining = false;
+		return;
+	}
+
+	const auto pLocal = H::Entities->GetLocal();
+	const auto pWeapon = H::Entities->GetWeapon();
+	if (!pLocal || pLocal->deadflag() || !pWeapon || pWeapon->GetWeaponID() != TF_WEAPON_MINIGUN)
+	{
+		m_bFastRevDraining = false;
+		return;
+	}
+
+	if (Shifting::bShifting || Shifting::bRecharging || Shifting::bShiftingWarp)
+		return;
+
+	const int nState = pWeapon->As<C_TFMinigun>()->m_iWeaponState();
+	const bool bUserSpin = (G::OriginalCmd.buttons & (IN_ATTACK | IN_ATTACK2)) != 0;
+	const bool bAimbotSpin = (pCmd->buttons & (IN_ATTACK | IN_ATTACK2)) != 0;
+
+	if (m_bFastRevDraining)
+	{
+		// keep pouring the bank into the spin-up, one full packet per frame:
+		// stop when the bank is dry, the wind-up finished (the client clock
+		// passed the spin timer) or aborted (idle again), or nothing is
+		// driving the rev anymore
+		if (Shifting::nAvailableTicks <= 0 || nState != AC_STATE_STARTFIRING || (!bUserSpin && !bAimbotSpin))
+		{
+			m_bFastRevDraining = false;
+			return;
+		}
+	}
+	else
+	{
+		// a fresh spin-up only: the state machine must be at idle when the
+		// wind-up runs (respin states have their own shorter timers)
+		if (nState != AC_STATE_IDLE)
+			return;
+
+		// two ways the wind-up starts, both anchored by this exact command's
+		// prediction (it runs WindUp and sets the spin-up timer,
+		// m_flNextPrimaryAttack = curtime + TF_MINIGUN_SPINUP_TIME = 0.75s = 50
+		// ticks; the command has to be choke-held INTO the batch so the timer's
+		// origin lands on the batch's backdated clock):
+		// - the user's raw input rising edge (a manual rev). The edge reads
+		//   OriginalCmd, never the final command: the aimbot writes the attack
+		//   bits on solution ticks while fighting, which would mask the edge
+		// - the aimbot's rev write on the spun-down minigun: HandleMinigun
+		//   writes IN_ATTACK2 (not IN_ATTACK - that only comes later once it
+		//   can actually fire, by which point the state is past idle) while
+		//   targeting, and the engine winds up from that input
+		const bool bSpinWasPressed = m_bLastUserSpinInput;
+		m_bLastUserSpinInput = bUserSpin;
+
+		const bool bUserEdge = bUserSpin && !bSpinWasPressed;
+		const bool bAimbotEdge = !bUserSpin && bAimbotSpin;
+		if (!bUserEdge && !bAimbotEdge)
+			return;
+
+		m_bFastRevDraining = true;
+	}
+
+	// no full-bank gate: the saving equals whatever bank is stored, and the
+	// spin-up happens mid-fight where the bank is rarely full
+	Shifting::bFastRevWantShift = true;
+	*pSendPacket = false;
+
+	m_vShiftStart = pLocal->m_vecOrigin();
+	m_vAntiWarpVelocity = pLocal->m_vecVelocity();
+	m_bStartedShiftOnGround = pLocal->m_fFlags() & FL_ONGROUND;
+	m_nAntiWarpMaxTicks = 0;
 }

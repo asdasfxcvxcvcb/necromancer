@@ -1,9 +1,10 @@
 #pragma once
 
-#include "../AmalgamCompat.h"
-#include "../../../../SDK/TF2/collisionbspdata.h"
-#include "../../../../SDK/TF2/dispcolltree.h"
-#include "../../../../SDK/TF2/icollideable.h"
+#include "../../../SDK/SDK.h"
+#include "../../../SDK/TF2/istaticpropmgr.h"
+#include "../../../SDK/TF2/collisionbspdata.h"
+#include "../../../SDK/TF2/dispcolltree.h"
+#include "../../../SDK/TF2/icollideable.h"
 
 #include <functional>
 #include <unordered_map>
@@ -52,7 +53,7 @@ struct Face_t
 
 MAKE_INTERFACE_VERSION(ISpatialPartition, SpatialPartition, "engine.dll", "SpatialPartition001");
 
-class CAmalgamWorld
+class CWorldFaces
 {
 private:
 	bool FaceValid(const std::vector<Vec3>& vVertices, const Vec3* pNormal, const Vec3* pMins = nullptr, const Vec3* pMaxs = nullptr);
@@ -70,6 +71,7 @@ public:
 	void Cache();
 	void CacheBoxBrushes();
 	void CachePlaneBrushes();
+	void CacheProps();
 	void CacheEntities();
 	void Uncache();
 
@@ -81,4 +83,4 @@ public:
 	}
 };
 
-MAKE_SINGLETON_SCOPED(CAmalgamWorld, AmalgamWorld, F);
+MAKE_SINGLETON_SCOPED(CWorldFaces, WorldFaces, F);
