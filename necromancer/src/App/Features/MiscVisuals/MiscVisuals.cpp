@@ -7,6 +7,7 @@
 #include "../Menu/Menu.h"
 #include "../FakeLag/FakeLag.h"
 #include "../FakeAngle/FakeAngle.h"
+#include "../LagRecords/LagRecords.h"
 
 #include "../VisualUtils/VisualUtils.h"
 #include "../SpyCamera/SpyCamera.h"
@@ -504,11 +505,13 @@ void CMiscVisuals::ShiftBar()
 		clrAccent.b = static_cast<byte>(std::lround(std::cosf(I::GlobalVars->realtime * rate + 4.0f) * 127.5f + 127.5f));
 	}
 
-	// Calculate max ticks budget
+	// Calculate max ticks budget - the AA reserve stays unbanked, so the bar
+	// only ever fills to what is actually spendable
 	static auto sv_maxusrcmdprocessticks = I::CVar->FindVar("sv_maxusrcmdprocessticks");
 	int nMaxTicksBudget = sv_maxusrcmdprocessticks ? sv_maxusrcmdprocessticks->GetInt() : 24;
 	if (CFG::Misc_AntiCheat_Enabled && !CFG::Misc_AntiCheat_IgnoreTickLimit)
 		nMaxTicksBudget = std::min(nMaxTicksBudget, 8);
+	nMaxTicksBudget = std::max(nMaxTicksBudget - (F::FakeAngle->YawOn() ? F::FakeAngle->AntiAimTicks() : 0), 1);
 
 	int nChokedCommands = I::ClientState->chokedcommands;
 	int nProcessableTicks = std::clamp(Shifting::nAvailableTicks, 0, nMaxTicksBudget);

@@ -2,54 +2,39 @@
 
 #include "../../CFG.h"
 
+#include "../../EnginePrediction/EnginePrediction.h"
 #include "../../LagRecords/LagRecords.h"
 
-// TF2 default thresholds from CTFKnife::IsBehindAndFacingTarget:
-// - Behind check: toTarget.Dot(targetForward) > 0.0
-// - Facing check: toTarget.Dot(ownerForward) > 0.5
-// - Same direction: targetForward.Dot(ownerForward) > -0.3
-//
-// With high fake latency, the target's eye angles on the server may differ from what we see
-// because EyeAngles are NOT lag compensated (only position is). We add a safety margin
-// to account for potential angle changes during the latency window.
+#include <algorithm>
+#include <vector>
 
-// Check if player has an active Razorback equipped
-// The Razorback blocks one backstab, then becomes inactive (not drawn)
+
 bool HasActiveRazorback(C_TFPlayer* pPlayer)
 {
 	if (!pPlayer)
 		return false;
 	
-	// Check if player has the "set_blockbackstab_once" attribute (Razorback)
-	// The attribute value will be > 0 if they have a Razorback
 	int iBackstabShield = static_cast<int>(SDKUtils::AttribHookValue(0.f, "set_blockbackstab_once", pPlayer));
 	if (iBackstabShield <= 0)
 		return false;
 	
-	// The Razorback is only active if it's visible (ShouldDraw returns true)
-	// After blocking a backstab, it becomes invisible until recharged
-	// We need to find the actual wearable entity to check this
 	for (int i = 0; i < I::ClientEntityList->GetHighestEntityIndex(); i++)
 	{
 		auto pClientEntity = I::ClientEntityList->GetClientEntity(i);
 		if (!pClientEntity)
 			continue;
 		
-		// Check if it's a Razorback wearable
 		if (pClientEntity->GetClassId() != ETFClassIds::CTFWearableRazorback)
 			continue;
 		
-		// Cast to C_BaseEntity to access m_hOwnerEntity
 		auto pEntity = pClientEntity->As<C_BaseEntity>();
 		if (!pEntity)
 			continue;
 		
-		// Check if it belongs to this player
 		auto pOwner = pEntity->m_hOwnerEntity().Get();
 		if (!pOwner || pOwner != pPlayer)
 			continue;
 		
-		// Check if the Razorback is visible (active)
 		if (pEntity->ShouldDraw())
 			return true;
 	}
@@ -57,45 +42,40 @@ bool HasActiveRazorback(C_TFPlayer* pPlayer)
 	return false;
 }
 
-bool IsBehindAndFacingTarget(const Vec3& ownerCenter, const Vec3& ownerViewangles, const Vec3& targetCenter, const Vec3& targetEyeAngles, float flSafetyMargin = 0.0f)
+bool IsBehindAndFacingTarget(const Vec3& ownerCenter, const Vec3& ownerViewangles, const Vec3& targetCenter, const Vec3& targetEyeAngles, float flSafetyMargin = 0.0f, float* flOutBehind = nullptr, float* flOutFace = nullptr, float* flOutSame = nullptr)
 {
 	Vec3 toTarget = targetCenter - ownerCenter;
 	toTarget.z = 0.0f;
 	toTarget.NormalizeInPlace();
 
 	Vec3 ownerForward{};
-	Math::AngleVectors(ownerViewangles, &ownerForward, nullptr, nullptr);
+	Math::AngleVectors(ownerViewangles, &ownerForward);
 	ownerForward.z = 0.0f;
 	ownerForward.NormalizeInPlace();
 
 	Vec3 targetForward{};
-	Math::AngleVectors(targetEyeAngles, &targetForward, nullptr, nullptr);
+	Math::AngleVectors(targetEyeAngles, &targetForward);
 	targetForward.z = 0.0f;
 	targetForward.NormalizeInPlace();
 
-	// Base thresholds + small buffer for floating point precision
 	const float flBehindThreshold = 0.0f + 0.03125f + flSafetyMargin;
 	const float flFacingThreshold = 0.5f + 0.03125f;
 	const float flSameDirectionThreshold = -0.3f + 0.03125f + flSafetyMargin;
 
-	return toTarget.Dot(targetForward) > flBehindThreshold
-		&& toTarget.Dot(ownerForward) > flFacingThreshold
-		&& targetForward.Dot(ownerForward) > flSameDirectionThreshold;
-}
+	const float flBehindDot = toTarget.Dot(targetForward);
+	const float flFaceDot = toTarget.Dot(ownerForward);
+	const float flSameDot = targetForward.Dot(ownerForward);
 
-// Calculate safety margin based on fake latency
-// Higher latency = more time for target to turn = need stricter thresholds
-float GetBackstabSafetyMargin()
-{
-	const float flFakeLatency = F::LagRecords->GetFakeLatency();
-	
-	if (flFakeLatency <= 0.0f)
-		return 0.0f;
-	
-	// Scale margin based on latency:
-	// 100ms = 0.1 margin, 200ms = 0.2 margin, 400ms = 0.4 margin
-	// Clamped to max 0.5 (very strict, requires being almost directly behind)
-	return std::min(flFakeLatency, 0.5f);
+	if (flOutBehind)
+		*flOutBehind = flBehindDot;
+	if (flOutFace)
+		*flOutFace = flFaceDot;
+	if (flOutSame)
+		*flOutSame = flSameDot;
+
+	return flBehindDot > flBehindThreshold
+		&& flFaceDot > flFacingThreshold
+		&& flSameDot > flSameDirectionThreshold;
 }
 
 bool CanKnifeOneShot(C_TFPlayer* target, bool crit, bool miniCrit)
@@ -134,29 +114,50 @@ bool CanKnifeOneShot(C_TFPlayer* target, bool crit, bool miniCrit)
 
 void CAutoBackstab::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd)
 {
-	// Check if enabled via always-on option OR keybind
-	// Works if: Always_On is true OR Active (keybind) is true
 	if (!CFG::Triggerbot_AutoBackstab_Always_On && !CFG::Triggerbot_AutoBackstab_Active)
 	{
 		return;
 	}
 
-	if (!G::bCanPrimaryAttack || pLocal->m_bFeignDeathReady() || pLocal->m_flInvisibility() > 0.0f || pWeapon->GetWeaponID() != TF_WEAPON_KNIFE)
+	if (pLocal->m_bFeignDeathReady() || pLocal->m_flInvisibility() > 0.0f || pWeapon->GetWeaponID() != TF_WEAPON_KNIFE
+		|| I::GlobalVars->curtime < pLocal->m_flNextAttack()
+		|| I::GlobalVars->curtime < pWeapon->m_flNextPrimaryAttack())
 	{
 		return;
 	}
 
-	// Iterate entity list directly for safety (cached group pointers may be stale after class change)
-	// This prevents crashes when entities are destroyed and recreated during class switches
 	const int nMaxClients = I::EngineClient->GetMaxClients();
-	
+
+	const float flIdealAge = F::LagRecords->GetServerAcceptedAge();
+	const float flAgeRange = F::LagRecords->GetServerAcceptedAgeRange();
+	float flSnapshotInterval = 0.05f;
+	if (const auto pUpdaterate = I::CVar->FindVar("cl_updaterate"))
+		flSnapshotInterval = 1.0f / std::max(pUpdaterate->GetFloat(), 1.0f);
+	const float flExecDelay = std::min(F::LagRecords->GetOutgoingLatency() * 0.5f + I::GlobalVars->interval_per_tick + flSnapshotInterval * 0.5f, 0.1f);
+	std::vector<C_TFPlayer*> vecCrowdPlayers;
 	for (int n = 1; n <= nMaxClients; n++)
 	{
 		auto pClientEntity = I::ClientEntityList->GetClientEntity(n);
 		if (!pClientEntity || pClientEntity->IsDormant())
 			continue;
 
-		// Validate it's a player before casting
+		auto pNetworkable = pClientEntity->GetClientNetworkable();
+		if (!pNetworkable || !pNetworkable->GetClientClass() || pNetworkable->GetClientClass()->m_ClassID != static_cast<int>(ETFClassIds::CTFPlayer))
+			continue;
+
+		const auto pCrowdPlayer = pClientEntity->As<C_TFPlayer>();
+		if (!pCrowdPlayer || !H::Entities->IsEntityValid(pCrowdPlayer) || pCrowdPlayer->deadflag() || pCrowdPlayer->m_iTeamNum() == pLocal->m_iTeamNum())
+			continue;
+
+		vecCrowdPlayers.push_back(pCrowdPlayer);
+	}
+
+	for (int n = 1; n <= nMaxClients; n++)
+	{
+		auto pClientEntity = I::ClientEntityList->GetClientEntity(n);
+		if (!pClientEntity || pClientEntity->IsDormant())
+			continue;
+
 		auto pNetworkable = pClientEntity->GetClientNetworkable();
 		if (!pNetworkable || !pNetworkable->GetClientClass())
 			continue;
@@ -168,13 +169,11 @@ void CAutoBackstab::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* p
 		if (!pPlayer)
 			continue;
 
-		// Skip invalid or dead players
 		if (!H::Entities->IsEntityValid(pPlayer) || pPlayer->deadflag() || pPlayer->InCond(TF_COND_HALLOWEEN_GHOST_MODE))
 		{
 			continue;
 		}
 
-		// Skip teammates (can't backstab your own team)
 		if (pPlayer->m_iTeamNum() == pLocal->m_iTeamNum())
 			continue;
 
@@ -193,13 +192,11 @@ void CAutoBackstab::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* p
 			continue;
 		}
 
-		// Skip snipers with active Razorback (blocks backstab)
 		if (CFG::Triggerbot_AutoBackstab_Ignore_Razorback && HasActiveRazorback(pPlayer))
 		{
 			continue;
 		}
 
-		// Knife if lethal
 		auto canKnife = false;
 		if (CFG::Triggerbot_AutoBackstab_Knife_If_Lethal)
 		{
@@ -213,46 +210,132 @@ void CAutoBackstab::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* p
 			angleTo = Math::CalcAngle(pLocal->GetShootPos(), pPlayer->GetCenter());
 		}
 
-		// Skip current model position when fake latency is active
-		// With fake latency, the server backtracks the target — we should only aim at backtrack records
-		const bool bFakeLatencyActive = F::LagRecords->GetFakeLatency() > 0.0f;
-		const float flSafetyMargin = GetBackstabSafetyMargin();
+		const bool bFakeLatencyActive = F::LagRecords->GetFakeLatency() > 0.0f
+			|| F::LagRecords->GetFakeInterp() > SDKUtils::GetLerp() + 0.05f;
+
+
+		Vec3 vTargetEyeAngles = pPlayer->GetEyeAngles();
+		float flYawRate = 0.0f;
+		float flRecentMaxRate = 0.0f;
+		{
+			const LagRecord_t* pNewest = nullptr;
+			const LagRecord_t* pOldest = nullptr;
+			int nRecs = 0;
+			if (F::LagRecords->HasRecords(pPlayer, &nRecs))
+			{
+				for (int r = 1; r <= nRecs; r++)
+				{
+					const auto record = F::LagRecords->GetRecord(pPlayer, r, true);
+					if (!record || !record->bIsAlive)
+						continue;
+
+					const float flAge = I::GlobalVars->curtime - record->SimulationTime;
+					if (fabsf(flAge - flIdealAge) > flAgeRange || flAge > F::LagRecords->GetMaxUnlag())
+						continue;
+
+					if (!pNewest)
+						pNewest = record;
+					pOldest = record;
+				}
+			}
+
+			if (pNewest && pOldest && pNewest->SimulationTime - pOldest->SimulationTime > 0.001f)
+			{
+				float flTotalYaw = 0.0f;
+				float flRecentYaw = 0.0f;
+				const LagRecord_t* pStep = pOldest;
+				const LagRecord_t* pRecentStep = nullptr;
+				const LagRecord_t* pRecentFirst = nullptr;
+				const float flRecentBase = pNewest->SimulationTime - 0.15f;
+				for (int r = nRecs; r >= 1; r--)
+				{
+					const auto record = F::LagRecords->GetRecord(pPlayer, r, true);
+					if (!record || !record->bIsAlive)
+						continue;
+					if (record->SimulationTime < pOldest->SimulationTime || record->SimulationTime > pNewest->SimulationTime)
+						continue;
+
+					flTotalYaw += Math::NormalizeAngle(record->EyeAngles.y - pStep->EyeAngles.y);
+					pStep = record;
+
+					if (record->SimulationTime >= flRecentBase)
+					{
+						if (!pRecentFirst)
+							pRecentFirst = record;
+						if (pRecentStep)
+						{
+							const float flStepTime = record->SimulationTime - pRecentStep->SimulationTime;
+							if (flStepTime > 0.001f)
+							{
+								const float flStepRate = fabsf(Math::NormalizeAngle(record->EyeAngles.y - pRecentStep->EyeAngles.y)) / flStepTime;
+								if (flStepRate > flRecentMaxRate)
+									flRecentMaxRate = flStepRate;
+							}
+							flRecentYaw += Math::NormalizeAngle(record->EyeAngles.y - pRecentStep->EyeAngles.y);
+						}
+						pRecentStep = record;
+					}
+				}
+
+				const float flSpan = pNewest->SimulationTime - pOldest->SimulationTime;
+				if (flSpan > 0.001f)
+				{
+					if (pRecentFirst && pNewest->SimulationTime - pRecentFirst->SimulationTime > 0.001f)
+						flYawRate = flRecentYaw / (pNewest->SimulationTime - pRecentFirst->SimulationTime);
+					else
+						flYawRate = flTotalYaw / flSpan;
+
+					vTargetEyeAngles.y = Math::NormalizeAngle(vTargetEyeAngles.y + flYawRate * flExecDelay);
+				}
+			}
+		}
 		
 		if (!bFakeLatencyActive)
 		{
-			if (canKnife || IsBehindAndFacingTarget(pLocal->GetCenter(), angleTo, pPlayer->GetCenter(), pPlayer->GetEyeAngles(), 0.0f))
+			const Vec3 vEye = pLocal->GetShootPos();
+			if (vEye.DistTo(pPlayer->GetCenter()) <= 82.0f && (vEye - pPlayer->GetCenter()).Length2D() >= 35.0f)
 			{
-				Vec3 forward{};
-				Math::AngleVectors(angleTo, &forward);
-
-				auto to = pLocal->GetShootPos() + (forward * 47.0f);
-
-				if (H::AimUtils->TraceEntityMeleeDirect(pPlayer, pLocal->GetShootPos(), to))
+				if (canKnife || IsBehindAndFacingTarget(pLocal->GetCenter(), angleTo, pPlayer->GetCenter(), vTargetEyeAngles, 0.0f))
 				{
-					if (CFG::Triggerbot_AutoBacktab_Mode == 1)
+						Vec3 forward{};
+						Math::AngleVectors(angleTo, &forward);
+
+						const Vec3 vTo = vEye + (forward * 48.0f);
+
+						trace_t trace = {};
+						CTraceFilterHitscan filter = {};
+						Ray_t rayLine;
+						rayLine.Init(vEye, vTo);
+						I::EngineTrace->TraceRay(rayLine, MASK_SOLID, &filter, &trace);
+						if (trace.fraction >= 1.0f)
+							H::AimUtils->TraceHull(vEye, vTo, { -18.0f, -18.0f, -18.0f }, { 18.0f, 18.0f, 18.0f }, MASK_SOLID, &filter, &trace);
+
+						if (trace.m_pEnt == pPlayer && !trace.startsolid && !trace.allsolid)
 					{
-						pCmd->viewangles = angleTo;
-						// this triggerbot runs after CreateMove's Attacking recompute,
-						// so its stab cmds always report not-attacking and anti-aim
-						// would overwrite the stab angles - flag the cmd like the
-						// aimbots do so FakeAngle::ShouldRun skips it
+						if (CFG::Triggerbot_AutoBacktab_Mode == 1)
+						{
+							pCmd->viewangles = angleTo;
+
+							if (CFG::Triggerbot_AutoBacktab_Aim_Mode == 1)
+							{
+								G::bPSilentAngles = true;
+							}
+						}
+
 						G::bSilentAngles = true;
 
-						if (CFG::Triggerbot_AutoBacktab_Aim_Mode == 1)
+						pCmd->buttons |= IN_ATTACK;
+						G::Attacking = 1;
+						G::bFiring = true;
+						m_flLastStab = I::EngineClient->Time();
+
+						if (CFG::Misc_Accuracy_Improvements)
 						{
-							G::bPSilentAngles = true;  // Fire tick: pSilent choke
+							pCmd->tick_count = TIME_TO_TICKS(pPlayer->m_flSimulationTime() + F::LagRecords->GetServerLerp());
 						}
+
+						return;
 					}
-
-					pCmd->buttons |= IN_ATTACK;
-					m_flLastStab = I::EngineClient->Time();
-
-					if (CFG::Misc_Accuracy_Improvements)
-					{
-						pCmd->tick_count = TIME_TO_TICKS(pPlayer->m_flSimulationTime() + SDKUtils::GetLerp());
-					}
-
-					return;
 				}
 			}
 		}
@@ -264,67 +347,164 @@ void CAutoBackstab::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* p
 			continue;
 		}
 
-		// When fake latency is active, only target the last 5 backtrack records
-		const int nStartRecord = bFakeLatencyActive ? std::max(1, numRecords - 5) : 1;
-		const int nEndRecord = numRecords;
-
-		for (int r = nStartRecord; r < nEndRecord; r++)
+		std::vector<const LagRecord_t*> vecRecords;
+		for (int r = 1; r <= numRecords; r++)
 		{
 			const auto record = F::LagRecords->GetRecord(pPlayer, r, true);
-
 			if (!record)
-			{
 				continue;
+
+			if (!record->bIsAlive || record->bInvalid)
+				continue;
+
+			const float flRecordAge = I::GlobalVars->curtime - record->SimulationTime;
+			if (flRecordAge < flIdealAge - 0.1f || flRecordAge - flIdealAge > flAgeRange)
+				continue;
+
+			if (flRecordAge > F::LagRecords->GetMaxUnlag())
+				continue;
+
+			vecRecords.push_back(record);
+		}
+
+		std::sort(vecRecords.begin(), vecRecords.end(), [flIdealAge](const LagRecord_t* a, const LagRecord_t* b)
+		{
+			return fabsf((I::GlobalVars->curtime - a->SimulationTime) - flIdealAge)
+				< fabsf((I::GlobalVars->curtime - b->SimulationTime) - flIdealAge);
+		});
+
+		auto GetNeighborExecRecord = [flExecDelay](C_TFPlayer* pNeighbor, float flClaimSimTime) -> LagRecord_t
+		{
+			int nRecs = 0;
+			if (F::LagRecords->HasRecords(pNeighbor, &nRecs))
+			{
+				for (int r = nRecs; r >= 1; r--)
+				{
+					const auto record = F::LagRecords->GetRecord(pNeighbor, r, true);
+					if (!record || !record->bIsAlive || record->bInvalid)
+						continue;
+
+					if (flClaimSimTime >= record->SimulationTime)
+						return F::LagRecords->GetInterpolatedRecord(pNeighbor, flClaimSimTime);
+
+					break;
+				}
 			}
 
-			// Rage mode
+			LagRecord_t tCurrent = F::LagRecords->GetInterpolatedRecord(pNeighbor, I::GlobalVars->curtime);
+			const Vec3 vShift = tCurrent.Velocity * flExecDelay;
+			tCurrent.AbsOrigin += vShift;
+			tCurrent.VecOrigin += vShift;
+			tCurrent.Center += vShift;
+			return tCurrent;
+		};
+
+		auto CrowdTrace = [&](const LagRecord_t* pCandidate, const Vec3& vFrom, const Vec3& vTo, trace_t& outTrace)
+		{
+			std::vector<CLagRecordMatrixHelper> vecHelpers;
+			for (const auto pCrowdPlayer : vecCrowdPlayers)
+			{
+				if (pCrowdPlayer == pPlayer)
+					continue;
+
+				const LagRecord_t tNeighborRecord = GetNeighborExecRecord(pCrowdPlayer, pCandidate->SimulationTime);
+				if (!tNeighborRecord.bIsAlive)
+					continue;
+
+				vecHelpers.emplace_back();
+				vecHelpers.back().Set(&tNeighborRecord);
+			}
+
+			F::LagRecordMatrixHelper->Set(pCandidate);
+			CTraceFilterHitscan filter = {};
+			Ray_t rayLine;
+			rayLine.Init(vFrom, vTo);
+			I::EngineTrace->TraceRay(rayLine, MASK_SOLID, &filter, &outTrace);
+			if (outTrace.fraction >= 1.0f)
+				H::AimUtils->TraceHull(vFrom, vTo, { -18.0f, -18.0f, -18.0f }, { 18.0f, 18.0f, 18.0f }, MASK_SOLID, &filter, &outTrace);
+			F::LagRecordMatrixHelper->Restore();
+
+			for (auto& helper : vecHelpers)
+				helper.Restore();
+		};
+
+		for (const auto record : vecRecords)
+		{
+			const Vec3 vEye = pLocal->GetShootPos();
+
+			if (vEye.DistTo(record->Center) >= 82.0f || (vEye - record->Center).Length2D() < 35.0f)
+				continue;
+
 			if (CFG::Triggerbot_AutoBacktab_Mode == 1)
 			{
-				angleTo = Math::CalcAngle(pLocal->GetShootPos(), record->Center);
+				angleTo = Math::CalcAngle(vEye, record->Center);
 			}
 
-			// Use safety margin when fake latency is active to account for angle desync
-			// The server uses CURRENT eye angles (not lag compensated), so with high latency
-			// the target may have turned since we last received their angles
-			if (canKnife || IsBehindAndFacingTarget(pLocal->GetCenter(), angleTo, record->Center, pPlayer->GetEyeAngles(), flSafetyMargin))
+			float flBehindDot = 0.f, flFaceDot = 0.f, flSameDot = 0.f;
+			if (canKnife || IsBehindAndFacingTarget(pLocal->GetCenter(), angleTo, record->Center, vTargetEyeAngles, 0.0f, &flBehindDot, &flFaceDot, &flSameDot))
 			{
-				F::LagRecordMatrixHelper->Set(record);
-
-				Vec3 forward{};
-				Math::AngleVectors(angleTo, &forward);
-
-				auto to = pLocal->GetShootPos() + (forward * 47.0f);
-
-				if (!H::AimUtils->TraceEntityMeleeDirect(pPlayer, pLocal->GetShootPos(), to))
-				{
-					F::LagRecordMatrixHelper->Restore();
-
+				if (!canKnife && acosf(flBehindDot) * 57.29578f + std::max(fabsf(flYawRate), flRecentMaxRate) * flExecDelay > 90.0f)
 					continue;
-				}
-
-				F::LagRecordMatrixHelper->Restore();
+				const CUserCmd backupCmd = *pCmd;
+				bool bVerified = false;
 
 				if (CFG::Triggerbot_AutoBacktab_Mode == 1)
 				{
+					H::AimUtils->FixMovement(pCmd, angleTo);
+					pCmd->viewangles = angleTo;
+				}
+
+				F::EnginePrediction->End(pLocal, pCmd);
+				F::EnginePrediction->Start(pLocal, pCmd);
+				{
+					const Vec3 vEye2 = pLocal->GetShootPos();
+
+					float flBehindDot2 = 0.f, flFaceDot2 = 0.f, flSameDot2 = 0.f;
+					bVerified = vEye2.DistTo(record->Center) < 82.0f
+						&& (vEye2 - record->Center).Length2D() >= 35.0f
+						&& (canKnife || (IsBehindAndFacingTarget(pLocal->GetCenter(), angleTo, record->Center, vTargetEyeAngles, 0.0f, &flBehindDot2, &flFaceDot2, &flSameDot2)
+							&& acosf(flBehindDot2) * 57.29578f + std::max(fabsf(flYawRate), flRecentMaxRate) * flExecDelay <= 90.0f));
+
+					if (bVerified)
+					{
+						Vec3 forward2{};
+						Math::AngleVectors(angleTo, &forward2);
+
+						const Vec3 vTo2 = vEye2 + (forward2 * 48.0f);
+
+						trace_t trace2 = {};
+						CrowdTrace(record, vEye2, vTo2, trace2);
+
+						bVerified = trace2.m_pEnt == pPlayer && !trace2.startsolid && !trace2.allsolid;
+					}
+				}
+
+				*pCmd = backupCmd;
+				F::EnginePrediction->End(pLocal, pCmd);
+				F::EnginePrediction->Start(pLocal, pCmd);
+
+				if (!bVerified)
+					continue;
+
+				if (CFG::Triggerbot_AutoBacktab_Mode == 1)
+				{
+					H::AimUtils->FixMovement(pCmd, angleTo);
 					pCmd->viewangles = angleTo;
 
 					if (CFG::Triggerbot_AutoBacktab_Aim_Mode == 1)
 					{
-						G::bPSilentAngles = true;  // Fire tick: pSilent choke
+						G::bPSilentAngles = true;
 					}
 				}
 
+				G::bSilentAngles = true;
+
 				pCmd->buttons |= IN_ATTACK;
+				G::Attacking = 1;
+				G::bFiring = true;
 				m_flLastStab = I::EngineClient->Time();
 
-				if (CFG::Misc_Accuracy_Improvements)
-				{
-					pCmd->tick_count = TIME_TO_TICKS(record->SimulationTime + SDKUtils::GetLerp());
-				}
-				else
-				{
-					pCmd->tick_count = TIME_TO_TICKS(record->SimulationTime + GetClientInterpAmount());
-				}
+				pCmd->tick_count = TIME_TO_TICKS(record->SimulationTime + F::LagRecords->GetServerLerp());
 
 				return;
 			}

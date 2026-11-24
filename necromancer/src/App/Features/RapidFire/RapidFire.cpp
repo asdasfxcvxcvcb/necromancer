@@ -57,7 +57,7 @@ static bool CanInterruptReload(C_TFWeaponBase* pWeapon)
 
 bool CRapidFire::ShouldStart(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
 {
-	if (G::nTargetIndex <= 1 || !G::bFiring)
+	if (G::nTargetIndex <= 0 || !G::bFiring)
 		return false;
 
 	if (Shifting::bShifting || Shifting::bRecharging || Shifting::bShiftingWarp)
@@ -138,6 +138,7 @@ void CRapidFire::Run(CUserCmd* pCmd, bool* pSendPacket)
 		m_ShiftCmd.buttons |= IN_ATTACK;
 		m_bShiftSilentAngles = G::bSilentAngles || G::bPSilentAngles;
 		m_bSetCommand = false;
+		m_bShiftAttack = true;
 
 		// Amalgam structure: the fire stays on the aimbot's validated command
 		// (same command number, same crit seed, same predicted shootpos) and
@@ -192,6 +193,9 @@ void CRapidFire::RunBatchCommand(C_TFPlayer* pLocal, CUserCmd* pCmd)
 {
 	if (Shifting::bShiftingWarp || IsStickyWeapon(H::Entities->GetWeapon()))
 		return;
+
+	if (m_bShiftAttack)
+		pCmd->buttons |= IN_ATTACK;
 
 	if (CFG::Exploits_RapidFire_Antiwarp && m_bStartedShiftOnGround)
 	{
@@ -315,6 +319,10 @@ bool CRapidFire::CanDoubleTapNow(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
 	if (!(nPacketTicks >= CFG::Exploits_RapidFire_Ticks || nRateShots > 1))
 		return false;
 
+	const int nFireRateTicks = GetFireRateTicks(pWeapon);
+	if (nFireRateTicks <= MAX_NEW_COMMANDS + MAX_BACKUP_COMMANDS - 1 && GetFillers(pWeapon, nBankTicks) < nFireRateTicks)
+		return false;
+
 	const int nClip = pWeapon->m_iClip1();
 	if (nClip >= 0 && nClip < 2)
 		return false;
@@ -337,11 +345,33 @@ bool CRapidFire::CanDoubleTapNow(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
 	return G::bCanPrimaryAttack || bCanFireNextTick || CanInterruptReload(pWeapon);
 }
 
+int CRapidFire::GetFireRateTicks(C_TFWeaponBase* pWeapon)
+{
+	if (!pWeapon)
+		return 1;
+	if (pWeapon->m_iItemDefinitionIndex() == Scout_m_ForceANature || pWeapon->m_iItemDefinitionIndex() == Scout_m_FestiveForceANature)
+		return static_cast<int>(std::ceil(0.3125f / TICK_INTERVAL));
+	return (std::max)(static_cast<int>(std::ceil(pWeapon->GetFireRate() / TICK_INTERVAL)), 1);
+}
+
+int CRapidFire::GetFillers(C_TFWeaponBase* pWeapon, int nBank)
+{
+	const int nFireRateTicks = GetFireRateTicks(pWeapon);
+	return (std::min)({ (std::max)(CFG::Exploits_RapidFire_Ticks - 1, nFireRateTicks), std::max(nBank, 0), MAX_NEW_COMMANDS + MAX_BACKUP_COMMANDS - 1 });
+}
+
 int CRapidFire::GetReleaseTicks()
 {
 	// the slider counts the whole burst (the fire command included, Amalgam's
-	// TickLimit semantic) - the fillers are one less
-	return (std::min)({ CFG::Exploits_RapidFire_Ticks - 1, std::max(Shifting::nAvailableTicks, 0), MAX_NEW_COMMANDS + MAX_BACKUP_COMMANDS - 1 });
+	// TickLimit semantic) - the fillers are one less. the fillers must also
+	// cover the weapon's fire-rate clock span no matter what the slider says:
+	// the FAN's 0.3125s = 20.83 ticks needs 21 fillers for the second shell to
+	// land on the last batch command (clock +21) - a slider of 21 alone gives
+	// 20 fillers, the batch clock stops at +20 and the second shell falls out
+	// of the packet onto a plain next-tick command. GetFireRateTicks hardkeys
+	// the FAN because GetFireRate returns its unmultiplied 0.625 base while the
+	// engine's real cooldown is 0.3125 (dt_debug.log nextAtk deltas)
+	return GetFillers(H::Entities->GetWeapon(), Shifting::nAvailableTicks);
 }
 
 int CRapidFire::GetTicks(C_TFWeaponBase* pWeapon)
@@ -383,6 +413,7 @@ void CRapidFire::RunFastSticky(CUserCmd* pCmd, bool* pSendPacket)
 
 	Shifting::bStickyDTWantShift = false;
 	Shifting::nStickyRechargeTarget = 0;
+	m_bShiftAttack = false;
 
 	if (!pSendPacket)
 		return;
@@ -485,6 +516,7 @@ void CRapidFire::RunFastSticky(CUserCmd* pCmd, bool* pSendPacket)
 void CRapidFire::RunFastRev(CUserCmd* pCmd, bool* pSendPacket)
 {
 	Shifting::bFastRevWantShift = false;
+	m_bShiftAttack = false;
 	if (!CFG::Exploits_FastRev || !pSendPacket)
 	{
 		m_bFastRevDraining = false;

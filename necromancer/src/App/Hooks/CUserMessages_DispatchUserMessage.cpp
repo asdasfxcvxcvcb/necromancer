@@ -1,6 +1,7 @@
 #include "../../SDK/SDK.h"
 
 #include "../Features/CFG.h"
+#include "../Features/Misc/Misc.h"
 #include "../Features/SeedPred/SeedPred.h"
 #include "../Features/ChatESP/ChatESP.h"
 #include "../Features/AutoVote/AutoVote.h"
@@ -45,9 +46,25 @@ MAKE_HOOK(CUserMessages_DispatchUserMessage, Signatures::CUserMessages_DispatchU
 		}
 	}
 
-	if (msg_type == UM_TextMsg && F::SeedPred->ParsePlayerPerf(msg_data))
+	if (msg_type == UM_TextMsg)
 	{
-		return true;
+		char szRaw[256] = {};
+		msg_data.ReadString(szRaw, sizeof(szRaw));
+		msg_data.Seek(0);
+
+		std::string sMsg = szRaw;
+		if (!sMsg.empty())
+		{
+			sMsg.erase(sMsg.begin());
+
+			if (CFG::Misc_Auto_Balance_Dodge && sMsg == "#TF_Autobalance_TeamChangePending")
+				F::Misc->AutoBalanceWarningSeen();
+		}
+
+		if (F::SeedPred->ParsePlayerPerf(msg_data))
+		{
+			return true;
+		}
 	}
 
 	// Auto F1/F2 - automatic voting on the VoteStart user message

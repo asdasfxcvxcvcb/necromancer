@@ -1,5 +1,6 @@
 #include "../../SDK/SDK.h"
 
+#include "CTFGameRules_ShouldCollide.h"
 #include "../Features/CFG.h"
 
 #include "../Features/Aimbot/Aimbot.h"
@@ -160,6 +161,11 @@ static CMFlow SectionPerTickReset(CClientModeShared* ecx, float flInputSampleTim
 
 	G::vTrueOriginalAngles = pCmd->viewangles;
 	G::bHasTrueOriginalAngles = true;
+
+	// the fake interp delivery must run on EVERY path (dead frames included -
+	// the class-switch/death moments are the apply windows and later sections
+	// early-exit while dead)
+	F::Misc->ApplyFakeInterp();
 
 	if (!pCmd || !pCmd->command_number)
 		return CMFlow::CALL_ORIGINAL_EXIT;
@@ -418,9 +424,14 @@ static CMFlow SectionMovementFeatures(CClientModeShared* ecx, float flInputSampl
 	F::Misc->AutoDisguise(pCmd);
 	F::Misc->MovementLock(pCmd);
 	F::Misc->MvmInstaRespawn();
+	if (CFG::Misc_Ignore_Enemy_Collision)
+		Hooks::CTFGameRules_ShouldCollide_Server::EnsureHook();
 	F::Misc->AntiAFK(pCmd);
 	if (CFG::Misc_Auto_FastClassSwitch)
 		F::Misc->FastClassSwitch();
+	F::Misc->AutoBalanceRun();
+	F::Misc->ReportSpamRun();
+	F::Misc->TradeSpamRun();
 
 	if (CFG::NavBot_Enabled)
 	{

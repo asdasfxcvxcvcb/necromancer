@@ -414,23 +414,23 @@ bool CPlayers::GetInfoGUID(const std::string& guid, PlayerPriority& out)
 
 void CPlayers::ImportLegacyPlayers()
 {
-	// Check if legacy seonwdde players.json exists
-	const auto legacyPath = std::filesystem::current_path() / "SEOwnedDE" / "players.json";
-	
-	if (!std::filesystem::exists(legacyPath))
-		return;
-
-	// Check if we already have players (don't overwrite)
-	if (!m_Players.empty())
-		return;
-
-	// Load legacy players
-	std::ifstream legacyFile(legacyPath);
-	if (!legacyFile.is_open() || legacyFile.peek() == std::ifstream::traits_type::eof())
-		return;
-
 	try
 	{
+		// Check if legacy seonwdde players.json exists
+		const auto legacyPath = std::filesystem::current_path() / "SEOwnedDE" / "players.json";
+
+		if (!std::filesystem::exists(legacyPath))
+			return;
+
+		// Check if we already have players (don't overwrite)
+		if (!m_Players.empty())
+			return;
+
+		// Load legacy players
+		std::ifstream legacyFile(legacyPath);
+		if (!legacyFile.is_open() || legacyFile.peek() == std::ifstream::traits_type::eof())
+			return;
+
 		nlohmann::json legacyJson = nlohmann::json::parse(legacyFile);
 		legacyFile.close();
 

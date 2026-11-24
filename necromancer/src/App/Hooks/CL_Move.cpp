@@ -64,10 +64,6 @@ MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 		nMaxTicks = nBudgetCap;
 	}
 
-	if (F::FakeAngle->YawOn())
-		nMaxTicks -= F::FakeAngle->AntiAimTicks();
-	nMaxTicks = std::max(nMaxTicks, 1);
-
 	// Apply user's recharge limit or auto settings. The slider may store past
 	// the server budget - fast rev drains the bank across packets and every
 	// spend path clamps itself; the anticheat profile keeps the budget ceiling
@@ -75,7 +71,12 @@ MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 	const bool bAntiCheat = CFG::Misc_AntiCheat_Enabled && !CFG::Misc_AntiCheat_IgnoreTickLimit;
 	if (bAntiCheat)
 		nMaxTicks = std::min(nMaxTicks, nUserLimit);
-	const int nBankCap = bAntiCheat ? nMaxTicks : nUserLimit;
+
+	// the AA dance rides 2 choked commands on the post-warp flush - a full-bank
+	// spend drains the server budget and drops them, so 2 ticks stay unbanked
+	// whenever AA is on (the bank only ever holds spendable ticks)
+	const int nAaReserve = F::FakeAngle->YawOn() ? F::FakeAngle->AntiAimTicks() : 0;
+	const int nBankCap = std::max((bAntiCheat ? nMaxTicks : nUserLimit) - nAaReserve, 1);
 
 	auto callOriginal = [&](bool bFinal)
 	{
@@ -283,17 +284,20 @@ MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 
 		Shifting::bShifting = true;
 
-		// the batch length must not shrink below the fire rate's clock span or
-		// the second shell misses the batch - Amalgam caps theirs by
-		// sv_maxusrcmdprocessticks-derived m_iMaxShift, not a running estimate,
-		// and the burst (fire + fillers <= 15 new + 7 backup) fits the budget.
-		// The estimate clamp here shaved the span by ticks depending on sag,
-		// another "sometimes it double taps" source.
+		// the fillers must cover the fire rate's clock span no matter what choke
+		// backlog rides ahead of the fire command - the fakelag/AA holds sitting
+		// in chokedcommands at burst time shaved the batch below the weapon's
+		// fire rate (the FAN needs 21 fillers after the fire command) and the
+		// second shell never made it into the batch. the engine caps a packet at
+		// MAX_NEW_COMMANDS (15) new commands and drains the rest on the next
+		// packet while the server replays up to sv_maxusrcmdprocessticks (24)
+		// per packet, so a burst split across two packets is safe and the
+		// backlog going out first costs nothing.
 		// Fast rev is the exception: it spends the whole bank one full packet
 		// per frame until the drain in RunFastRev stops it
 		int nTicks = bFastRevBatch
 			? std::min(Shifting::nAvailableTicks, std::max(MAX_NEW_COMMANDS + MAX_BACKUP_COMMANDS - I::ClientState->chokedcommands, 1))
-			: std::min(F::RapidFire->GetReleaseTicks(), std::max(MAX_NEW_COMMANDS + MAX_BACKUP_COMMANDS - I::ClientState->chokedcommands, 1));
+			: F::RapidFire->GetReleaseTicks();
 
 		if (nTicks > 0)
 		{

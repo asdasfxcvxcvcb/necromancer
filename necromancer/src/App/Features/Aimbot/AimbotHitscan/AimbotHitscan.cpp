@@ -280,6 +280,16 @@ bool CAimbotHitscan::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, cons
 
 	m_vecTargets.clear();
 
+	// targeting diagnostic: once per 0.5s dump the candidate pipeline (record
+	// counts, ideal age, per-candidate ages/fovs, trace verdicts) to the
+	// console while the aim key is down - chase "the aimbot won't target the
+	// record" reports without guessing
+	static float flLastDebugDump = 0.0f;
+	const bool bDebugDue = CFG::Aimbot_Hitscan_Targeting_Debug
+		&& (CFG::Aimbot_Always_On || H::Input->IsDown(CFG::Aimbot_Key))
+		&& static_cast<float>(Plat_FloatTime()) - flLastDebugDump >= 0.5f;
+	std::string sTargetDebug;
+
 	// Find player targets
 	if (CFG::Aimbot_Target_Players)
 	{
@@ -352,17 +362,51 @@ bool CAimbotHitscan::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, cons
 				if (F::LagRecords->HasRecords(pPlayer, &nRecords))
 				{
 					const float flFakeLatency = F::LagRecords->GetFakeLatency();
-					const bool bFakeLatencyActive = flFakeLatency > 0.0f;
+					// the claimed rewind comes from fake latency OR a delivered fake
+					// interp - with either one active the server backtracks, so the
+					// current model is NOT where the server sees the player
+					const bool bFakeLatencyActive = flFakeLatency > 0.0f
+						|| F::LagRecords->GetFakeInterp() > SDKUtils::GetLerp() + 0.05f;
 					const bool bDoubletap = Shifting::bRapidFireWantShift;
 
 					const float flIdealAge = F::LagRecords->GetServerAcceptedAge();
 					const float flAgeTolerance = F::LagRecords->GetServerAcceptedAgeRange();
 					constexpr float TELEPORT_DIST_SQR = 64.0f * 64.0f;
 
+					// doubletap shells execute i ticks apart while claiming the same
+					// rewind depth - past the validation window the server forces the
+					// late shells onto its own rewind, which drifts i*tick NEWER than
+					// the batch's record, so shell i aims at the record that far newer
+					// (that position is where the forced rewind lands, honored or not)
+					const float flShiftOffset = Shifting::bShifting
+						? Shifting::nCurrentShiftTick * I::GlobalVars->interval_per_tick : 0.0f;
+					const float flIdealAgeEff = std::max(flIdealAge - flShiftOffset, 0.0f);
+
+					// with a claimed rewind the record positions sit far off the visible
+					// model - the FOV gate must measure against the model the player
+					// actually sees, or every record candidate fails the gate and
+					// nothing targets at all at high fake latency/interp
+					float flCurFOV = 0.0f;
+					if (bFakeLatencyActive)
+					{
+						pPlayer->InvalidateBoneCache();
+						const Vec3 vCurPos = pPlayer->GetHitboxPos(nAimHitbox);
+						flCurFOV = Math::CalcFov(vLocalAngles, Math::CalcAngle(vLocalPos, vCurPos));
+					}
+					const bool bFovBlocked = bFakeLatencyActive
+						&& CFG::Aimbot_Hitscan_Sort == 0
+						&& flCurFOV > CFG::Aimbot_Hitscan_FOV;
+
+					if (bDebugDue)
+						sTargetDebug += std::format("\n[Target] ent {} recs={} ideal={:.0f}ms range={:.0f}ms claim={:.0f}ms fake={:.0f}ms shift={:.0f}ms fovcur={:.1f}{}",
+							pPlayer->entindex(), nRecords, flIdealAge * 1000.f, flAgeTolerance * 1000.f,
+							F::LagRecords->GetServerLerp() * 1000.f, F::LagRecords->GetFakeLatency() * 1000.f,
+							flShiftOffset * 1000.f, flCurFOV, bFovBlocked ? " FOVBLOCK" : "");
+
 					// === Real model (current position) ===
-					// Always valid when fake latency is off — the server uses our cmd->tick_count as-is,
+					// Always valid when no rewind is claimed - the server uses our cmd->tick_count as-is,
 					// so targeting the current model is accurate. SEOwnedDE always includes it.
-					// With fake latency, server backtracks — skip current model entirely.
+					// With fake latency or a delivered fake interp, server backtracks - skip current model entirely.
 					if (!bFakeLatencyActive)
 					{
 						// Force fresh bone setup once per player — the cache may be stale after LagRecords
@@ -386,14 +430,15 @@ bool CAimbotHitscan::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, cons
 
 					// === Interpolated record at ideal target simtime ===
 					{
-						const float flIdealTargetSimTime = I::GlobalVars->curtime - flIdealAge;
+						const float flIdealTargetSimTime = I::GlobalVars->curtime - flIdealAgeEff;
 						bool bIsInterpolated = false;
 						LagRecord_t interpRecord = F::LagRecords->GetInterpolatedRecord(pPlayer, flIdealTargetSimTime, &bIsInterpolated);
 
 						if (interpRecord.bIsAlive && interpRecord.Player == pPlayer)
 						{
 							const float flInterpAge = I::GlobalVars->curtime - interpRecord.SimulationTime;
-							if (flInterpAge <= F::LagRecords->GetMaxUnlag())
+							if (flInterpAge <= F::LagRecords->GetMaxUnlag()
+								&& (!bFakeLatencyActive || (flInterpAge >= flIdealAgeEff - 0.1f && flInterpAge - flIdealAgeEff <= flAgeTolerance)))
 							{
 								static LagRecord_t s_interpRecord = {};
 								s_interpRecord = interpRecord;
@@ -404,12 +449,15 @@ bool CAimbotHitscan::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, cons
 								const float flDistTo = vLocalPos.DistTo(vPos);
 								const float flVel2D = s_interpRecord.Velocity.Length2D();
 
-								if (CFG::Aimbot_Hitscan_Sort != 0 || flFOVTo <= CFG::Aimbot_Hitscan_FOV)
+								if (!bFovBlocked && (CFG::Aimbot_Hitscan_Sort != 0 || (bFakeLatencyActive ? flCurFOV : flFOVTo) <= CFG::Aimbot_Hitscan_FOV))
 								{
 									// Score: fake latency → age delta (closer to ideal = better), no fake latency → distance
-									const float flAgeDelta = fabsf(flInterpAge - flIdealAge);
+									const float flAgeDelta = fabsf(flInterpAge - flIdealAgeEff);
 									const float flScore = bFakeLatencyActive ? flAgeDelta : ((CFG::Aimbot_Hitscan_Sort == 0) ? flFOVTo : flDistTo);
-									candidates.push_back({ vPos, vAngleTo, flFOVTo, flDistTo, s_interpRecord.SimulationTime, &s_interpRecord, flScore, flVel2D });
+									if (bDebugDue)
+										sTargetDebug += std::format("\n[Target] ent {} cand interp age={:.0f}ms fov={:.1f} score={:.0f}",
+											pPlayer->entindex(), flInterpAge * 1000.f, flFOVTo, flScore);
+									candidates.push_back({ vPos, vAngleTo, bFakeLatencyActive ? flCurFOV : flFOVTo, flDistTo, s_interpRecord.SimulationTime, &s_interpRecord, flScore, flVel2D });
 								}
 							}
 						}
@@ -417,7 +465,7 @@ bool CAimbotHitscan::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, cons
 
 					// === Individual lag records ===
 					{
-						const int nStart = bFakeLatencyActive ? std::max(1, nRecords - 5) : 1;
+						const int nStart = 1;
 						const int nEnd = bDoubletap && nRecords > 1 ? nRecords - 1 : nRecords;
 
 						for (int n = nStart; n <= nEnd; n++)
@@ -437,6 +485,15 @@ bool CAimbotHitscan::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, cons
 							if (flRecordAge > F::LagRecords->GetMaxUnlag())
 								continue;
 
+							// with a claimed rewind only the honored window is hittable -
+							// records outside it get force-clamped by the server onto the
+							// ideal-age position, which is not where we would aim
+							if (bFakeLatencyActive && (flRecordAge < flIdealAgeEff - 0.1f || flRecordAge - flIdealAgeEff > flAgeTolerance))
+								continue;
+
+							if (bFovBlocked)
+								continue;
+
 							if (n > 1)
 							{
 								const auto pPrevRecord = F::LagRecords->GetRecord(pPlayer, n - 1, true);
@@ -454,12 +511,18 @@ bool CAimbotHitscan::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, cons
 							const float flDistTo = vLocalPos.DistTo(vPos);
 							const float flVel2D = pRecord->Velocity.Length2D();
 
-							if (CFG::Aimbot_Hitscan_Sort == 0 && flFOVTo > CFG::Aimbot_Hitscan_FOV)
+							// no claimed rewind: records must respect the FOV like the
+							// real model - without this the aimbot snaps to old record
+							// positions up to a second behind the visible enemy
+							if (!bFakeLatencyActive && CFG::Aimbot_Hitscan_Sort == 0 && flFOVTo > CFG::Aimbot_Hitscan_FOV)
 								continue;
 
-							const float flAgeDelta = fabsf(flRecordAge - flIdealAge);
+							const float flAgeDelta = fabsf(flRecordAge - flIdealAgeEff);
 							const float flScore = bFakeLatencyActive ? flAgeDelta : ((CFG::Aimbot_Hitscan_Sort == 0) ? flFOVTo : flDistTo);
-							candidates.push_back({ vPos, vAngleTo, flFOVTo, flDistTo, pRecord->SimulationTime, pRecord, flScore, flVel2D });
+							if (bDebugDue)
+								sTargetDebug += std::format("\n[Target] ent {} cand rec age={:.0f}ms fov={:.1f} score={:.0f}",
+									pPlayer->entindex(), flRecordAge * 1000.f, flFOVTo, flScore);
+							candidates.push_back({ vPos, vAngleTo, bFakeLatencyActive ? flCurFOV : flFOVTo, flDistTo, pRecord->SimulationTime, pRecord, flScore, flVel2D });
 						}
 					}
 
@@ -477,19 +540,20 @@ bool CAimbotHitscan::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, cons
 							const float flDistTo = vLocalPos.DistTo(vPredictedPos);
 							const float flVel2D = pPlayer->m_vecVelocity().Length2D();
 
-							if (CFG::Aimbot_Hitscan_Sort != 0 || flFOVTo <= CFG::Aimbot_Hitscan_FOV)
+							if (!bFovBlocked && (CFG::Aimbot_Hitscan_Sort != 0 || (bFakeLatencyActive ? flCurFOV : flFOVTo) <= CFG::Aimbot_Hitscan_FOV))
 							{
-								const float flPredictedAgeDelta = fabsf(flPredictedAge - flIdealAge);
+								const float flPredictedAgeDelta = fabsf(flPredictedAge - flIdealAgeEff);
 								const float flScore = bFakeLatencyActive ? flPredictedAgeDelta : ((CFG::Aimbot_Hitscan_Sort == 0) ? flFOVTo : flDistTo);
-								candidates.push_back({ vPredictedPos, vAngleTo, flFOVTo, flDistTo, flPredictedSimTime, nullptr, flScore, flVel2D });
+								candidates.push_back({ vPredictedPos, vAngleTo, bFakeLatencyActive ? flCurFOV : flFOVTo, flDistTo, flPredictedSimTime, nullptr, flScore, flVel2D });
 							}
 						}
 					}
 				}
 
-				// Fallback: no lag records exist at all, target real model (only without fake latency)
+				// Fallback: no lag records exist at all, target real model (only without a claimed rewind)
 				// Bone cache already invalidated above if we entered the HasRecords path
-				if (candidates.empty() && F::LagRecords->GetFakeLatency() <= 0.0f)
+				if (candidates.empty() && F::LagRecords->GetFakeLatency() <= 0.0f
+					&& F::LagRecords->GetFakeInterp() <= SDKUtils::GetLerp() + 0.05f)
 				{
 					if (!F::LagRecords->HasRecords(pPlayer))
 						pPlayer->InvalidateBoneCache();
@@ -536,13 +600,16 @@ bool CAimbotHitscan::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, cons
 				{
 					m_vecTargets.emplace_back(AimTarget_t { pPlayer, c.vPos, c.vAngleTo, c.flFOVTo, c.flDistTo }, nAimHitbox, c.flSimTime, c.pLagRecord);
 				}
+
+				if (bDebugDue && candidates.empty())
+					sTargetDebug += std::format("\n[Target] ent {} NO CANDIDATES (rewind active, nothing passed the gates)", pPlayer->entindex());
 			}
 			else
 			{
 				// Not using lag records, just target current position
-				// BUT: with fake latency active, the current model is NOT where the server sees the player
-				// The server backtracks, so we must skip this target entirely
-				if (F::LagRecords->GetFakeLatency() > 0.0f)
+				// BUT: with a claimed rewind (fake latency / fake interp) the current model is NOT where
+				// the server sees the player - the server backtracks, so skip this target entirely
+				if (F::LagRecords->GetFakeLatency() > 0.0f || F::LagRecords->GetFakeInterp() > SDKUtils::GetLerp() + 0.05f)
 					continue;
 
 				// Only invalidate if we haven't already done so for this player this frame
@@ -638,7 +705,14 @@ bool CAimbotHitscan::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, cons
 		});
 
 		if (m_vecTargets.empty())
+		{
+			if (bDebugDue && !sTargetDebug.empty())
+			{
+				flLastDebugDump = static_cast<float>(Plat_FloatTime());
+				I::CVar->ConsoleColorPrintf({ 255, 150, 100, 255 }, "%s", sTargetDebug.c_str());
+			}
 			return false;
+		}
 	}
 
 	// Sort by target priority
@@ -691,6 +765,11 @@ bool CAimbotHitscan::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, cons
 
 					F::LagRecordMatrixHelper->Restore();
 
+					if (bDebugDue)
+						sTargetDebug += std::format("\n[Target] ent {} rec trace {} hitbox={}{}",
+							target.Entity->entindex(), bTraceResult ? "OK" : "FAIL", nHitHitbox,
+							bTraceResult && target.AimedHitbox == HITBOX_HEAD && nHitHitbox != HITBOX_HEAD ? " (head mismatch)" : "");
+
 					if (!bTraceResult)
 						continue;
 
@@ -729,9 +808,20 @@ bool CAimbotHitscan::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, cons
 		}
 
 		outTarget = target;
+		if (bDebugDue)
+		{
+			sTargetDebug += "\n[Target] -> TARGETED";
+			flLastDebugDump = static_cast<float>(Plat_FloatTime());
+			I::CVar->ConsoleColorPrintf({ 100, 200, 255, 255 }, "%s", sTargetDebug.c_str());
+		}
 		return true;
 	}
 
+	if (bDebugDue && !sTargetDebug.empty())
+	{
+		flLastDebugDump = static_cast<float>(Plat_FloatTime());
+		I::CVar->ConsoleColorPrintf({ 255, 150, 100, 255 }, "%s", sTargetDebug.c_str());
+	}
 	return false;
 }
 
@@ -1369,6 +1459,9 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 	if (!CFG::Aimbot_Hitscan_Active)
 	{
 		m_bMinigunBurst = false;
+		m_bHadSolution = false;
+		m_bAimKeyWasDown = false;
+		m_flAcquireStartTime = -1.0f;
 		return;
 	}
 
@@ -1403,7 +1496,12 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 	}
 
 	if (!aimKeyDown)
+	{
 		m_bMinigunBurst = false;
+		m_bHadSolution = false;
+		m_bAimKeyWasDown = false;
+		m_flAcquireStartTime = -1.0f;
+	}
 
 	HitscanTarget_t target = {};
 	const bool bTargetFound = GetTarget(pLocal, pWeapon, pCmd, target) && target.Entity;
@@ -1440,6 +1538,41 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 			if (bIsMinigun && !m_bMinigunBurst)
 				pCmd->buttons |= IN_ATTACK2;
 
+			// Acquire delay: a fresh activation with an immediate valid target
+			// fires normally; a target that only becomes valid after an idle or
+			// trace-blocked phase holds fire (and its doubletap burst) for the
+			// Delay Ticks value so the spread cone clears cover before the shot
+			bool bFireAllowed = true;
+			if (aimKeyDown && CFG::Exploits_Acquire_Delay_Ticks > 0.0f)
+			{
+				const int nFireWeaponID = pWeapon->GetWeaponID();
+				const bool bSniperFamily = nFireWeaponID == TF_WEAPON_SNIPERRIFLE || nFireWeaponID == TF_WEAPON_SNIPERRIFLE_DECAP
+					|| nFireWeaponID == TF_WEAPON_SNIPERRIFLE_CLASSIC;
+
+				if (!bSniperFamily)
+				{
+					if (!m_bAimKeyWasDown && bTargetFound)
+						m_bHadSolution = true;
+
+					if (m_flAcquireStartTime >= 0.0f)
+					{
+						if (I::GlobalVars->curtime - m_flAcquireStartTime >= CFG::Exploits_Acquire_Delay_Ticks * I::GlobalVars->interval_per_tick)
+							m_flAcquireStartTime = -1.0f;
+						else
+							bFireAllowed = false;
+					}
+					else if (!m_bHadSolution)
+					{
+						m_flAcquireStartTime = I::GlobalVars->curtime;
+						bFireAllowed = false;
+					}
+
+					m_bHadSolution = true;
+				}
+
+				m_bAimKeyWasDown = true;
+			}
+
 			const int nSavedTickBase = pLocal->m_nTickBase();
 			pLocal->m_nTickBase() = nSavedTickBase + 1;
 			const bool bCanFireNow = pWeapon->CanPrimaryAttack(pLocal) && pWeapon->HasPrimaryAmmoForShot();
@@ -1450,7 +1583,8 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 			
 			if (bIsMinigun)
 			{
-				HandleMinigun(pCmd, pLocal, pWeapon, target, bCanFireNow, bUserAttack2, aimKeyDown);
+				if (bFireAllowed)
+					HandleMinigun(pCmd, pLocal, pWeapon, target, bCanFireNow, bUserAttack2, aimKeyDown);
 			}
 			// Amalgam's shape: the fire write is gated by ShouldFire alone (no
 			// can-fire check). Writing the attack on every solution tick means
@@ -1459,7 +1593,7 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 			// one tick late (the +1 tickbase probe), the server rejected it,
 			// and every shell of a multi-shell doubletap slipped, dropping the
 			// last one out of the batch entirely
-			else if (ShouldFire(pCmd, pLocal, pWeapon, target))
+			else if (bFireAllowed && ShouldFire(pCmd, pLocal, pWeapon, target))
 			{
 				HandleFire(pCmd, pWeapon);
 			}
@@ -1480,12 +1614,11 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 				// Set tick_count for lag compensation
 				// Server: targettick = cmd->tick_count - TIME_TO_TICKS(lerpTime)
 				// We want targettick = TIME_TO_TICKS(simTime), so tick_count = TIME_TO_TICKS(simTime + lerp)
-				// MUST use SDKUtils::GetLerp() (reads ConVars directly) — GetClientInterpAmount()
-				// returns 0 when auto-interp is enabled, which would make the server backtrack
-				// to the wrong tick (off by lerpTicks).
+				// lerp must be the value the SERVER honors (GetServerLerp) - the raw
+				// NET_SetConVar fake interp can exceed the local clamped cvar
 				if (bIsFiring && target.Entity && H::Entities->IsEntityValid(target.Entity) && target.Entity->GetClassId() == ETFClassIds::CTFPlayer)
 				{
-					pCmd->tick_count = TIME_TO_TICKS(target.SimulationTime + SDKUtils::GetLerp());
+					pCmd->tick_count = TIME_TO_TICKS(target.SimulationTime + F::LagRecords->GetServerLerp());
 				}
 			}
 		}
@@ -1493,6 +1626,18 @@ void CAimbotHitscan::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWe
 	else
 	{
 		m_bMinigunBurst = false;
+
+		// aim key held but nothing trace-valid - the idle/invalid phase that
+		// arms the acquire delay on the next valid acquisition
+		if (aimKeyDown)
+		{
+			m_bAimKeyWasDown = true;
+			if (CFG::Exploits_Acquire_Delay_Ticks > 0.0f)
+			{
+				m_bHadSolution = false;
+				m_flAcquireStartTime = -1.0f;
+			}
+		}
 	}
 
 	UpdateSilentReturn(pCmd, pLocal, bTargetFound && aimKeyDown);

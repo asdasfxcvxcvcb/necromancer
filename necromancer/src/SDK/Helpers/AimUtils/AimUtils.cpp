@@ -23,7 +23,10 @@ bool CAimUtils::TraceEntityBullet(C_BaseEntity *pEntity, const Vec3 &vFrom, cons
 
 	Trace(vFrom, vTo, (MASK_SHOT | CONTENTS_GRATE), &filter, &trace);
 
-	if (trace.m_pEnt == pEntity && !trace.allsolid && !trace.startsolid)
+	// startsolid is allowed when we started inside the target itself - the
+	// server's melee/bullet traces register point-blank hits from inside the
+	// victim's hull, and lag-record stabs happen exactly there
+	if (trace.m_pEnt == pEntity && !trace.allsolid)
 	{
 		if (pHitHitboxOut)
 			*pHitHitboxOut = trace.hitbox;

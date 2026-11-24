@@ -2987,9 +2987,6 @@ void CMenu::MainWindow()
 				CheckBox("Walk To Target", CFG::Aimbot_Melee_Walk_To_Target);
 				CheckBox("Whip Teammates", CFG::Aimbot_Melee_Whip_Teammates);
 				CheckBox("Auto Repair Buildings", CFG::Aimbot_Melee_Auto_Repair);
-				CheckBox("Auto Backstab", CFG::Aimbot_Melee_Auto_Backstab);
-				CheckBox("Backstab Fallback", CFG::Aimbot_Melee_Auto_Backstab_Fallback);
-				CheckBox("Ignore Razorback", CFG::Aimbot_Melee_Ignore_Razorback);
 				CheckBox("Swing Predict Lag", CFG::Aimbot_Melee_Swing_Predict_Lag);
 				SelectSingle("Aim Type", CFG::Aimbot_Melee_Aim_Type, {
 					{ "Normal", 0 },
@@ -3078,7 +3075,8 @@ void CMenu::MainWindow()
 					if (CFG::Aimbot_Hitscan_Silent_Return)
 						SliderFloat("Return Smooth", CFG::Aimbot_Hitscan_Silent_Return_Speed, 2.0f, 20.0f, 0.5f, "%.1f");
 				}
-				SliderFloat("Fake Latency", CFG::Aimbot_Hitscan_Fake_Latency, 0.0f, 600.0f, 10.0f, "%.0f ms");
+				SliderFloat("Fake Latency", CFG::Aimbot_Hitscan_Fake_Latency, 0.0f, 900.0f, 10.0f, "%.0f ms");
+				SliderFloat("Fake Interp", CFG::Aimbot_Hitscan_Fake_Interp, 0.0f, 1000.0f, 10.0f, "%.0f ms");
 				SliderInt("Hitchance", CFG::Aimbot_Hitscan_Hitchance, 0, 100, 1);
 			}
 			GroupBoxEnd();
@@ -3241,9 +3239,9 @@ void CMenu::MainWindow()
 					{ "Friends", CFG::Triggerbot_AutoBackstab_Ignore_Friends },
 					{ "Invisible", CFG::Triggerbot_AutoBackstab_Ignore_Invisible },
 					{ "Invulnerable", CFG::Triggerbot_AutoBackstab_Ignore_Invulnerable },
-					{ "Razorback", CFG::Triggerbot_AutoBackstab_Ignore_Razorback }
-				});
-			}
+						{ "Razorback", CFG::Triggerbot_AutoBackstab_Ignore_Razorback }
+					});
+				}
 			GroupBoxEnd();
 			GroupBoxStart("Auto Vaccinator", 150);
 			{
@@ -4386,6 +4384,7 @@ void CMenu::MainWindow()
 			if (CFG::Exploits_RapidFire_Ticks > nMaxSlider)
 				CFG::Exploits_RapidFire_Ticks = nMaxSlider;
 			SliderInt(bLimitTicks ? "DT Ticks (Safe)" : "DT Ticks", CFG::Exploits_RapidFire_Ticks, 2, nMaxSlider, 1);
+			SliderFloat("Delay Ticks", CFG::Exploits_Acquire_Delay_Ticks, 0.0f, 3.0f, 0.1f, "%.1f");
 			SelectSingle("Warp Mode", CFG::Exploits_Warp_Mode, {
 				{ "Slow", 0 }, { "Full", 1 }
 			});
@@ -4662,6 +4661,7 @@ void CMenu::MainWindow()
 			CheckBox("Choke on Bunnyhop", CFG::Misc_Choke_On_Bhop);
 			CheckBox("Fast Stop", CFG::Misc_Fast_Stop);
 			CheckBox("Fast Accelerate", CFG::Misc_Fast_Accelerate);
+			CheckBox("Ignore Enemy Collision", CFG::Misc_Ignore_Enemy_Collision);
 			CheckBox("Duck Speed", CFG::Misc_Duck_Speed);
 			CheckBox("Crouch While Airborne", CFG::Misc_Crouch_While_Airborne);
 			CheckBox("Auto Strafe", CFG::Misc_Auto_Strafe);
@@ -4742,6 +4742,7 @@ void CMenu::MainWindow()
 		m_mapGroupBoxes["Misc_Mann vs. Machine"].m_fnRenderContent = [this]() {
 			InputKey("Instant Respawn", CFG::Misc_MVM_Instant_Respawn_Key);
 			CheckBox("Instant Revive", CFG::Misc_MVM_Instant_Revive);
+			CheckBox("Auto Self Revive", CFG::Misc_MvM_Auto_Revive);
 		};
 		m_mapGroupBoxes["Misc_Chat"].m_fnRenderContent = [this]() {
 			CheckBox("Chat Spammer", CFG::Misc_Chat_Spammer_Active);
@@ -4798,6 +4799,17 @@ void CMenu::MainWindow()
 			if (CFG::Menu_ShowMoreOptions)
 			{
 				CheckBox("Rejoin When Kicked", CFG::Misc_Auto_Rejoin_On_Kick);
+			}
+			CheckBox("Auto Balance Warn", CFG::Misc_Auto_Balance_Warn);
+			CheckBox("Auto Balance Dodge", CFG::Misc_Auto_Balance_Dodge);
+			CheckBox("Report Spam", CFG::Misc_Report_Spam);
+			if (CFG::Misc_Report_Spam) {
+				SliderInt("Reports/Second", CFG::Misc_Report_Spam_Rate, 1, 1000, 1);
+			}
+			CheckBox("Trade Spam", CFG::Misc_Trade_Spam);
+			if (CFG::Misc_Trade_Spam) {
+				SliderInt("Trades/Second", CFG::Misc_Trade_Spam_Rate, 1, 1000, 1);
+				CheckBox("Trade Tagged Only", CFG::Misc_Trade_Spam_Tagged_Only);
 			}
 			CheckBox("Auto Call Medic", CFG::Misc_Auto_Call_Medic_On_Damage);
 			if (CFG::Misc_Auto_Call_Medic_On_Damage) {

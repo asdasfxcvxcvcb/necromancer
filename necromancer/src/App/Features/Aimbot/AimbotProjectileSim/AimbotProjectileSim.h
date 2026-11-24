@@ -77,6 +77,7 @@ struct Offset_t
 {
     Vec3 m_vOffset = {};
     int m_iFlags = PointFlagsEnum::Regular;
+    bool m_bStrictHead = false;
 };
 using Directs_t = std::unordered_map<int, Offset_t>;
 using Splashes_t = std::vector<int>;
@@ -96,10 +97,11 @@ struct Direct_t : History_t
     float m_flTime = 0.f;
     Vec3 m_vPoint = {};
     int m_iPriority = 0;
+    bool m_bStrictHead = false;
 
     Direct_t() = default;
-    Direct_t(const History_t& tHistory, float flPitch, float flYaw, float flTime, const Vec3& vPoint, int iPriority)
-        : History_t(tHistory), m_flPitch(flPitch), m_flYaw(flYaw), m_flTime(flTime), m_vPoint(vPoint), m_iPriority(iPriority) {}
+    Direct_t(const History_t& tHistory, float flPitch, float flYaw, float flTime, const Vec3& vPoint, int iPriority, bool bStrictHead = false)
+        : History_t(tHistory), m_flPitch(flPitch), m_flYaw(flYaw), m_flTime(flTime), m_vPoint(vPoint), m_iPriority(iPriority), m_bStrictHead(bStrictHead) {}
 };
 struct Splash_t : History_t
 {
@@ -154,19 +156,19 @@ private:
     std::vector<Target_t> GetTargets(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon);
     std::vector<Target_t> SortTargets(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon);
 
-    Directs_t GetDirects();
+    Directs_t GetDirects(int iDirectTier);
     Splashes_t GetSplashes();
     void SetupSplashPoints(Vec3& vOrigin, std::vector<Setup_t>& vSplashPoints, int iFlags = CalculateFlagsEnum::None);
     std::vector<Point_t> GetSplashPoints(Vec3 vOrigin, std::vector<Setup_t>& vSplashPoints, int iSimTime, int iFlags = CalculateFlagsEnum::Accuracy, bool bFirst = false);
 
     void CalculateAngle(const Vec3& vLocalPos, const Vec3& vTargetPos, int iSimTime, Solution_t& tOut, int iFlags = CalculateFlagsEnum::Accuracy, int iTolerance = -1, float flRoll = 0.f);
-    bool TestAngle(const Vec3& vPoint, const Vec3& vAngles, int iSimTime, int iType, int iFlags, bool bSecondTest = false);
+    bool TestAngle(const Vec3& vPoint, const Vec3& vAngles, int iSimTime, int iType, int iFlags, bool bSecondTest = false, bool bStrictHead = false);
 
-    bool HandlePoint(const Vec3& vOrigin, int iSimTime, float flPitch, float flYaw, float flTime, const Vec3& vPoint, int iType = PointTypeEnum::Direct, int iFlags = PointFlagsEnum::Regular);
+    bool HandlePoint(const Vec3& vOrigin, int iSimTime, float flPitch, float flYaw, float flTime, const Vec3& vPoint, int iType = PointTypeEnum::Direct, int iFlags = PointFlagsEnum::Regular, bool bStrictHead = false);
     bool HandleDirect(DirectHistory_t& mDirectHistory);
     bool HandleSplash(SplashHistory_t& mSplashHistory);
 
-    int CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, bool bUpdate = true);
+    int CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, bool bUpdate = true, int iDirectTier = 0);
     bool RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd);
 
     bool Aim(const Vec3& vCurAngle, const Vec3& vToAngle, Vec3& vOut, int iMethod = AimTypeValue());
@@ -189,6 +191,8 @@ private:
     Info_t m_tInfo = {};
     MoveSimStorage m_tMoveStorage = {};
     ProjectileInfo m_tProjInfo = {};
+    matrix3x4_t m_aArrowBones[128] = {};
+    bool m_bArrowBonesValid = false;
     std::vector<Setup_t> m_vSplashPoints = {};
 
     bool m_bLastTickHeld = false;

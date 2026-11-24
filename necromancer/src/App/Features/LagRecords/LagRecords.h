@@ -49,7 +49,9 @@ class CLagRecords
 	int m_nOldTickBase = 0;
 	float m_flMaxUnlag = 1.0f;
 	float m_flFakeLatency = 0.0f;
+	std::deque<float> m_dAppliedLatency = {};
 	float m_flWishFakeLatency = 0.0f;
+	float m_flFakeInterp = 0.0f;  // cl_interp value the server has APPLIED (math claims only this)
 
 	// Teleport dist tracking per player (Amalgam-style)
 	bool m_bLagCompensation[MAX_LAG_RECORDS_SLOTS] = {};
@@ -117,6 +119,15 @@ public:
 	void SetFakeLatency(float flLatency) { m_flWishFakeLatency = flLatency; }
 	float GetFakeLatency() const;
 	float GetMaxUnlag() const { return m_flMaxUnlag; }
+
+	// Fake interp: the value the server has APPLIED to m_fLerpTime (set only
+	// after a gate-open NET_SetConVar send). The server's lagcomp subtracts
+	// m_fLerpTime from cmd tick_count, so the tick_count claim must equal it
+	// exactly or every rewind lands shifted off the record
+	void SetFakeInterp(float flInterp) { m_flFakeInterp = flInterp; }
+	float GetFakeInterp() const { return m_flFakeInterp; }
+	float GetServerLerp() const { return std::max(SDKUtils::GetLerp(), m_flFakeInterp); }
+	void ResetInterp() { m_flFakeInterp = 0.0f; }
 };
 
 MAKE_SINGLETON_SCOPED(CLagRecords, LagRecords, F);

@@ -252,6 +252,17 @@ EFakeLagThreatType CFakeLag::CheckSniperThreat(C_TFPlayer* pLocal, int& outMinTi
 		if (!Math::RayToOBB(pEnemy->GetShootPos(), vForward, vLocalOrigin, vMins, vMaxs, localTransform))
 			continue;
 
+		// the aim ray crossing our box isn't enough - doors are brush ENTITIES
+		// that geometry-only checks never see, so verify the actual sightline
+		// with the props-aware filter (the AutoUberPop door fix) before arming
+		CGameTrace trace = {};
+		CTraceFilterWorldAndProps filter = {};
+		Ray_t ray;
+		ray.Init(pEnemy->GetShootPos(), vLocalOrigin + Vec3(0.f, 0.f, 36.f));
+		I::EngineTrace->TraceRay(ray, MASK_SHOT, &filter, &trace);
+		if (trace.fraction < 1.0f)
+			continue;
+
 		// Streamer has same priority as RetardLegit
 		if (bHasTag && (pInfo.RetardLegit || pInfo.Streamer))
 		{

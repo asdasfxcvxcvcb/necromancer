@@ -7,6 +7,7 @@
 #include "../Features/CFG.h"
 
 #include "../Features/ESP/ESP.h"
+#include "../Features/Misc/Misc.h"
 #include "../Features/MoveSimDebug/MoveSimDebug.h"
 #include "../Features/Radar/Radar.h"
 #include "../Features/MiscVisuals/MiscVisuals.h"
@@ -58,6 +59,7 @@ namespace
 					F::MiscVisuals->AimbotFOVCircle();
 					F::MiscVisuals->CritIndicator();
 					F::MiscVisuals->ShiftBar();
+					F::Misc->AutoBalanceWarnDraw();
 					F::AimbotHitscan->DrawSwitchIndicator();
 					F::SpyCamera->Run();
 					F::SpyWarning->Run();

@@ -506,6 +506,7 @@
     <ClCompile Include="src\App\Hooks\CTFPlayerShared_InCond.cpp" />
     <ClCompile Include="src\App\Hooks\CTFPlayerShared_IsPlayerDominated.cpp" />
     <ClCompile Include="src\App\Hooks\CTFPlayerShared_IsCritBoosted.cpp" />
+    <ClCompile Include="src\App\Hooks\CTFGameRules_ShouldCollide.cpp" />
     <ClCompile Include="src\App\Hooks\CPlayerResource_GetPlayerName.cpp" />
     <ClCompile Include="src\App\Hooks\CTFPlayerShared_ShouldSuppressPrediction.cpp" />
     <ClCompile Include="src\App\Hooks\CTFPlayer_AvoidPlayers.cpp" />
@@ -680,6 +681,7 @@
     <ClInclude Include="src\App\Features\Weather\Weather.h" />
     <ClInclude Include="src\App\Features\WorldModulation\WorldModulation.h" />
     <ClInclude Include="src\App\Hooks\WINAPI_WndProc.h" />
+    <ClInclude Include="src\App\Hooks\CTFGameRules_ShouldCollide.h" />
     <ClInclude Include="src\App\Hooks\ISteamUser_GetVoice.h" />
     <ClInclude Include="src\SDK\Helpers\AimUtils\AimUtils.h" />
     <ClInclude Include="src\SDK\Helpers\Draw\Draw.h" />

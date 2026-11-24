@@ -35,6 +35,13 @@ class CAimbotHitscan
 	bool m_bOwnedLastTick = false;
 	bool m_bReturnActive = false;
 
+	// acquire delay: hold fire when a valid target appears after an
+	// idle/invalid phase so the spread cone clears cover before the burst
+	// (fractional ticks via curtime - the delay slider lives in Double Tap)
+	bool m_bHadSolution = false;
+	bool m_bAimKeyWasDown = false;
+	float m_flAcquireStartTime = -1.0f;
+
 
 
 	int GetAimHitbox(C_TFWeaponBase* pWeapon);

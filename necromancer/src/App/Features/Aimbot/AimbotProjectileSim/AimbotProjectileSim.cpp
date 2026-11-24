@@ -3,11 +3,12 @@
 #include "../../ProjectileSimulation/ProjectileSimulation.h"
 #include "../../WorldFaces/WorldFaces.h"
 #include "../../Players/Players.h"
-#include "../../EnginePrediction/EnginePrediction.h" // RestoreInfo_t
+#include "../../EnginePrediction/EnginePrediction.h"
+#include "../../LagRecords/LagRecords.h"
 #include "../../CFG.h"
 #include "Ticks.h"
 #include "../../MoveSimDebug/MoveSimDebug.h"
-#include "../../../../Utils/Math/Math.h" // Math::ClampAngles / CalcFov / AngleVectors
+#include "../../../../Utils/Math/Math.h"
 #include "../../../../Utils/Math/SimMath.h"
 #include "../../../../Utils/Hash/FNV1A.h"
 
@@ -15,15 +16,12 @@
 #include <functional>
 #include <numeric>
 
-// Amalgam's grenade auto-detonation quantum (also used by ProjSim lifetime math)
 #ifndef GRENADE_CHECK_INTERVAL
 	#define GRENADE_CHECK_INTERVAL 0.195f
 #endif
 
-// world coordinate extent, used for the underwater priority
 static constexpr float COORD_EXTENT = 32768.f;
 
-// explosion radii (Amalgam's Definitions.h)
 #ifndef TF_ROCKET_RADIUS
 	#define TF_ROCKET_RADIUS 146.f
 #endif
@@ -34,28 +32,23 @@ static constexpr float COORD_EXTENT = 32768.f;
 	#define JAR_EXPLODE_RADIUS 200.f
 #endif
 
-// Euler's number (Amalgam's Math::E)
 static constexpr float MATH_E = 2.718281828459f;
 
-// Shoot position via the ported Ticks (accounts for predicted ducking), with a
-// fallback for the first ticks before it has saved a position
 static Vec3 GetShootPos(C_TFPlayer* pLocal)
 {
 	Vec3 vPos = F::ProjectileTicks->GetShootPos();
 	return vPos.IsZero() ? pLocal->GetShootPos() : vPos;
 }
 
-static matrix3x4_t* GetEntityBones(C_BaseEntity* pEntity)
+static bool GetArrowBones(C_BaseEntity* pEntity, matrix3x4_t* pOut)
 {
 	if (!pEntity || !IsPlayer(pEntity))
-		return nullptr;
+		return false;
 
-	static matrix3x4_t bones[128];
-	if (pEntity->As<C_TFPlayer>()->SetupBones(bones, 128, BONE_USED_BY_HITBOX, I::GlobalVars->curtime))
-		return bones;
-
-	return nullptr;
+	return pEntity->As<C_TFPlayer>()->SetupBones(pOut, 128, BONE_USED_BY_HITBOX, I::GlobalVars->curtime) != 0;
 }
+
+static float ArrowScanHeadMargin(C_TFPlayer* pVictim, matrix3x4_t* aBones, const Vec3& vScanStart, const Vec3& vScanEnd);
 
 static float FullFraction(const Vec3& vDir, const CGameTrace& trace)
 {
@@ -98,7 +91,6 @@ static void GetHitboxInfoFromBones(C_BaseAnimating* pEntity, matrix3x4_t* pBones
 		Math::VectorTransform((pBox->bbmin + pBox->bbmax) * 0.5f, pBones[pBox->bone], *pCenter);
 }
 
-// Amalgam's ArmTime: sticky arm time when the UseArmTime modifier is set
 static float ArmTime(C_TFWeaponBase* pWeapon)
 {
 	if (ProjectileModifierFlags() & ModifiersEnum::UseArmTime && pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)
@@ -156,9 +148,6 @@ static int GetHitboxPriority(int nHitbox, Target_t& tTarget, Info_t& tInfo, C_Ba
 			else
 				bHeadshot = pProjectile->GetClassId() == ETFClassIds::CTFProjectile_Arrow && SDKUtils::CanHeadshot(pProjectile->As<C_TFProjectile_Arrow>());
 
-			// Amalgam also runs this for the bow; the charge damage check only
-			// makes sense for the sticky launcher, so gate it on the weapon
-			// instead of reading pipebomb netvars off whatever we hold
 			if (ProjectileHitboxFlags() & HitboxesEnum::BodyaimIfLethal
 				&& bHeadshot && !pProjectile && tInfo.m_pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER
 				&& tInfo.m_pWeapon->m_hOwner().GetEntryIndex() == I::EngineClient->GetLocalPlayer())
@@ -170,7 +159,7 @@ static int GetHitboxPriority(int nHitbox, Target_t& tTarget, Info_t& tInfo, C_Ba
 				if (flDamage >= tTarget.m_pEntity->As<C_TFPlayer>()->m_iHealth())
 					bHeadshot = false;
 
-				if (tInfo.m_pLocal->IsCritBoosted()) // for reliability
+				if (tInfo.m_pLocal->IsCritBoosted())
 					bHeadshot = false;
 			}
 		}
@@ -196,9 +185,7 @@ static int GetHitboxPriority(int nHitbox, Target_t& tTarget, Info_t& tInfo, C_Ba
 	return -1;
 }
 
-// Amalgam's Huntsman head point: bone-accurate head center shifted by the
-// aim-bias vars, clamped into the bbox
-Directs_t CAimbotProjectileSim::GetDirects()
+Directs_t CAimbotProjectileSim::GetDirects(int iDirectTier)
 {
 	Directs_t mDirects = {};
 
@@ -222,34 +209,203 @@ Directs_t CAimbotProjectileSim::GetDirects()
 		case BOUNDS_HEAD:
 			if (tTarget.m_nAimedHitbox == HITBOX_HEAD)
 			{
-				auto aBones = GetEntityBones(tTarget.m_pEntity);
-				if (!aBones)
+				m_bArrowBonesValid = GetArrowBones(tTarget.m_pEntity, m_aArrowBones);
+				if (!m_bArrowBonesValid)
 					break;
+				auto* aBones = m_aArrowBones;
 
 				Vec3 vCenter, vBBoxMins, vBBoxMaxs;
 				GetHitboxInfoFromBones(tTarget.m_pEntity->As<C_BaseAnimating>(), aBones, HITBOX_HEAD, &vCenter, &vBBoxMins, &vBBoxMaxs);
-				Vec3 vOff = vCenter + (vBBoxMins + vBBoxMaxs) / 2 - tTarget.m_pEntity->m_vecOrigin();
+				const bool bBow = m_tInfo.m_pWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW;
 
-				float flLow = 0.f;
-				const Vec3 vDelta = tTarget.m_vPos + m_tInfo.m_vTargetEye - m_tInfo.m_vLocalEye;
-				if (vDelta.z > 0)
+				if (bBow && iDirectTier == 0)
 				{
-					const float flXY = vDelta.Length2D();
-					if (flXY)
-						flLow = Math::RemapVal(vDelta.z / flXY, 0.f, 0.5f, 0.f, 1.f);
-					else
-						flLow = 1.f;
+					Vec3 vOff = vCenter + (vBBoxMins + vBBoxMaxs) / 2 - tTarget.m_pEntity->m_vecOrigin();
+					float flLow = 0.f;
+					const Vec3 vDelta = tTarget.m_vPos + m_tInfo.m_vTargetEye - m_tInfo.m_vLocalEye;
+					if (vDelta.z > 0)
+					{
+						const float flXY = vDelta.Length2D();
+						if (flXY)
+							flLow = Math::RemapVal(vDelta.z / flXY, 0.f, 0.5f, 0.f, 1.f);
+						else
+							flLow = 1.f;
+					}
+
+					const float flLerp = (50.f + (100.f - 50.f) * flLow) / 100.f;
+					vOff.z = vOff.z + (vMaxs.z - vOff.z) * flLerp;
+					vOff.x = std::clamp(vOff.x, vMins.x + 5.f, vMaxs.x - 5.f);
+					vOff.y = std::clamp(vOff.y, vMins.y + 5.f, vMaxs.y - 5.f);
+					vOff.z = std::clamp(vOff.z, vMins.z + 5.f, vMaxs.z - 5.f);
+					mDirects[iPriority] = { vOff, iFlags };
+					break;
 				}
 
-				const float flLerp = (50.f + (100.f - 50.f) * flLow) / 100.f;
-				const float flAdd = 0.f + (0.f - 0.f) * flLow;
-				vOff.z += flAdd;
-				vOff.z = vOff.z + (vMaxs.z - vOff.z) * flLerp;
+				if (bBow && iDirectTier == 1)
+				{
+					const auto pHDR = I::ModelInfoClient->GetStudiomodel(tTarget.m_pEntity->GetModel());
+					const auto pSet = pHDR ? pHDR->pHitboxSet(tTarget.m_pEntity->As<C_BaseAnimating>()->m_nHitboxSet()) : nullptr;
+					if (!pSet || HITBOX_HEAD >= pSet->numhitboxes)
+						break;
+					const int nHeadBone = pSet->pHitbox(HITBOX_HEAD)->bone;
+					if (nHeadBone < 0 || nHeadBone >= 128)
+						break;
+
+					mDirects[iPriority] = { vCenter - tTarget.m_pEntity->m_vecOrigin(), iFlags, true };
+					const Vec3 vLocalCenter = (vBBoxMins + vBBoxMaxs) * 0.5f;
+					const Vec3 vHalfExtent = (vBBoxMaxs - vBBoxMins) * 0.5f;
+					int iVariant = 0;
+					for (int a = 0; a < 3; a++)
+					{
+						for (int s = 0; s < 2; s++)
+						{
+							Vec3 vLocal = vLocalCenter;
+							vLocal[a] += (s ? 1.f : -1.f) * vHalfExtent[a] * 0.4f;
+							Vec3 vWorld;
+							Math::VectorTransform(vLocal, aBones[nHeadBone], vWorld);
+							mDirects[iPriority + 100 * ++iVariant] = { vWorld - tTarget.m_pEntity->m_vecOrigin(), iFlags, true };
+						}
+					}
+					break;
+				}
+
+				Vec3 vOff = vCenter - tTarget.m_pEntity->m_vecOrigin();
+				if (!bBow)
+				{
+					float flLow = 0.f;
+					const Vec3 vDelta = tTarget.m_vPos + m_tInfo.m_vTargetEye - m_tInfo.m_vLocalEye;
+					if (vDelta.z > 0)
+					{
+						const float flXY = vDelta.Length2D();
+						if (flXY)
+							flLow = Math::RemapVal(vDelta.z / flXY, 0.f, 0.5f, 0.f, 1.f);
+						else
+							flLow = 1.f;
+					}
+
+					const float flLerp = (50.f + (100.f - 50.f) * flLow) / 100.f;
+					vOff.z = vOff.z + (vMaxs.z - vOff.z) * flLerp;
+				}
 
 				vOff.x = std::clamp(vOff.x, vMins.x + 5.f, vMaxs.x - 5.f);
 				vOff.y = std::clamp(vOff.y, vMins.y + 5.f, vMaxs.y - 5.f);
 				vOff.z = std::clamp(vOff.z, vMins.z + 5.f, vMaxs.z - 5.f);
-				mDirects[iPriority] = { vOff, iFlags };
+				if (!bBow)
+					mDirects[iPriority] = { vOff, iFlags };
+
+				if (m_tInfo.m_pWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW)
+				{
+					const auto pHDR = I::ModelInfoClient->GetStudiomodel(tTarget.m_pEntity->GetModel());
+					const auto pSet = pHDR ? pHDR->pHitboxSet(tTarget.m_pEntity->As<C_BaseAnimating>()->m_nHitboxSet()) : nullptr;
+					if (pSet && HITBOX_HEAD < pSet->numhitboxes)
+					{
+						const int nHeadBone = pSet->pHitbox(HITBOX_HEAD)->bone;
+						if (nHeadBone >= 0 && nHeadBone < 128)
+						{
+							int iVariant = 0;
+							constexpr float flCol[2] = { 0.3f, 0.7f };
+							constexpr float flRow[2] = { 0.5f, 0.78f };
+							Vec3 vHeadRel(aBones[nHeadBone][0][3], aBones[nHeadBone][1][3], aBones[nHeadBone][2][3]);
+							vHeadRel -= tTarget.m_vPos;
+							std::vector<std::tuple<Vec3, float, float>> vBBoxPoints;
+							for (int f = 0; f < 5; f++)
+							{
+								for (int cA = 0; cA < 2; cA++)
+								{
+									for (int cB = 0; cB < 2; cB++)
+									{
+										const float flA = flCol[cA];
+										const float flB = flRow[cB];
+										Vec3 vOff;
+										switch (f)
+										{
+										case 0: vOff = Vec3(vMaxs.x, vMins.y + (vMaxs.y - vMins.y) * flA, vMins.z + (vMaxs.z - vMins.z) * flB); break;
+										case 1: vOff = Vec3(vMins.x, vMins.y + (vMaxs.y - vMins.y) * flA, vMins.z + (vMaxs.z - vMins.z) * flB); break;
+										case 2: vOff = Vec3(vMins.x + (vMaxs.x - vMins.x) * flA, vMaxs.y, vMins.z + (vMaxs.z - vMins.z) * flB); break;
+										case 3: vOff = Vec3(vMins.x + (vMaxs.x - vMins.x) * flA, vMins.y, vMins.z + (vMaxs.z - vMins.z) * flB); break;
+										case 4: vOff = Vec3(vMins.x + (vMaxs.x - vMins.x) * flA, vMins.y + (vMaxs.y - vMins.y) * flB, vMaxs.z); break;
+										}
+										vBBoxPoints.push_back({ vOff, -1.f, 0.f });
+									}
+								}
+
+								Vec3 vFaceCenter;
+								switch (f)
+								{
+								case 0: vFaceCenter = Vec3(vMaxs.x, std::clamp(vHeadRel.y, vMins.y + 2.f, vMaxs.y - 2.f), std::clamp(vHeadRel.z, vMins.z + 2.f, vMaxs.z - 2.f)); break;
+								case 1: vFaceCenter = Vec3(vMins.x, std::clamp(vHeadRel.y, vMins.y + 2.f, vMaxs.y - 2.f), std::clamp(vHeadRel.z, vMins.z + 2.f, vMaxs.z - 2.f)); break;
+								case 2: vFaceCenter = Vec3(std::clamp(vHeadRel.x, vMins.x + 2.f, vMaxs.x - 2.f), vMaxs.y, std::clamp(vHeadRel.z, vMins.z + 2.f, vMaxs.z - 2.f)); break;
+								case 3: vFaceCenter = Vec3(std::clamp(vHeadRel.x, vMins.x + 2.f, vMaxs.x - 2.f), vMins.y, std::clamp(vHeadRel.z, vMins.z + 2.f, vMaxs.z - 2.f)); break;
+								case 4: vFaceCenter = Vec3(std::clamp(vHeadRel.x, vMins.x + 2.f, vMaxs.x - 2.f), std::clamp(vHeadRel.y, vMins.y + 2.f, vMaxs.y - 2.f), vMaxs.z); break;
+								}
+
+								constexpr int nPlus[5][2] = { { 0, 0 }, { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 } };
+								for (auto& [nDU, nDV] : nPlus)
+								{
+									Vec3 vOff = vFaceCenter;
+									switch (f)
+									{
+									case 0: case 1: vOff.y += nDU * 8.f; vOff.z += nDV * 8.f; break;
+									case 2: case 3: vOff.x += nDU * 8.f; vOff.z += nDV * 8.f; break;
+									case 4: vOff.x += nDU * 8.f; vOff.y += nDV * 8.f; break;
+									}
+									vBBoxPoints.push_back({ vOff, -1.f, 0.f });
+								}
+							}
+
+							for (auto& [vOff, flMargin, flDistSq] : vBBoxPoints)
+							{
+								const Vec3 vPoint = tTarget.m_vPos + vOff;
+								const Vec3 vTo = vPoint - m_tInfo.m_vLocalEye;
+								if (vTo.IsZero())
+									continue;
+								flMargin = ArrowScanHeadMargin(tTarget.m_pEntity->As<C_TFPlayer>(), aBones, m_tInfo.m_vLocalEye, vPoint + vTo.Normalized() * 16.0f);
+								flDistSq = vTo.LengthSqr();
+							}
+
+							std::sort(vBBoxPoints.begin(), vBBoxPoints.end(), [](const auto& a, const auto& b)
+								{
+									if (std::get<1>(a) != std::get<1>(b))
+										return std::get<1>(a) > std::get<1>(b);
+									return std::get<2>(a) < std::get<2>(b);
+								});
+							for (auto& [vOff, flMargin, flDistSq] : vBBoxPoints)
+							{
+								if (flMargin < 0.f || ++iVariant > 12)
+									break;
+								mDirects[iPriority + 100 * iVariant] = { vOff, iFlags, true };
+							}
+
+							for (int h = 0; h < 2; h++)
+							{
+								const Vec3 vWorld = vCenter + Vec3(0.f, 0.f, (h + 1) * 2.0f);
+								mDirects[iPriority + 100 * ++iVariant] = { vWorld - tTarget.m_pEntity->m_vecOrigin(), iFlags, true };
+							}
+
+							for (int h = 0; h < 5; h++)
+							{
+								const Vec3 vWorld = vCenter + Vec3(0.f, 0.f, 6.0f + h * 6.0f);
+								mDirects[iPriority + 100 * ++iVariant] = { vWorld - tTarget.m_pEntity->m_vecOrigin(), iFlags, true };
+							}
+
+							for (int h = 5; h < 9; h++)
+							{
+								const Vec3 vWorld = vCenter + Vec3(0.f, 0.f, (h + 1) * 6.0f);
+								mDirects[iPriority + 100 * ++iVariant] = { vWorld - tTarget.m_pEntity->m_vecOrigin(), iFlags, true };
+							}
+
+							for (int c = 0; c < 8; c++)
+							{
+								const Vec3 vLocal(c & 1 ? vBBoxMins.x : vBBoxMaxs.x,
+									c & 2 ? vBBoxMins.y : vBBoxMaxs.y,
+									c & 4 ? vBBoxMins.z : vBBoxMaxs.z);
+								Vec3 vWorld;
+								Math::VectorTransform(vLocal, aBones[nHeadBone], vWorld);
+								mDirects[iPriority + 100 * ++iVariant] = { vWorld - tTarget.m_pEntity->m_vecOrigin(), iFlags, true };
+							}
+						}
+					}
+				}
 			}
 			else
 				mDirects[iPriority] = { Vec3(0, 0, vMaxs.z - 5.f), iFlags };
@@ -280,7 +436,6 @@ Splashes_t CAimbotProjectileSim::GetSplashes()
 	return vSplashes;
 }
 
-// Fibonacci sphere points around the target (Amalgam's ComputePoints)
 static std::vector<Vec3> ComputePoints(float flRadius, int iSamples)
 {
 	std::vector<Vec3> vPoints = { { Vec3(0.f, 0.f, -1.f) * flRadius } };
@@ -292,7 +447,7 @@ static std::vector<Vec3> ComputePoints(float flRadius, int iSamples)
 	const float flRotateX = SDKUtils::StdRandomFloat(0.f, 360.f);
 	const float flRotateY = SDKUtils::StdRandomFloat(0.f, 360.f);
 
-	constexpr float MATH_PI = 3.14159265358979f; // not "PI" - Utils/Math/Math.h #defines it
+	constexpr float MATH_PI = 3.14159265358979f;
 	const float a = MATH_PI * (3.f - sqrtf(5.f));
 	for (int n = 0; n < iSamples; n++)
 	{
@@ -311,11 +466,8 @@ static std::vector<Vec3> ComputePoints(float flRadius, int iSamples)
 	return vPoints;
 }
 
-// Amalgam's HandleTrace: validate a candidate splash point with an outward
-// hull trace plus (for points behind the target) inward hull traces
 static void HandleTrace(const Vec3& vPoint, std::vector<Setup_t>& vPoints, const Vec3& vTargetEye, Info_t& tInfo, std::function<bool()> fCheckPointTrace, std::function<bool()> fCheckPointAir, CGameTrace& trace, ITraceFilter& filter)
 {
-	// out
 	SDKUtils::TraceHull(vTargetEye, vPoint, -tInfo.m_vHull, tInfo.m_vHull, MASK_SOLID, &filter, &trace);
 
 	if (fCheckPointAir())
@@ -324,7 +476,6 @@ static void HandleTrace(const Vec3& vPoint, std::vector<Setup_t>& vPoints, const
 	if (fCheckPointTrace())
 		vPoints.emplace_back(trace.endpos);
 
-	// in
 	if ((tInfo.m_vLocalEye - vTargetEye).Dot(vTargetEye - vPoint) > 0.f)
 		return;
 
@@ -338,9 +489,6 @@ static void HandleTrace(const Vec3& vPoint, std::vector<Setup_t>& vPoints, const
 		vPoints.emplace_back(trace.endpos);
 }
 
-// Amalgam's HandleFace: sample splash points off a cached world-geometry
-// polygon - closest point, random edge points and random interior points,
-// pushed out along the face normal so the projectile lands on the surface
 static float s_flTotal = 0.f;
 static void HandleFace(Face_t& tFace, std::vector<Setup_t>& vPoints, float flDensity, float flRadius, float flCutoff, const Vec3& vTargetEye, const Vec3& vTargetCenter, const Vec3& vTargetOrigin, Info_t& tInfo, CGameTrace& trace, ITraceFilter& filter)
 {
@@ -367,32 +515,19 @@ static void HandleFace(Face_t& tFace, std::vector<Setup_t>& vPoints, float flDen
 		if (!iSamples)
 			continue;
 
-		// don't particularly like the hacky random epsilons
 		int iFaceClosest = SDKUtils::StdRandomInt(iSamples < 2 ? 0 : iSamples < 4 ? 1 : 2, iSamples < 2 ? 1 : 2);
-		//int iEdgeClosest = SDKUtils::StdRandomInt(iSamples < 8 ? 0 : iSamples < 16 ? 1 : 2, iSamples < 8 ? 1 : 2); // eats up a bit too much performance for my liking
 		int iEdgeRandom = SDKUtils::StdRandomInt(iSamples < 8 ? 0 : iSamples < 16 ? 1 : 2, iSamples < 3 ? 0 : iSamples < 12 ? 1 : 2);
-		iEdgeRandom += iFaceClosest; //iEdgeClosest += iFaceClosest, iEdgeRandom += iEdgeClosest; //, iSamples += iEdgeRandom;
+		iEdgeRandom += iFaceClosest;
 		for (int s = 0; s < iSamples; s++)
 		{
 			Vec3 vPoint, vNormal = tFace.m_vNormal; bool bInside = true;
-			if (s < iFaceClosest) // closest point
+			if (s < iFaceClosest)
 			{
 				float flEpsilon = s == 0 && (tFace.m_iType == FaceTypeEnum::BoxBrush || iFaceClosest != 1 || SDKUtils::StdRandomBool()) ? CALC_EPSILON : DIST_EPSILON;
 				vPoint = Math::ClosestPointOnTriangle(vTargetOrigin, vVertex1, vVertex2, vVertex3, &bInside);
 				vPoint += Vec3(SDKUtils::StdRandomFloat(-flEpsilon, flEpsilon), SDKUtils::StdRandomFloat(-flEpsilon, flEpsilon), SDKUtils::StdRandomFloat(-flEpsilon, flEpsilon));
 			}
-			//else if (s < iEdgeClosest) // closest point on edge
-			//{
-			//	float flEpsilon = SDKUtils::StdRandomBool() ? CALC_EPSILON : DIST_EPSILON; bInside = false;
-			//	switch (SDKUtils::StdRandomInt(0, 2))
-			//	{
-			//	case 0: vPoint = Math::ClosestPointOnLine(vTargetOrigin, vVertex1, vVertex2); break;
-			//	case 1: vPoint = Math::ClosestPointOnLine(vTargetOrigin, vVertex2, vVertex3); break;
-			//	case 2: vPoint = Math::ClosestPointOnLine(vTargetOrigin, vVertex3, vVertex1); break;
-			//	}
-			//	vPoint += { SDKUtils::StdRandomFloat(-flEpsilon, flEpsilon), SDKUtils::StdRandomFloat(-flEpsilon, flEpsilon), SDKUtils::StdRandomFloat(-flEpsilon, flEpsilon) };
-			//}
-			else if (s < iEdgeRandom) // random point on edge
+			else if (s < iEdgeRandom)
 			{
 				float flEpsilon = SDKUtils::StdRandomBool() ? CALC_EPSILON : DIST_EPSILON; bInside = false;
 				switch (SDKUtils::StdRandomInt(0, 2))
@@ -403,7 +538,7 @@ static void HandleFace(Face_t& tFace, std::vector<Setup_t>& vPoints, float flDen
 				}
 				vPoint += Vec3(SDKUtils::StdRandomFloat(-flEpsilon, flEpsilon), SDKUtils::StdRandomFloat(-flEpsilon, flEpsilon), SDKUtils::StdRandomFloat(-flEpsilon, flEpsilon));
 			}
-			else // random point on face
+			else
 			{
 				float flRandom1 = SDKUtils::StdRandomFloat(), flRandom2 = SDKUtils::StdRandomFloat();
 				if (flRandom1 + flRandom2 > 1)
@@ -471,12 +606,6 @@ void CAimbotProjectileSim::SetupSplashPoints(Vec3& vOrigin, std::vector<Setup_t>
 		}
 	};
 
-	// Trace mode samples a sphere around the target with hull traces; Face
-	// mode (default) samples the map's own collision geometry through
-	// F::WorldFaces (Amalgam's F::World port) instead - in Face mode the
-	// sphere contributes only its straight-down center point, exactly like
-	// Amalgam: the remaining sphere points would just offer candidates on
-	// geometry the face samples already cover, further from the enemy
 	const bool bFaceMode = CFG::Aimbot_Amalgam_Projectile_SplashMode == SplashModeEnum::Face;
 	int iPoints = bFaceMode && !bAirSplash ? 0
 		: !m_tInfo.m_flGravity ? CFG::Aimbot_Amalgam_Projectile_SplashPoints : CFG::Aimbot_Amalgam_Projectile_SplashPoints;
@@ -509,7 +638,7 @@ void CAimbotProjectileSim::SetupSplashPoints(Vec3& vOrigin, std::vector<Setup_t>
 			{
 				if (bAirSplash && !trace.DidHit())
 					vSplashPoints.emplace_back(vPoints[i] * SDKUtils::StdRandomFloat(0.f, 1.f) + vTargetCenter, PointTypeEnum::Air);
-				if (bFaceMode && i) // Amalgam skips non-center sphere points in Face mode
+				if (bFaceMode && i)
 					return true;
 				return !trace.DidHit();
 			};
@@ -524,7 +653,6 @@ void CAimbotProjectileSim::SetupSplashPoints(Vec3& vOrigin, std::vector<Setup_t>
 		}
 	}
 
-	// Face
 	if (float flDensity = !m_tInfo.m_flGravity ? CFG::Aimbot_Amalgam_Projectile_SplashDensity_Direct : CFG::Aimbot_Amalgam_Projectile_SplashDensity_Arc;
 		bFaceMode && flDensity)
 	{
@@ -559,7 +687,7 @@ void CAimbotProjectileSim::SetupSplashPoints(Vec3& vOrigin, std::vector<Setup_t>
 	}
 
 	if (vSplashPoints.size() > 1)
-	{	// Amalgam shuffles everything but the first point (std::shuffle)
+	{
 		for (int i = int(vSplashPoints.size()) - 1; i > 0; i--)
 			std::swap(vSplashPoints[i], vSplashPoints[SDKUtils::StdRandomInt(1, i)]);
 	}
@@ -578,7 +706,7 @@ std::vector<Point_t> CAimbotProjectileSim::GetSplashPoints(Vec3 vOrigin, std::ve
 	const float flRadiusSqr = powf(m_tInfo.m_flRadius, 2);
 	float flRadiusAirSqr = flRadiusSqr;
 	if (ProjectileModifierFlags() & ModifiersEnum::AirSplash && !m_tInfo.m_pProjectile && m_tInfo.m_pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)
-	{	// sticky airdet radius ramps in over tf_sticky_radius_ramp_time
+	{
 		static auto tf_grenadelauncher_livetime = I::CVar->FindVar("tf_grenadelauncher_livetime");
 		static auto tf_sticky_radius_ramp_time = I::CVar->FindVar("tf_sticky_radius_ramp_time");
 		static auto tf_sticky_airdet_radius = I::CVar->FindVar("tf_sticky_airdet_radius");
@@ -651,9 +779,6 @@ std::vector<Point_t> CAimbotProjectileSim::GetSplashPoints(Vec3 vOrigin, std::ve
 	return vPoints;
 }
 
-// vphysics drag compensation factors per projectile model. Amalgam calls these
-// "stupid magic values" themselves - ported verbatim so pipes land where
-// Amalgam's do.
 static float GetDrag(float flVelocity, ProjectileInfo* pInfo, int iFlags)
 {
 	if (!(iFlags & CalculateFlagsEnum::AccountDrag))
@@ -675,13 +800,13 @@ static float GetDrag(float flVelocity, ProjectileInfo* pInfo, int iFlags)
 			{
 			case FNV1A::Hash32Const("models/weapons/w_models/w_grenade_grenadelauncher.mdl"):
 				if (!SDKUtils::AttribHookValue(0, "grenade_no_spin", pInfo->m_pWeapon))
-					return Math::RemapVal(flVelocity, 1217.f, k_flMaxVelocity, 0.120f, 0.200f); // 0.120 normal, 0.200 capped, 0.300 v3000
+					return Math::RemapVal(flVelocity, 1217.f, k_flMaxVelocity, 0.120f, 0.200f);
 				else
-					return Math::RemapVal(flVelocity, 1217.f, k_flMaxVelocity, 0.060f, 0.085f); // 0.060 normal, 0.085 capped, 0.120 v3000
+					return Math::RemapVal(flVelocity, 1217.f, k_flMaxVelocity, 0.060f, 0.085f);
 			case FNV1A::Hash32Const("models/weapons/w_models/w_cannonball.mdl"):
-				return Math::RemapVal(flVelocity, 1454.f, k_flMaxVelocity, 0.385f, 0.530f); // 0.385 normal, 0.530 capped, 0.790 v3000
+				return Math::RemapVal(flVelocity, 1454.f, k_flMaxVelocity, 0.385f, 0.530f);
 			case FNV1A::Hash32Const("models/weapons/w_models/w_stickybomb.mdl"):
-				return Math::RemapVal(flVelocity, 922.f, k_flMaxVelocity, 0.090f, 0.190f); // 0.085 low, 0.190 capped, 0.230 v2400
+				return Math::RemapVal(flVelocity, 922.f, k_flMaxVelocity, 0.090f, 0.190f);
 			case FNV1A::Hash32Const("models/workshop_partner/weapons/c_models/c_sd_cleaver/c_sd_cleaver.mdl"):
 				return 0.310f;
 			case FNV1A::Hash32Const("models/weapons/w_models/w_baseball.mdl"):
@@ -739,8 +864,6 @@ static float GetDrag(float flVelocity, ProjectileInfo* pInfo, int iFlags)
 	return !(iFlags & CalculateFlagsEnum::LobAngle) ? flRegularDrag : flLobDrag;
 }
 
-// Ballistic angle from vLocalPos to vTargetPos, with drag compensation and
-// the high-arc (lob) solution when flagged
 static bool GetAngle(const Vec3& vLocalPos, const Vec3& vTargetPos, int iFlags, Info_t& tInfo, ProjectileInfo* pInfo, float& flPitch, float& flYaw, float& flTime)
 {
 	float flVelocity = tInfo.m_flVelocity;
@@ -767,7 +890,7 @@ static bool GetAngle(const Vec3& vLocalPos, const Vec3& vTargetPos, int iFlags, 
 			flPitch = atan((powf(flVelocity, 2) + sqrt(flRoot)) / (flGrav * flDist));
 
 		if (flDrag)
-		{	// drag is handled in a stupid manner, would like something better than this
+		{
 			float flTime = flDist / (flVelocity * cos(flPitch));
 			flVelocity *= 1 - flDrag * flTime;
 
@@ -790,16 +913,13 @@ static bool GetAngle(const Vec3& vLocalPos, const Vec3& vTargetPos, int iFlags, 
 	return true;
 }
 
-// Amalgam's CalculateAngle: basic trajectory pass, then (when the weapon
-// spawns the projectile off the eye) a second pass from the real spawn
-// position including the spawn-clip correction
 void CAimbotProjectileSim::CalculateAngle(const Vec3& vLocalPos, const Vec3& vTargetPos, int iSimTime, Solution_t& tOut, int iFlags, int iTolerance, float flRoll)
 {
 	if (tOut.m_iCalculated != CalculatedEnum::Pending)
 		return;
 
 	float flPitch, flYaw;
-	{	// basic trajectory pass
+	{
 		if (!GetAngle(vLocalPos, vTargetPos, iFlags, m_tInfo, &m_tProjInfo, flPitch, flYaw, tOut.m_flTime))
 		{
 			tOut.m_iCalculated = CalculatedEnum::Bad;
@@ -824,8 +944,6 @@ void CAimbotProjectileSim::CalculateAngle(const Vec3& vLocalPos, const Vec3& vTa
 		return;
 	}
 
-	// Amalgam's ProjSimEnum::Redirect (setup clip) maps to our ProjSim's
-	// Trace flag, which re-traces the spawn position at the aim angles
 	const int iSimFlags = (iFlags & CalculateFlagsEnum::SetupClip ? ProjSimEnum::Trace : ProjSimEnum::None)
 		| ProjSimEnum::NoRandomAngles | ProjSimEnum::PredictCmdNum;
 	m_tProjInfo = {};
@@ -835,14 +953,14 @@ void CAimbotProjectileSim::CalculateAngle(const Vec3& vLocalPos, const Vec3& vTa
 		return;
 	}
 
-	{	// calculate trajectory from projectile origin
+	{
 		if (!GetAngle(m_tProjInfo.m_vPos, vTargetPos, iFlags, m_tInfo, &m_tProjInfo, tOut.m_flPitch, tOut.m_flYaw, tOut.m_flTime))
 		{
 			tOut.m_iCalculated = CalculatedEnum::Bad;
 			return;
 		}
 
-		{	// correct yaw
+		{
 			Vec3 vShootPos = (m_tProjInfo.m_vPos - vLocalPos).To2D();
 			Vec3 vTarget = vTargetPos - vLocalPos;
 			Vec3 vForward; Math::AngleVectors(m_tProjInfo.m_vAng, &vForward); vForward.Normalize2D();
@@ -857,7 +975,7 @@ void CAimbotProjectileSim::CalculateAngle(const Vec3& vLocalPos, const Vec3& vTa
 			}
 		}
 
-		{	// correct pitch
+		{
 			if (m_tInfo.m_flGravity)
 			{
 				flPitch -= m_tProjInfo.m_vAng.x;
@@ -884,30 +1002,230 @@ void CAimbotProjectileSim::CalculateAngle(const Vec3& vLocalPos, const Vec3& vTa
 	tOut.m_iCalculated = (iTolerance != -1 ? abs(iTimeTo - iSimTime) <= iTolerance : iTimeTo <= iSimTime) ? CalculatedEnum::Good : CalculatedEnum::Time;
 }
 
-// Amalgam's TestAngle: simulates the projectile along the solution angle and
-// requires the first contact to be the point itself (direct), near the point
-// on a static surface (geometry), or near the point in mid-air (airdet)
-bool CAimbotProjectileSim::TestAngle(const Vec3& vPoint, const Vec3& vAngles, int iSimTime, int iType, int iFlags, bool bSecondTest)
+
+static float ArrowRayBoxEntry(const Vec3& vStart, const Vec3& vDir, float flLen, const Vec3& vMins, const Vec3& vMaxs)
+{
+	float flEnter = 0.0f;
+	float flExit = flLen;
+	for (int a = 0; a < 3; a++)
+	{
+		const float flD = vDir[a];
+		if (fabsf(flD) < 1e-8f)
+		{
+			if (vStart[a] < vMins[a] || vStart[a] > vMaxs[a])
+				return -1.0f;
+			continue;
+		}
+
+		float flNear = (vMins[a] - vStart[a]) / flD;
+		float flFar = (vMaxs[a] - vStart[a]) / flD;
+		if (flNear > flFar)
+			std::swap(flNear, flFar);
+
+		flEnter = std::max(flEnter, flNear);
+		flExit = std::min(flExit, flFar);
+	}
+
+	if (flEnter > flExit)
+		return -1.0f;
+	return flEnter;
+}
+
+static Vec3 ArrowInverseTransform(const Vec3& v, const matrix3x4_t& m)
+{
+	const Vec3 vDelta = v - Vec3(m[0][3], m[1][3], m[2][3]);
+	return Vec3(
+		vDelta.Dot(Vec3(m[0][0], m[1][0], m[2][0])),
+		vDelta.Dot(Vec3(m[0][1], m[1][1], m[2][1])),
+		vDelta.Dot(Vec3(m[0][2], m[1][2], m[2][2])));
+}
+
+static float ArrowScanHeadMargin(C_TFPlayer* pVictim, matrix3x4_t* aBones, const Vec3& vScanStart, const Vec3& vScanEnd)
+{
+	if (!pVictim || !pVictim->GetModel())
+		return -1.f;
+
+	const auto pHDR = I::ModelInfoClient->GetStudiomodel(pVictim->GetModel());
+	if (!pHDR)
+		return -1.f;
+	const auto pSet = pHDR->pHitboxSet(pVictim->m_nHitboxSet());
+	if (!pSet || !pSet->numhitboxes)
+		return -1.f;
+
+	float flClosestDist = std::numeric_limits<float>::max();
+	float flSecondDist = std::numeric_limits<float>::max();
+	int nClosestBox = -1;
+	for (int i = 0; i < pSet->numhitboxes; i++)
+	{
+		const auto pBox = pSet->pHitbox(i);
+		if (!pBox || pBox->bone < 0 || pBox->bone >= 128)
+			continue;
+
+		const Vec3 vLocalStart = ArrowInverseTransform(vScanStart, aBones[pBox->bone]);
+		const Vec3 vLocalEnd = ArrowInverseTransform(vScanEnd, aBones[pBox->bone]);
+		Vec3 vLocalDir = vLocalEnd - vLocalStart;
+		const float flLocalLen = vLocalDir.Length();
+		if (flLocalLen < 1e-8f)
+			continue;
+		vLocalDir /= flLocalLen;
+
+		const float flEntry = ArrowRayBoxEntry(vLocalStart, vLocalDir, flLocalLen, pBox->bbmin, pBox->bbmax);
+		if (flEntry < 0.f)
+			continue;
+		if (flEntry < flClosestDist)
+		{
+			flSecondDist = flClosestDist;
+			flClosestDist = flEntry;
+			nClosestBox = i;
+		}
+		else if (flEntry < flSecondDist)
+			flSecondDist = flEntry;
+	}
+
+	if (nClosestBox < 0 || pSet->pHitbox(nClosestBox)->group != HITGROUP_HEAD)
+		return -1.f;
+	return flSecondDist - flClosestDist;
+}
+
+static int ArrowTouchResolveGroup(C_TFPlayer* pVictim, matrix3x4_t* aBones, const Vec3& vBoneDelta, const Vec3& vTouchOrigin, const Vec3& vVelocity, float flRemainingFraction, int* pOutStep = nullptr, int* pOutBox = nullptr, float* pOutHeadDist = nullptr, float* pOutWinDist = nullptr, float* pOutMargin = nullptr, int* pOutRunnerBox = nullptr)
+{
+	if (!pVictim || !pVictim->GetModel())
+		return HITGROUP_GENERIC;
+
+	const auto pHDR = I::ModelInfoClient->GetStudiomodel(pVictim->GetModel());
+	if (!pHDR)
+		return HITGROUP_GENERIC;
+	const auto pSet = pHDR->pHitboxSet(pVictim->m_nHitboxSet());
+	if (!pSet || !pSet->numhitboxes)
+		return HITGROUP_GENERIC;
+
+	const Vec3 vDir = vVelocity.Normalized();
+	const float flFrameLen = vVelocity.Length() * I::GlobalVars->interval_per_tick * std::clamp(flRemainingFraction, 0.f, 1.f);
+	const Vec3 vShift = vTouchOrigin - vBoneDelta;
+
+	int nDirectBox = -1;
+	float flBestFrac = flFrameLen;
+	float flSecondFrac = flFrameLen;
+	int nSecondBox = -1;
+	for (int i = 0; i < pSet->numhitboxes; i++)
+	{
+		const auto pBox = pSet->pHitbox(i);
+		if (!pBox || pBox->bone < 0 || pBox->bone >= 128)
+			continue;
+		const Vec3 vLocalStart = ArrowInverseTransform(vShift, aBones[pBox->bone]);
+		const Vec3 vLocalEnd = ArrowInverseTransform(vShift + vDir * flFrameLen, aBones[pBox->bone]);
+		Vec3 vLocalDir = vLocalEnd - vLocalStart;
+		const float flLocalLen = vLocalDir.Length();
+		if (flLocalLen < 1e-8f)
+			continue;
+		vLocalDir /= flLocalLen;
+
+		const float flEntry = ArrowRayBoxEntry(vLocalStart, vLocalDir, flLocalLen, pBox->bbmin, pBox->bbmax);
+		if (flEntry < 0.0f)
+			continue;
+		if (i == 0 && pOutHeadDist)
+			*pOutHeadDist = flEntry;
+		if (flEntry < flBestFrac)
+		{
+			flSecondFrac = flBestFrac;
+			nSecondBox = nDirectBox;
+			flBestFrac = flEntry;
+			nDirectBox = i;
+		}
+		else if (flEntry < flSecondFrac)
+		{
+			flSecondFrac = flEntry;
+			nSecondBox = i;
+		}
+	}
+	if (nDirectBox >= 0)
+	{
+		if (pOutStep)
+			*pOutStep = 1;
+		if (pOutBox)
+			*pOutBox = nDirectBox;
+		if (pOutWinDist)
+			*pOutWinDist = flBestFrac;
+		if (pOutMargin)
+			*pOutMargin = flSecondFrac - flBestFrac;
+		if (pOutRunnerBox)
+			*pOutRunnerBox = nSecondBox;
+		return pSet->pHitbox(nDirectBox)->group;
+	}
+
+	const Vec3 vScanStart = vShift - vDir * 16.0f;
+	float flClosestDist = std::numeric_limits<float>::max();
+	float flSecondDist = std::numeric_limits<float>::max();
+	int nClosestBox = -1;
+	nSecondBox = -1;
+	for (int i = 0; i < pSet->numhitboxes; i++)
+	{
+		const auto pBox = pSet->pHitbox(i);
+		if (!pBox || pBox->bone < 0 || pBox->bone >= 128)
+			continue;
+
+		const Vec3 vLocalStart = ArrowInverseTransform(vScanStart, aBones[pBox->bone]);
+		Vec3 vLocalDir = ArrowInverseTransform(vScanStart + vDir * 256.f, aBones[pBox->bone]) - vLocalStart;
+		const float flLocalLen = vLocalDir.Length();
+		if (flLocalLen < 1e-8f)
+			continue;
+		vLocalDir /= flLocalLen;
+
+		const float flEntry = ArrowRayBoxEntry(vLocalStart, vLocalDir, flLocalLen, pBox->bbmin, pBox->bbmax);
+		if (flEntry < 0.f)
+			continue;
+		const float flDist = flEntry;
+		if (i == 0 && pOutHeadDist)
+			*pOutHeadDist = flDist;
+		if (flDist < flClosestDist)
+		{
+			flSecondDist = flClosestDist;
+			flClosestDist = flDist;
+			nClosestBox = i;
+		}
+		else if (flDist < flSecondDist)
+		{
+			flSecondDist = flDist;
+			nSecondBox = i;
+		}
+	}
+	if (pOutWinDist)
+		*pOutWinDist = flClosestDist;
+	if (pOutMargin)
+		*pOutMargin = flSecondDist - flClosestDist;
+	if (pOutRunnerBox)
+		*pOutRunnerBox = nSecondBox;
+	if (nClosestBox >= 0)
+	{
+		if (pOutStep)
+			*pOutStep = 2;
+		if (pOutBox)
+			*pOutBox = nClosestBox;
+		return pSet->pHitbox(nClosestBox)->group;
+	}
+
+	if (pOutStep)
+		*pOutStep = 0;
+	return HITGROUP_GENERIC;
+}
+
+bool CAimbotProjectileSim::TestAngle(const Vec3& vPoint, const Vec3& vAngles, int iSimTime, int iType, int iFlags, bool bSecondTest, bool bStrictHead)
 {
 	auto pLocal = m_tInfo.m_pLocal;
 	auto pWeapon = m_tInfo.m_pWeapon;
 	auto& tTarget = *m_tInfo.m_pTarget;
 
-	// reset per attempt: only the immediately-preceding validation may claim
-	// "blocked by cover" for the neckbreaker roll search
+	const bool bArrowHeadshot = bStrictHead && pWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW
+		&& tTarget.m_nAimedHitbox == HITBOX_HEAD
+		&& tTarget.m_iTargetType == TargetEnum::Player;
+
 	m_bObstructed = false;
 
 	int iSimFlags = ProjSimEnum::Trace | ProjSimEnum::InitCheck
 		| ProjSimEnum::NoRandomAngles | ProjSimEnum::PredictCmdNum;
 	m_tProjInfo = {};
-	// our ported ProjSim rejects some valid spawn positions through InitCheck;
-	// retry without it like the old port did
 	if (!F::ProjSim.GetInfo(pLocal, pWeapon, vAngles, m_tProjInfo, iSimFlags))
-	{
-		if (!F::ProjSim.GetInfo(pLocal, pWeapon, vAngles, m_tProjInfo, ProjSimEnum::Trace | ProjSimEnum::NoRandomAngles | ProjSimEnum::PredictCmdNum))
-			return false;
-		iSimFlags &= ~ProjSimEnum::InitCheck;
-	}
+		return false;
 	if (!F::ProjSim.Initialize(m_tProjInfo))
 		return false;
 
@@ -920,7 +1238,7 @@ bool CAimbotProjectileSim::TestAngle(const Vec3& vPoint, const Vec3& vAngles, in
 	if (iType == PointTypeEnum::Direct && F::AimbotGlobal->FriendlyFire())
 	{
 		switch (pWeapon->GetWeaponID())
-		{	// only weapons that actually hit teammates properly
+		{
 		case TF_WEAPON_ROCKETLAUNCHER:
 		case TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT:
 		case TF_WEAPON_PARTICLE_CANNON:
@@ -930,8 +1248,6 @@ bool CAimbotProjectileSim::TestAngle(const Vec3& vPoint, const Vec3& vAngles, in
 			filter.iPlayer = PLAYER_ALL;
 		}
 	}
-	// heal targets (crossbow bolts, rescue ranger claws) fly at teammates -
-	// the trace must be able to connect with them, enemies still block the bolt
 	if (iType == PointTypeEnum::Direct && tTarget.m_pEntity->m_iTeamNum() == pLocal->m_iTeamNum())
 		filter.iPlayer = PLAYER_ALL;
 	F::ProjSim.SetupTrace(filter, nMask, pWeapon);
@@ -941,9 +1257,6 @@ bool CAimbotProjectileSim::TestAngle(const Vec3& vPoint, const Vec3& vAngles, in
 		SDKUtils::TraceHull(m_tProjInfo.m_vPos, vPoint, -m_tProjInfo.m_vHull, m_tProjInfo.m_vHull, nMask, &filter, &trace);
 		if (FullFraction(m_tProjInfo.m_vPos, vPoint, trace) < 0.999f && trace.m_pEnt != tTarget.m_pEntity)
 		{
-			// straight-line shots (rockets etc.) fail here, before the flight
-			// loop below ever runs - still counts as "cover blocked the shot"
-			// for the neckbreaker roll search
 			m_bObstructed = true;
 			return false;
 		}
@@ -958,6 +1271,12 @@ bool CAimbotProjectileSim::TestAngle(const Vec3& vPoint, const Vec3& vAngles, in
 		: 1;
 
 	const RestoreInfo_t tOriginal = { tTarget.m_pEntity->GetAbsOrigin(), tTarget.m_pEntity->m_vecMins(), tTarget.m_pEntity->m_vecMaxs() };
+
+	matrix3x4_t aVictimBones[128] = {};
+	const bool bVictimBones = bArrowHeadshot && m_bArrowBonesValid;
+	if (bVictimBones)
+		memcpy(aVictimBones, m_aArrowBones, sizeof(aVictimBones));
+
 	tTarget.m_pEntity->SetAbsOrigin(tTarget.m_vPos);
 	tTarget.m_pEntity->m_vecMins() = { std::clamp(tTarget.m_pEntity->m_vecMins().x, -24.f, 0.f), std::clamp(tTarget.m_pEntity->m_vecMins().y, -24.f, 0.f), tTarget.m_pEntity->m_vecMins().z };
 	tTarget.m_pEntity->m_vecMaxs() = { std::clamp(tTarget.m_pEntity->m_vecMaxs().x, 0.f, 24.f), std::clamp(tTarget.m_pEntity->m_vecMaxs().y, 0.f, 24.f), tTarget.m_pEntity->m_vecMaxs().z };
@@ -992,16 +1311,23 @@ bool CAimbotProjectileSim::TestAngle(const Vec3& vPoint, const Vec3& vAngles, in
 			switch (iType)
 			{
 			case PointTypeEnum::Direct:
-				bTarget = trace.m_pEnt == tTarget.m_pEntity, bValid = bTarget && iSimTime - n < iTimingTolerance; break;
+				bTarget = trace.m_pEnt == tTarget.m_pEntity, bValid = bTarget && iSimTime - n < iTimingTolerance;
+				if (bValid && bArrowHeadshot && bVictimBones)
+				{
+					const Vec3 vTouchVel = (vNew - vOld) / I::GlobalVars->interval_per_tick;
+					const Vec3 vBoneDelta = tTarget.m_vPos - tOriginal.m_vOrigin;
+					const int nCenterGroup = ArrowTouchResolveGroup(tTarget.m_pEntity->As<C_TFPlayer>(), aVictimBones, vBoneDelta, trace.endpos, vTouchVel, 1.f - trace.fraction);
+					if (nCenterGroup != HITGROUP_HEAD)
+						bValid = false;
+
+				}
+				break;
 			case PointTypeEnum::Geometry:
 				bValid = trace.endpos.DistToSqr(vPoint) < flRadiusSqr; break;
 			case PointTypeEnum::Air:
 				bValid = !trace.DidHit(); break;
 			}
 
-			// a trace that connected with something other than the point's
-			// purpose means cover blocked the shot - the one failure mode a
-			// muzzle roll can actually route around (timing misses can't)
 			m_bObstructed = bHit && !bTarget;
 
 			if (bValid && iType != PointTypeEnum::Direct)
@@ -1012,7 +1338,7 @@ bool CAimbotProjectileSim::TestAngle(const Vec3& vPoint, const Vec3& vAngles, in
 			}
 
 			if (bValid && true && iTraceInterval != 1)
-			{	// retest the skipped ticks so a wall crossed between intervals voids the hit
+			{
 				CGameTrace trace2 = {}; Vec3 vRetestOld, vRetestNew;
 				int iTicks = int(m_tProjInfo.m_vPath.size());
 				if (m_tInfo.m_flGravity)
@@ -1039,14 +1365,12 @@ bool CAimbotProjectileSim::TestAngle(const Vec3& vPoint, const Vec3& vAngles, in
 							m_tProjInfo.m_vPath.pop_back();
 					}
 
-				// head retest for smooth/assistive aim (Amalgam: closest hitbox
-				// to the impact must actually be the aimed head)
 				if (tTarget.m_nAimedHitbox == HITBOX_HEAD && !bSecondTest
 					&& (AimTypeValue() == AimTypeEnum::Smooth
 					|| AimTypeValue() == AimTypeEnum::Assistive))
 				{
-					auto aBones = GetEntityBones(tTarget.m_pEntity);
-					if (!aBones)
+					matrix3x4_t aRetestBones[128] = {};
+					if (!GetArrowBones(tTarget.m_pEntity, aRetestBones))
 						break;
 
 					auto pModel = tTarget.m_pEntity->As<C_TFPlayer>()->GetModel();
@@ -1064,7 +1388,7 @@ bool CAimbotProjectileSim::TestAngle(const Vec3& vPoint, const Vec3& vAngles, in
 						auto pBox = pSet->pHitbox(nHitbox);
 						if (!pBox) continue;
 
-						Vec3 vCenter; Math::VectorTransform({}, aBones[pBox->bone], vCenter);
+						Vec3 vCenter; Math::VectorTransform({}, aRetestBones[pBox->bone], vCenter);
 
 						const float flDistance = vPos.DistToSqr(vCenter);
 						if (flDistance < flLowestDistance)
@@ -1077,7 +1401,7 @@ bool CAimbotProjectileSim::TestAngle(const Vec3& vPoint, const Vec3& vAngles, in
 				bDidHit = true;
 			}
 			else if (bTarget && iType == PointTypeEnum::Direct && m_tInfo.m_iArmTime)
-			{	// run for more ticks to check for splash
+			{
 				iSimTime = n + iTimingTolerance / 2;
 				iType = PointTypeEnum::Geometry;
 				filter.pSkip = tTarget.m_pEntity;
@@ -1106,7 +1430,7 @@ bool CAimbotProjectileSim::TestAngle(const Vec3& vPoint, const Vec3& vAngles, in
 	return bDidHit;
 }
 
-bool CAimbotProjectileSim::HandlePoint(const Vec3& vOrigin, int iSimTime, float flPitch, float flYaw, float flTime, const Vec3& vPoint, int iType, int iFlags)
+bool CAimbotProjectileSim::HandlePoint(const Vec3& vOrigin, int iSimTime, float flPitch, float flYaw, float flTime, const Vec3& vPoint, int iType, int iFlags, bool bStrictHead)
 {
 	bool bReturn = false;
 
@@ -1119,30 +1443,11 @@ bool CAimbotProjectileSim::HandlePoint(const Vec3& vOrigin, int iSimTime, float 
 		if (flTime > m_tProjInfo.m_flLifetime)
 			return false;
 
-		iSimTime = std::ceil(flTime / I::GlobalVars->interval_per_tick); //TIME_TO_TICKS(flTime);
+		iSimTime = std::ceil(flTime / I::GlobalVars->interval_per_tick);
 	}
 
-	if (!TestAngle(vPoint, vAngles, iSimTime, iType, iFlags))
+	if (!TestAngle(vPoint, vAngles, iSimTime, iType, iFlags, false, bStrictHead))
 	{
-		// Neckbreaker (re-attached to the port - the feature lived in the native
-		// projectile aimbot, which no longer runs): when the flight was
-		// physically blocked by cover (m_bObstructed, set inside TestAngle),
-		// re-validate with viewangle roll. Roll rotates the right/up basis
-		// inside GetProjectileFireSetup, swinging the muzzle around the
-		// eye-forward axis and shifting the redirect origin, so each roll tests
-		// a different flight path past the edge of the blocking geometry.
-		// Each roll re-solves the ballistic solution through the rolled muzzle:
-		// the unrolled pitch/yaw lands roughly a muzzle radius off the point,
-		// outside splash validation's per-tick tolerance, so rolled splash
-		// never validated from the reused solution. Applies to splash points
-		// as well as direct ones - a splash flight blocked by the same cover
-		// edge is exactly what a rolled muzzle routes around. Silent aim only:
-		// the other Aim methods clamp roll back to 0, so the server could never
-		// reproduce the muzzle the sim validated (the old native gate read its
-		// own projectile aim type, which the port doesn't consume - the general
-		// AimType drives the port's writes).
-		// Anti-cheat compatibility force-disables this: extreme viewangle roll
-		// on an attack command is a trivial community-anticheat detection.
 		if (!m_iResult && m_bObstructed
 			&& AimTypeValue() == AimTypeEnum::Silent
 			&& CFG::Aimbot_Projectile_Neckbreaker && !CFG::Misc_AntiCheat_Enabled)
@@ -1163,9 +1468,9 @@ bool CAimbotProjectileSim::HandlePoint(const Vec3& vOrigin, int iSimTime, float 
 					Aim(G::CurrentUserCmd->viewangles, { tRollSolution.m_flPitch, tRollSolution.m_flYaw, static_cast<float>(iRoll) }, vRollAngles);
 				else
 					Aim(G::CurrentUserCmd->viewangles, { flPitch, flYaw, static_cast<float>(iRoll) }, vRollAngles);
-				if (TestAngle(vPoint, vRollAngles, iSimTime, iType, iFlags))
+				if (TestAngle(vPoint, vRollAngles, iSimTime, iType, iFlags, false, bStrictHead))
 				{
-					vAngles = vRollAngles; // m_vAngleTo below must carry the roll the server has to reproduce
+					vAngles = vRollAngles;
 					bReturn = m_iResult = true;
 					m_flTimeTo = (tRollSolution.m_iCalculated == CalculatedEnum::Good ? tRollSolution.m_flTime : flTime) + m_tInfo.m_flLatency;
 					break;
@@ -1173,8 +1478,6 @@ bool CAimbotProjectileSim::HandlePoint(const Vec3& vOrigin, int iSimTime, float 
 			}
 		}
 
-		// Amalgam only tries the smooth fallback when no direct hit was found
-		// yet, so it can't downgrade an already-solved point
 		if (!m_iResult)
 		{
 			switch (AimTypeValue())
@@ -1186,7 +1489,7 @@ bool CAimbotProjectileSim::HandlePoint(const Vec3& vOrigin, int iSimTime, float 
 			case AimTypeEnum::Assistive:
 			{
 				const Vec3 vPlainAngles = { flPitch, flYaw, 0.f };
-				if (TestAngle(vPoint, vPlainAngles, iSimTime, iType, PointFlagsEnum::Regular, true))
+				if (TestAngle(vPoint, vPlainAngles, iSimTime, iType, PointFlagsEnum::Regular, true, bStrictHead))
 					bReturn = m_iResult = 2;
 			}
 			}
@@ -1207,14 +1510,15 @@ bool CAimbotProjectileSim::HandlePoint(const Vec3& vOrigin, int iSimTime, float 
 
 		if (m_tInfo.m_iArmTime && iType != PointTypeEnum::Air)
 		{
-			const int iCount = std::min(iOriginalSimTime + TIME_TO_TICKS(m_tInfo.m_flLatency) + 1, int(m_tMoveStorage.m_vPath.size()));
+			const int iCount = std::clamp(iOriginalSimTime + TIME_TO_TICKS(m_tInfo.m_flLatency) + 1, 0, int(m_tMoveStorage.m_vPath.size()));
 			m_vPlayerPath.insert(m_vPlayerPath.end(), m_tMoveStorage.m_vPath.begin(), m_tMoveStorage.m_vPath.begin() + iCount);
 		}
 		else
 		{
 			const size_t iCount = std::min(m_tProjInfo.m_vPath.size() + TIME_TO_TICKS(m_tInfo.m_flLatency), m_tMoveStorage.m_vPath.size());
 			m_vPlayerPath.insert(m_vPlayerPath.end(), m_tMoveStorage.m_vPath.begin(), m_tMoveStorage.m_vPath.begin() + iCount);
-			m_vPredicted = m_vPlayerPath.back();
+			if (!m_vPlayerPath.empty())
+				m_vPredicted = m_vPlayerPath.back();
 		}
 	}
 
@@ -1232,7 +1536,7 @@ bool CAimbotProjectileSim::HandleDirect(DirectHistory_t& mDirectHistory)
 	auto& vDirectHistory = it->second;
 
 	if (F::ProjSim.m_bPhysics)
-	{	// physics projectiles sink in water - prefer the low points there
+	{
 		for (auto& tHistory : vDirectHistory)
 		{
 			if (I::EngineTrace->GetPointContents(tHistory.m_vPoint) & CONTENTS_WATER)
@@ -1248,7 +1552,7 @@ bool CAimbotProjectileSim::HandleDirect(DirectHistory_t& mDirectHistory)
 	m_iRollBudget = 360 / std::max(CFG::Aimbot_Projectile_NeckbreakerStep, 15);
 	for (auto& tHistory : vDirectHistory)
 	{
-		if (HandlePoint(tHistory.m_vOrigin, tHistory.m_iSimtime, tHistory.m_flPitch, tHistory.m_flYaw, tHistory.m_flTime, tHistory.m_vPoint, PointTypeEnum::Direct, iType))
+		if (HandlePoint(tHistory.m_vOrigin, tHistory.m_iSimtime, tHistory.m_flPitch, tHistory.m_flYaw, tHistory.m_flTime, tHistory.m_vPoint, PointTypeEnum::Direct, iType, tHistory.m_bStrictHead))
 		{
 			bReturn = true;
 			break;
@@ -1277,7 +1581,6 @@ bool CAimbotProjectileSim::HandleSplash(SplashHistory_t& mSplashHistory)
 	int iFlags = CalculateFlagsEnum::None;
 	if (iType == PointFlagsEnum::Lob)
 		iFlags |= CalculateFlagsEnum::LobAngle;
-	// capped pool of roll attempts shared by every point this evaluation
 	m_iRollBudget = 360 / std::max(CFG::Aimbot_Projectile_NeckbreakerStep, 15);
 	SetupSplashPoints(vSplashHistory.front().m_vOrigin, m_vSplashPoints, iFlags);
 	if (!m_vSplashPoints.empty())
@@ -1309,9 +1612,10 @@ bool CAimbotProjectileSim::HandleSplash(SplashHistory_t& mSplashHistory)
 	return bReturn;
 }
 
-int CAimbotProjectileSim::CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, bool bUpdate)
+int CAimbotProjectileSim::CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, bool bUpdate, int iDirectTier)
 {
 	m_tMoveStorage = {};
+	m_bArrowBonesValid = false;
 
 	const bool bIsPlayer = tTarget.m_iTargetType == TargetEnum::Player && IsPlayer(tTarget.m_pEntity);
 	bool bSim = false;
@@ -1319,14 +1623,13 @@ int CAimbotProjectileSim::CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TFWeap
 	{
 		if (!F::MoveSim->Initialize(tTarget.m_pEntity, m_tMoveStorage))
 		{
-			// init-failure paths skip Restore internally - free the store here
 			F::MoveSim->Restore(m_tMoveStorage);
 			return false;
 		}
 		bSim = true;
 	}
 	else
-		m_tMoveStorage.m_bFailed = true; // buildings: Amalgam's MoveSim declines them too
+		m_tMoveStorage.m_bFailed = true;
 
 	m_tProjInfo = {};
 	if (!F::ProjSim.GetInfo(pLocal, pWeapon, {}, m_tProjInfo, ProjSimEnum::NoRandomAngles | ProjSimEnum::PredictCmdNum)
@@ -1338,19 +1641,16 @@ int CAimbotProjectileSim::CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TFWeap
 	}
 
 	m_tInfo = { pLocal, pWeapon, &tTarget };
-	// Amalgam's CanHit anchors the solution to the LIVE eye (pLocal->
-	// GetShootPos); their frozen Ticks::GetShootPos is only for targeting. The
-	// frozen batch value here made a mid-batch fire validate against the
-	// batch's first-command eye instead of the firing command's own position
 	m_tInfo.m_vLocalEye = (Shifting::bShifting && Shifting::nCurrentShiftTick)
 		? pLocal->GetShootPos() : GetShootPos(pLocal);
-	m_tInfo.m_flLatency = SDKUtils::GetLatency() + TICKS_TO_TIME(AnticipatedChokeTicks());
+	m_tInfo.m_flLatency = std::max(SDKUtils::GetLatency() - F::LagRecords->GetFakeLatency(), 0.0f)
+		+ TICKS_TO_TIME(AnticipatedChokeTicks());
 	tTarget.m_vPos = tTarget.m_pEntity->m_vecOrigin();
 
 	if (bIsPlayer)
 		m_tInfo.m_vTargetEye = tTarget.m_pEntity->As<C_TFPlayer>()->m_vecViewOffset();
 	else
-		m_tInfo.m_vTargetEye = { 0.f, 0.f, tTarget.m_pEntity->m_vecMaxs().z * 0.9f }; // buildings have no view offset (Amalgam reads it through CTFPlayer regardless)
+		m_tInfo.m_vTargetEye = { 0.f, 0.f, tTarget.m_pEntity->m_vecMaxs().z * 0.9f };
 
 	const Vec3 vVelocity = F::ProjSim.GetVelocity();
 	m_tInfo.m_flVelocity = vVelocity.Length();
@@ -1366,10 +1666,6 @@ int CAimbotProjectileSim::CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TFWeap
 	m_tInfo.m_vOffset = m_tProjInfo.m_vPos - m_tInfo.m_vLocalEye; m_tInfo.m_vOffset.y *= -1;
 	m_tInfo.m_flOffsetTime = m_tInfo.m_vOffset.Length() / m_tInfo.m_flVelocity;
 
-	// ProjSim stores gravity relative to 800 u/s^2 (1.0 on a default server) for
-	// its vphysics env; the ballistic equations below need real units/s^2 the way
-	// Amalgam's DEFAULT_GRAVITY (800) feeds them. Without this every arcing
-	// solution (pipes/stickies) solved flat and the simulated shot fell short.
 	m_tInfo.m_flGravity = m_tProjInfo.m_flGravity * 800.f;
 	m_tInfo.m_iSplashRestrict = !m_tInfo.m_flGravity ? 100 : 5;
 	m_tInfo.m_flRadius = GetSplashRadius(pWeapon, pLocal, CFG::Aimbot_Amalgam_Projectile_SplashRadius / 100);
@@ -1385,13 +1681,12 @@ int CAimbotProjectileSim::CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TFWeap
 	}
 	m_tInfo.m_bIgnoreTiming = true && m_tInfo.m_flRadius;
 
-	Directs_t mDirects = GetDirects();
+	Directs_t mDirects = GetDirects(iDirectTier);
 	Splashes_t vSplashes = GetSplashes();
 
 	DirectHistory_t mDirectHistory = {};
 	SplashHistory_t mSplashHistory = {};
 
-	// Amalgam's exact horizon: min(projectile lifetime, user max sim time)
 	const int iMaxTime = TIME_TO_TICKS(std::min(m_tProjInfo.m_flLifetime, CFG::Aimbot_Projectile_Max_Simulation_Time));
 	for (int i = 1 - TIME_TO_TICKS(m_tInfo.m_flLatency); i <= iMaxTime; i++)
 	{
@@ -1433,7 +1728,7 @@ int CAimbotProjectileSim::CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TFWeap
 			switch (tSolution.m_iCalculated)
 			{
 			case CalculatedEnum::Good:
-				mDirectHistory[iType].emplace_back(History_t(tTarget.m_vPos, i), tSolution.m_flPitch, tSolution.m_flYaw, tSolution.m_flTime, vPoint, iIndex);
+				mDirectHistory[iType].emplace_back(History_t(tTarget.m_vPos, i), tSolution.m_flPitch, tSolution.m_flYaw, tSolution.m_flTime, vPoint, iIndex, tOffset.m_bStrictHead);
 				[[fallthrough]];
 			case CalculatedEnum::Bad:
 				tOffset.m_iFlags &= ~iType;
@@ -1497,8 +1792,11 @@ int CAimbotProjectileSim::CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TFWeap
 
 	F::MoveSim->Restore(m_tMoveStorage);
 
-	// Amalgam's ShouldAimAtAngle gate only applies with LeadAndRestrict
-	// enabled, which defaults off upstream and has no Necromancer equivalent
+	if (!m_iResult && iDirectTier < 2
+		&& pWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW
+		&& tTarget.m_iTargetType == TargetEnum::Player
+		&& tTarget.m_nAimedHitbox == HITBOX_HEAD)
+		return CanHit(tTarget, pLocal, pWeapon, bUpdate, iDirectTier + 1);
 
 	if (!bUpdate)
 		return m_iResult;
@@ -1506,8 +1804,6 @@ int CAimbotProjectileSim::CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TFWeap
 	tTarget.m_vPos = m_vTarget;
 	tTarget.m_vAngleTo = m_vAngleTo;
 
-	// Amalgam stores bound-hitbox draw data here for its visuals; Necromancer
-	// has no consumer for it, so it is skipped
 
 	return m_iResult;
 }
@@ -1541,14 +1837,11 @@ bool CAimbotProjectileSim::Aim(const Vec3& vCurAngle, const Vec3& vToAngle, Vec3
 		break;
 	}
 
-	// silent aim needs the angles unclamped for the packet, unless anticheat
-	// compatibility is on (Amalgam's AntiCheatCompatibility::Active)
 	if (iMethod != AimTypeEnum::Silent || CFG::Misc_AntiCheat_Enabled)
 		Math::ClampAngles(vOut);
 	return bReturn;
 }
 
-// assumes the angle was calculated with the other overload
 void CAimbotProjectileSim::Aim(CUserCmd* pCmd, Vec3& vAngles, int iMethod)
 {
 	const bool bUnsure = F::ProjectileTicks->IsTimingUnsure();
@@ -1561,8 +1854,6 @@ void CAimbotProjectileSim::Aim(CUserCmd* pCmd, Vec3& vAngles, int iMethod)
 	case AimTypeEnum::Smooth:
 	case AimTypeEnum::Assistive:
 		pCmd->viewangles = vAngles;
-		// hot path every aiming tick - skip instead of AVing if the engine
-		// pointer or its vtable is garbage (see Memory::IsInModule comment)
 		if (Memory::IsInModule("engine.dll", I::EngineClient, true))
 			I::EngineClient->SetViewAngles(vAngles);
 		break;
@@ -1620,7 +1911,6 @@ std::vector<Target_t> CAimbotProjectileSim::GetTargets(C_TFPlayer* pLocal, C_TFW
 	const int nWeaponID = pWeapon->GetWeaponID();
 	const float flMaxFOV = CFG::Aimbot_Projectile_FOV;
 
-	// players (+ crossbow/sandvich healing when enabled)
 	{
 		int eGroup = -1;
 		if (bTargetPlayers)
@@ -1642,14 +1932,9 @@ std::vector<Target_t> CAimbotProjectileSim::GetTargets(C_TFPlayer* pLocal, C_TFW
 
 				const bool bTeam = pEntity->m_iTeamNum() == pLocal->m_iTeamNum();
 
-				// the port's ShouldIgnore rejects teammates unconditionally, so
-				// heal targets skip it (Amalgam gates it per-flags instead)
 				if (!bTeam && F::AimbotGlobal->ShouldIgnore(pEntity, pLocal, pWeapon))
 					continue;
 
-				// Necromancer's explicit ignore filters (Amalgam folds these
-				// into ShouldIgnore flags) - enemies only, heal targets skip
-				// them or auto arrow refuses to heal friends
 				if (!bTeam)
 				{
 					if (CFG::Aimbot_Ignore_Friends && pPlayer->IsPlayerOnSteamFriendsList())
@@ -1663,7 +1948,6 @@ std::vector<Target_t> CAimbotProjectileSim::GetTargets(C_TFPlayer* pLocal, C_TFW
 					if (pPlayer->InCond(TF_COND_HALLOWEEN_GHOST_MODE))
 						continue;
 
-					// Vaccinator resist conds (Amalgam's ignore flags)
 					if (CFG::Aimbot_Ignore_Vaccinator)
 					{
 						if (nWeaponID == TF_WEAPON_FLAMETHROWER || nWeaponID == TF_WEAPON_FLAME_BALL || nWeaponID == TF_WEAPON_FLAREGUN)
@@ -1683,7 +1967,6 @@ std::vector<Target_t> CAimbotProjectileSim::GetTargets(C_TFPlayer* pLocal, C_TFW
 						}
 					}
 
-					// Ignore untagged players when key is held
 					if (CFG::Aimbot_Ignore_Untagged_Key != 0 && H::Input->IsDown(CFG::Aimbot_Ignore_Untagged_Key))
 					{
 						PlayerPriority playerPriority = {};
@@ -1696,8 +1979,6 @@ std::vector<Target_t> CAimbotProjectileSim::GetTargets(C_TFPlayer* pLocal, C_TFW
 				const bool bTeam2 = pEntity->m_iTeamNum() == pLocal->m_iTeamNum();
 				if (bTeam2 && bHeal)
 				{
-					// healing targets: full health players are skipped (friend
-					// priority needs an entity friend list Necromancer lacks)
 					if (pPlayer->m_iHealth() >= pPlayer->GetMaxHealth())
 						continue;
 					if (CFG::Aimbot_Projectile_AutoArrow && CFG::Aimbot_Projectile_AutoArrow_FriendsOnly && !pPlayer->IsPlayerOnSteamFriendsList())
@@ -1710,7 +1991,7 @@ std::vector<Target_t> CAimbotProjectileSim::GetTargets(C_TFPlayer* pLocal, C_TFW
 
 				int nTargetPriority = F::AimbotGlobal->GetPriority(pEntity->entindex());
 				if (bTeam2 && bHeal && pPlayer->IsPlayerOnSteamFriendsList())
-					nTargetPriority += 1000; // friends get healed first
+					nTargetPriority += 1000;
 
 				vTargets.emplace_back(pEntity, TargetEnum::Player, vPos, vAngleTo, flFOVTo, vLocalPos.DistToSqr(vPos), nTargetPriority);
 			}
@@ -1720,7 +2001,6 @@ std::vector<Target_t> CAimbotProjectileSim::GetTargets(C_TFPlayer* pLocal, C_TFW
 			return vTargets;
 	}
 
-	// buildings (+ rescue ranger repair when enabled)
 	{
 		int eGroup = -1;
 		if (bTargetBuildings)
@@ -1754,7 +2034,6 @@ std::vector<Target_t> CAimbotProjectileSim::GetTargets(C_TFPlayer* pLocal, C_TFW
 		}
 	}
 
-	// Amalgam also targets world NPCs, which Necromancer has no entity group for
 
 	return vTargets;
 }
@@ -1763,8 +2042,6 @@ std::vector<Target_t> CAimbotProjectileSim::SortTargets(C_TFPlayer* pLocal, C_TF
 {
 	auto vTargets = GetTargets(pLocal, pWeapon);
 
-	// Amalgam's ManageTargets: sort by the selection method, cap the count,
-	// then apply player-list priority on top
 	F::AimbotGlobal->SortTargets(vTargets, CFG::Aimbot_Projectile_Sort);
 	vTargets.resize(std::min(vTargets.size(), size_t(CFG::Aimbot_Projectile_Max_Processing_Targets)));
 	F::AimbotGlobal->SortPriority(vTargets);
@@ -1776,20 +2053,12 @@ bool CAimbotProjectileSim::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, 
 {
 	const int nWeaponID = pWeapon->GetWeaponID();
 
-	// Necromancer's FOV circle (MiscVisuals) reads G::flAimbotFOV, which the
-	// dispatcher zeroes at the start of every tick. The native projectile
-	// module re-sets it here before its weapon checks, so the port must too -
-	// this port claims every projectile weapon, leaving nothing to draw it.
 	if (CFG::Aimbot_Projectile_Sort == 0)
 		G::flAimbotFOV = CFG::Aimbot_Projectile_FOV;
 
 	if (F::AimbotGlobal->ShouldHoldAttack(pWeapon))
 		pCmd->buttons |= IN_ATTACK;
 
-	// Necromancer engagement gate: the aimbot only runs while the aim key is
-	// held (or the Always On checkbox is set). Amalgam has no keybind system,
-	// and since this port claims every projectile weapon from the dispatcher,
-	// it must reproduce the same gate the native aimbot checks first.
 	const bool bKeyAim = CFG::Aimbot_Always_On || H::Input->IsDown(CFG::Aimbot_Key);
 	if (!AimTypeValue()
 		|| !bKeyAim
@@ -1801,7 +2070,7 @@ bool CAimbotProjectileSim::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, 
 	}
 
 	if (ProjectileModifierFlags() & ModifiersEnum::ChargeWeapon
-		&& (nWeaponID == TF_WEAPON_COMPOUND_BOW || nWeaponID == TF_WEAPON_PIPEBOMBLAUNCHER || nWeaponID == TF_WEAPON_CANNON && G::LastUserCmd->buttons & IN_ATTACK))
+		&& (nWeaponID == TF_WEAPON_PIPEBOMBLAUNCHER || nWeaponID == TF_WEAPON_COMPOUND_BOW || nWeaponID == TF_WEAPON_CANNON && G::LastUserCmd->buttons & IN_ATTACK))
 	{
 		pCmd->buttons |= IN_ATTACK;
 		if (!G::bCanPrimaryAttack && !G::bReloading && AimTypeValue() == AimTypeEnum::Silent)
@@ -1831,7 +2100,7 @@ bool CAimbotProjectileSim::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, 
 		const int iResult = CanHit(tTarget, pLocal, pWeapon);
 		if (iResult != 1 && nWeaponID == TF_WEAPON_CANNON && ProjectileModifierFlags() & ModifiersEnum::ChargeWeapon
 			&& !(G::OriginalCmd.buttons & (IN_ATTACK | IN_USE)))
-		{	// loose cannon: decide now whether the double-detonate will land in time
+		{
 			float flTime = m_flTimeTo - GRENADE_CHECK_INTERVAL;
 			float flCharge = pWeapon->As<C_TFGrenadeLauncher>()->m_flDetonateTime() > 0.f
 				? pWeapon->As<C_TFGrenadeLauncher>()->m_flDetonateTime() - I::GlobalVars->curtime
@@ -1852,9 +2121,6 @@ bool CAimbotProjectileSim::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, 
 		}
 		if (!iResult) continue;
 
-		// RapidFire (doubletap) keys off these like it does for the native
-		// aimbots - without them nTargetIndex stays -1 and the shift never
-		// starts on projectile weapons
 		G::nTargetIndexEarly = tTarget.m_pEntity->entindex();
 		G::nTargetIndex = tTarget.m_pEntity->entindex();
 
@@ -1862,7 +2128,7 @@ bool CAimbotProjectileSim::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, 
 			F::MoveSimDebug->NotifyProjectileTarget(tTarget.m_pEntity->As<C_TFPlayer>(), m_tMoveStorage.m_vPath, true);
 
 		if (iResult == 2)
-		{	// smooth/assistive fallback - aim only, no swing
+		{
 			m_tAimTarget = { tTarget.m_pEntity->entindex(), I::GlobalVars->tickcount, 0 };
 			Aim(pCmd, tTarget.m_vAngleTo);
 			break;
@@ -1873,10 +2139,15 @@ bool CAimbotProjectileSim::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, 
 			switch (nWeaponID)
 			{
 			case TF_WEAPON_COMPOUND_BOW:
+				if (pWeapon->As<C_TFPipebombLauncher>()->m_flChargeBeginTime() > 0.f)
+					pCmd->buttons &= ~IN_ATTACK;
+				else
+					pCmd->buttons |= IN_ATTACK;
+				break;
 			case TF_WEAPON_PIPEBOMBLAUNCHER:
 				pCmd->buttons |= IN_ATTACK;
 				if (pWeapon->As<C_TFPipebombLauncher>()->m_flChargeBeginTime() > 0.f)
-					pCmd->buttons &= ~IN_ATTACK; // charged - release it
+					pCmd->buttons &= ~IN_ATTACK;
 				break;
 			case TF_WEAPON_CANNON:
 				pCmd->buttons |= IN_ATTACK;
@@ -1885,7 +2156,7 @@ bool CAimbotProjectileSim::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, 
 					if (m_iLastTickCancel)
 						pCmd->weaponselect = m_iLastTickCancel = 0;
 					if (ProjectileModifierFlags() & ModifiersEnum::ChargeWeapon)
-					{	// rerun, if we won't hit in the future, fire
+					{
 						int iResult2 = 0;
 
 						float flCharge = pWeapon->As<C_TFGrenadeLauncher>()->m_flDetonateTime() - I::GlobalVars->curtime;
@@ -1923,7 +2194,7 @@ bool CAimbotProjectileSim::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, 
 				if (pWeapon->m_iItemDefinitionIndex() == Soldier_m_TheBeggarsBazooka)
 				{
 					if (pWeapon->m_iClip1() > 0)
-						pCmd->buttons &= ~IN_ATTACK; // beggar's bazooka loads while held
+						pCmd->buttons &= ~IN_ATTACK;
 				}
 				break;
 			default:
@@ -1944,8 +2215,6 @@ bool CAimbotProjectileSim::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, 
 			m_iLastSolutionTick = I::GlobalVars->tickcount;
 		}
 
-		// Necromancer path visuals (Amalgam renders these through its Visuals
-		// storage; we draw straight into the debug overlay)
 		if (G::Attacking == 1 && !m_vProjectilePath.empty())
 		{
 			I::DebugOverlay->ClearAllOverlays();
@@ -1977,16 +2246,6 @@ bool CAimbotProjectileSim::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, 
 			}
 		}
 
-		// steer armed cmds even when this tick can't fire client-side (cooldown,
-		// reload, charge hold): the cmd still carries IN_ATTACK, and if
-		// prediction desyncs the server runs its attack anyway - without the
-		// solved angle it fires raw at the player's view. Silent write without
-		// the pSilent choke, so packets keep flowing and the camera stays put.
-		// This stays on with anti-cheat compatibility too: a rocket that fires
-		// at the view angles is exactly the "shot where I was looking" bug, and
-		// these steady writes also make the fire tick's angles continuous with
-		// the preceding cooldown ticks instead of a 1-tick snap, which the
-		// compat's angle history then has nothing to flag
 		if (G::Attacking != 1 && (pCmd->buttons & IN_ATTACK))
 		{
 			SDKUtils::FixMovement(pCmd, tTarget.m_vAngleTo);
@@ -1996,7 +2255,7 @@ bool CAimbotProjectileSim::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, 
 
 		Aim(pCmd, tTarget.m_vAngleTo);
 		if (G::bPSilentAngles)
-		{	// these weapons can't hide their angles, fall back to plain silent
+		{
 			switch (nWeaponID)
 			{
 			case TF_WEAPON_FLAMETHROWER:
@@ -2012,14 +2271,8 @@ bool CAimbotProjectileSim::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, 
 		return true;
 	}
 
-	// the aimbot had a validated solution moments ago but lost it this tick -
-	// validation flickers while targets move. A shot fired into that gap would
-	// go out raw at the player's view, so carry the last solved angle instead.
-	// Stale solutions (target broke cover / left range) are left untouched.
-	// Runs with anti-cheat compatibility too, for the same reason as the armed
-	// steering above - a raw shot at the view is worse than a smoothed write
-	if ((G::OriginalCmd.buttons & IN_ATTACK) && m_iLastSolutionTick != -1
-		&& I::GlobalVars->tickcount - m_iLastSolutionTick <= 3)
+	if (((G::OriginalCmd.buttons & IN_ATTACK) || m_bLastTickAimbotCharge) && m_iLastSolutionTick != -1
+		&& I::GlobalVars->tickcount - m_iLastSolutionTick <= 3 && fabsf(m_vAngleTo.z) < 0.001f)
 	{
 		SDKUtils::FixMovement(pCmd, m_vAngleTo);
 		pCmd->viewangles = m_vAngleTo;
@@ -2033,10 +2286,6 @@ bool CAimbotProjectileSim::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, 
 
 	bool CAimbotProjectileSim::Run(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd)
 	{
-		// respect the menu toggle: the port used to claim every projectile
-		// weapon even with "Projectile Aimbot Active" unchecked and paid the
-		// full per-tick prediction for nothing (the native fallback gates on
-		// the same flag and does nothing either way)
 		if (!CFG::Aimbot_Projectile_Active)
 		{
 			m_bLastTickHeld = false;
@@ -2046,7 +2295,6 @@ bool CAimbotProjectileSim::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, 
 
 		const bool bSuccess = RunMain(pLocal, pWeapon, pCmd);
 
-		// charge bars for auto release / cancel charge
 		float flAmount = 0.f;
 		if (pWeapon->GetWeaponID() == TF_WEAPON_PIPEBOMBLAUNCHER)
 		{
@@ -2083,8 +2331,6 @@ bool CAimbotProjectileSim::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, 
 		m_bLastTickHeld = bKeyAim && AimTypeValue();
 		m_bLastTickAimbotCharge = !bUserAttacking && (pCmd->buttons & IN_ATTACK);
 
-	// every weapon Necromancer classifies as projectile is claimed here, so
-	// the native projectile aimbot stays a pure fallback
 	return true;
 }
 

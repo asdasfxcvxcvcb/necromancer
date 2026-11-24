@@ -5,11 +5,11 @@
 
 bool CLagRecords::IsSimulationTimeValid(float flCurSimTime, float flCmprSimTime)
 {
-	// SEOwnedDE uses a flat 0.2f for record retention — keeps ~13 records per player.
-	// With fake latency, extend by fake_latency amount so backtrack records are retained.
-	const float flMaxTime = m_flFakeLatency > 0.0f
-		? std::min(m_flFakeLatency + 0.2f, m_flMaxUnlag)
-		: 0.2f;
+	// Retention is in the interpolated-clock domain: the server honors record
+	// ages within ideal (= GetServerAcceptedAge, cached per frame) +- the 0.2s
+	// fallback slack, and absolute age = relative age + local lerp
+	const float flLocalLerp = SDKUtils::GetLerp();
+	const float flMaxTime = GetServerAcceptedAge() + 0.2f - flLocalLerp;
 	return (flCurSimTime - flCmprSimTime) < flMaxTime;
 }
 
@@ -48,9 +48,12 @@ float CLagRecords::GetServerAcceptedAge() const
 	//
 	// Without fake latency: ideal clientAge = lerp (records ~15ms old = current model)
 	// With fake latency: ideal clientAge = fake_latency + lerp (backtrack records)
-	const float flLerp = SDKUtils::GetLerp();
+	const float flLerp = GetServerLerp();
 	const float flFakeLatency = m_flFakeLatency;
-	m_flCachedServerAcceptedAge = flFakeLatency + flLerp;
+	// the server clamps correct = out + fake + lerp to [0, sv_maxunlag], so the
+	// honored ideal age saturates at maxunlag minus our real outgoing latency
+	const float flCap = std::max(m_flMaxUnlag - GetOutgoingLatency(), 0.0f);
+	m_flCachedServerAcceptedAge = std::min(flFakeLatency + flLerp, flCap);
 	m_nCacheFrame = nFrame;
 	return m_flCachedServerAcceptedAge;
 }
@@ -58,7 +61,7 @@ float CLagRecords::GetServerAcceptedAge() const
 float CLagRecords::GetOutgoingLatency() const
 {
 	if (const auto pNetChan = I::EngineClient->GetNetChannelInfo())
-		return pNetChan->GetLatency(FLOW_OUTGOING);
+		return std::max(pNetChan->GetLatency(FLOW_OUTGOING), 0.0f);
 	return 0.0f;
 }
 
@@ -118,6 +121,7 @@ void CLagRecords::UpdateDatagram()
 		m_iLastInSequence = 0;
 		m_nLastInSequenceNr = 0;
 		m_flFakeLatency = 0.0f;
+		ResetInterp();
 		return;
 	}
 
@@ -134,6 +138,7 @@ void CLagRecords::UpdateDatagram()
 		m_iLastInSequence = 0;
 		m_nLastInSequenceNr = 0;
 		m_flFakeLatency = 0.0f;
+		ResetInterp();
 	}
 
 	// Track incoming sequences for fake latency
@@ -712,6 +717,9 @@ void CLagRecords::AdjustPing(INetChannel* pNetChanInterface)
 		{
 			m_flFakeLatency = std::max(0.0f, m_flFakeLatency - I::GlobalVars->interval_per_tick);
 		}
+		m_dAppliedLatency.push_front(m_flFakeLatency);
+		if (m_dAppliedLatency.size() > 200)
+			m_dAppliedLatency.pop_back();
 		return;
 	}
 
@@ -748,20 +756,10 @@ void CLagRecords::AdjustPing(INetChannel* pNetChanInterface)
 	
 	m_nLastInSequenceNr = nInSequenceNr;
 
-	// Smooth the fake latency value
-	if (m_flWishFakeLatency > 0.0f || m_flFakeLatency > 0.0f)
-	{
-		float flDelta = flLatency - m_flFakeLatency;
-		flDelta = std::clamp(flDelta, -I::GlobalVars->interval_per_tick, I::GlobalVars->interval_per_tick);
-		m_flFakeLatency += flDelta * 0.1f;
-		
-		// Snap to 0 if very close
-		if (!m_flWishFakeLatency && m_flFakeLatency < I::GlobalVars->interval_per_tick)
-			m_flFakeLatency = 0.0f;
-	}
-
-	// NOTE: Anti-cheat compatibility clamping is done in GetFakeLatency() when the value is used,
-	// not here. This preserves the internal state while only clamping what's sent to the server.
+	m_flFakeLatency = flLatency;
+	m_dAppliedLatency.push_front(flLatency);
+	if (m_dAppliedLatency.size() > 200)
+		m_dAppliedLatency.pop_back();
 }
 
 void CLagRecords::RestorePing(INetChannel* pNetChanInterface)
@@ -777,8 +775,12 @@ void CLagRecords::RestorePing(INetChannel* pNetChanInterface)
 
 float CLagRecords::GetFakeLatency() const
 {
-	// NOTE: Don't clamp fake latency for anti-cheat - Amalgam's GetFakeLatency() doesn't clamp.
-	// Only GetFakeInterp() is clamped in Amalgam. The fake latency system works by manipulating
-	// sequence numbers, which is separate from the interp system that sends cl_interp to server.
+	if (!m_dAppliedLatency.empty())
+	{
+		float flTotal = 0.0f;
+		for (const float fl : m_dAppliedLatency)
+			flTotal += fl;
+		return flTotal / static_cast<float>(m_dAppliedLatency.size());
+	}
 	return m_flFakeLatency;
 }

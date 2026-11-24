@@ -7,6 +7,7 @@ class CRapidFire
 	CUserCmd m_ShiftCmd = {};
 	bool m_bShiftSilentAngles = false;
 	bool m_bSetCommand = false;
+	bool m_bShiftAttack = false;
 	int m_iWait = 0;
 
 private:
@@ -43,6 +44,8 @@ public:
 	int GetShotsWithinPacket(C_TFWeaponBase* pWeapon, int nTicks);
 	bool CanDoubleTapNow(C_TFPlayer* pLocal = nullptr, C_TFWeaponBase* pWeapon = nullptr);
 	int GetReleaseTicks();
+	int GetFillers(C_TFWeaponBase* pWeapon, int nBank);
+	int GetFireRateTicks(C_TFWeaponBase* pWeapon);
 
 	bool IsStickyCharging() const { return m_bStickyCharging; }
 };

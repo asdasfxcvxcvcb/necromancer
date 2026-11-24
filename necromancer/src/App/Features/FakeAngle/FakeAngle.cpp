@@ -99,10 +99,30 @@ bool CFakeAngle::ShouldRun(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd
 		return false;
 	
 	// Beggar's Bazooka check (like Amalgam)
-	if (pWeapon && pWeapon->m_iItemDefinitionIndex() == Soldier_m_TheBeggarsBazooka 
+	if (pWeapon && pWeapon->m_iItemDefinitionIndex() == Soldier_m_TheBeggarsBazooka
 		&& pCmd->buttons & IN_ATTACK && !(G::LastUserCmd ? G::LastUserCmd->buttons & IN_ATTACK : false))
 		return false;
-	
+
+	// engineer building placement: the blueprint snaps to the SENT angles, so
+	// anti-aim stands down on the placement clicks only - the fresh blueprint
+	// (builder out) and the carried-building re-placement (wrench while
+	// carrying). pickups, repairs and carries keep the AA running
+	if (pCmd->buttons & IN_ATTACK)
+	{
+		if (pWeapon && pWeapon->GetWeaponID() == TF_WEAPON_BUILDER)
+			return false;
+
+		if (pLocal->m_iClass() == TF_CLASS_ENGINEER)
+		{
+			for (const auto pEntity : H::Entities->GetGroup(EEntGroup::BUILDINGS_TEAMMATES))
+			{
+				const auto pBuilding = pEntity ? pEntity->As<C_BaseObject>() : nullptr;
+				if (pBuilding && pBuilding->m_bCarried() && pBuilding->m_hBuilder().Get() == pLocal)
+					return false;
+			}
+		}
+	}
+
 	return true;
 }
 
@@ -371,18 +391,24 @@ void CFakeAngle::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon
 
 	// Anti-backstab (Amalgam Misc::AntiBackstab): 0 = nothing, 1 = yaw override,
 	// 2 = pitch override. It may force-unchoke bSendPacket when engaged so the
-	// protective angle actually goes out instead of waiting for the choke window
-	int iAntiBackstab = F::AntiBackstab->Run(pLocal, pCmd, &bSendPacket);
-	if (iAntiBackstab)
+	// protective angle actually goes out instead of waiting for the choke window.
+	// A silent attack (aimbot shot, auto backstab) has already claimed this
+	// cmd's angles - the protective angles must not overwrite them
+	int iAntiBackstab = 0;
+	if (!G::bSilentAngles)
 	{
-		// The anti-backstab angles were written directly into the cmd - take the
-		// silent path at the end of CreateMove so they reach the server untouched
-		// and the local view isn't snapped along (also required when anti-aim is
-		// off, otherwise the 269/271 pitch would end up on the user's screen)
-		G::bSilentAngles = true;
+		iAntiBackstab = F::AntiBackstab->Run(pLocal, pCmd, &bSendPacket);
+		if (iAntiBackstab)
+		{
+			// The anti-backstab angles were written directly into the cmd - take the
+			// silent path at the end of CreateMove so they reach the server untouched
+			// and the local view isn't snapped along (also required when anti-aim is
+			// off, otherwise the 269/271 pitch would end up on the user's screen)
+			G::bSilentAngles = true;
+		}
+		else
+			FakeShotAngles(pLocal, pWeapon, pCmd);
 	}
-	else
-		FakeShotAngles(pLocal, pWeapon, pCmd);
 
 	if (!bAntiAimActive)
 	{

@@ -19,7 +19,13 @@ bool CAimbotMelee::ShouldTargetFriendlyBuilding(C_BaseObject* pBuilding, C_TFWea
 {
 	const bool bIsWrench = pWeapon->GetWeaponID() == TF_WEAPON_WRENCH;
 	const bool bCanRemoveSapper = SDKUtils::AttribHookValue(0.f, "set_dmg_apply_to_sapper", pWeapon) > 0.f;
-	
+
+	// carried buildings can't be repaired, upgraded or reloaded - firing at one
+	// is pure waste and holds the attack flags up for the whole carry, which
+	// keeps the anti-aim standing down the entire time
+	if (pBuilding->m_bCarried())
+		return false;
+
 	// Building has sapper - both wrench and homewrecker can remove
 	if (pBuilding->m_bHasSapper())
 		return bIsWrench || bCanRemoveSapper;
@@ -223,7 +229,9 @@ bool CAimbotMelee::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, MeleeT
 			{
 				int nRecords = 0;
 				bool bHasValidLagRecords = false;
-				const bool bFakeLatencyActive = F::LagRecords->GetFakeLatency() > 0.0f;
+				// fake latency OR a delivered fake interp - either one makes the server backtrack
+				const bool bFakeLatencyActive = F::LagRecords->GetFakeLatency() > 0.0f
+					|| F::LagRecords->GetFakeInterp() > SDKUtils::GetLerp() + 0.05f;
 				
 				// Get the smack delay in ticks - we need records that will still be valid after this delay
 				const int nSmackTicks = GetSwingTime(pWeapon);
@@ -286,7 +294,8 @@ bool CAimbotMelee::GetTarget(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, MeleeT
 						if (interpRecord.bIsAlive && interpRecord.Player == pPlayer)
 						{
 							const float flInterpAge = I::GlobalVars->curtime - interpRecord.SimulationTime;
-							if (F::LagRecords->IsRecordAgeValidForServer(flInterpAge) && flInterpAge <= F::LagRecords->GetMaxUnlag())
+							if (F::LagRecords->IsRecordAgeValidForServer(flInterpAge) && flInterpAge <= F::LagRecords->GetMaxUnlag()
+								&& (!bFakeLatencyActive || flInterpAge >= flIdealAge - 0.1f))
 							{
 								// Store interpolated record as a static so CanHit can use it
 								static LagRecord_t s_interpRecord = {};
@@ -709,7 +718,7 @@ void CAimbotMelee::Run(CUserCmd* pCmd, C_TFPlayer* pLocal, C_TFWeaponBase* pWeap
 				// to a slightly different tick than where we're aiming, causing misses on fast enemies.
 				if (bIsFiring && target.Entity && H::Entities->IsEntityValid(target.Entity) && target.Entity->GetClassId() == ETFClassIds::CTFPlayer)
 				{
-					pCmd->tick_count = TIME_TO_TICKS(target.SimulationTime + SDKUtils::GetLerp());
+					pCmd->tick_count = TIME_TO_TICKS(target.SimulationTime + F::LagRecords->GetServerLerp());
 				}
 			}
 

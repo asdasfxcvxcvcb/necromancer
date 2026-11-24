@@ -33,8 +33,10 @@ namespace CFG
 	CFGVAR(Aimbot_Hitscan_Switch_Indicator_Y, 540);
 	CFGVAR(Aimbot_Hitscan_FOV, 15.0f);
 	CFGVAR(Aimbot_Hitscan_Smoothing, 3.0f);
-	CFGVAR(Aimbot_Hitscan_Fake_Latency, 0.0f); // Fake latency in milliseconds (0-600ms)
+	CFGVAR(Aimbot_Hitscan_Fake_Latency, 0.0f); // Fake latency in milliseconds (0-900ms)
+	CFGVAR(Aimbot_Hitscan_Fake_Interp, 0.0f); // Claimed cl_interp in ms (0-1000ms) - pushed raw to the server via NET_SetConVar, raises the lagcomp rewind ceiling
 	CFGVAR(Aimbot_Hitscan_Hitchance, 0); // Hitchance percentage (0 = disabled, 1-100 = required hit %)
+	CFGVAR(Aimbot_Hitscan_Targeting_Debug, false); // print the hitscan targeting decisions (records/ages/traces) to the console
 	CFGVAR(Aimbot_Hitscan_Pellet_Visibility_Scale, 0.50f); // 0.30 - 0.80 recommended
 	CFGVAR(Aimbot_Hitscan_Scan_Head, true);
 	CFGVAR(Aimbot_Hitscan_Scan_Body, true);
@@ -159,9 +161,7 @@ namespace CFG
 	CFGVAR(Aimbot_Melee_Whip_Teammates, true);
 	CFGVAR(Aimbot_Melee_Crouch_Airborne, false);
 	CFGVAR(Aimbot_Melee_Auto_Repair, true); // Auto target friendly buildings that need repair/upgrade/ammo
-	CFGVAR(Aimbot_Melee_Auto_Backstab, true);
-	CFGVAR(Aimbot_Melee_Auto_Backstab_Fallback, true);
-	CFGVAR(Aimbot_Melee_Ignore_Razorback, false);
+	// melee aimbot backstab/razorback vars removed - backstab lives in Triggerbot Auto Backstab
 	CFGVAR(Aimbot_Melee_Swing_Predict_Lag, true);
 
 	// Wrangler Aimbot - uses hitscan settings for aim type, FOV, smoothing
@@ -450,6 +450,7 @@ namespace CFG
 	CFGVAR(Visuals_Enemy_Outline_HP_Based, true); // Color enemy outlines based on HP
 	CFGVAR(Visuals_Enemy_Materials_HP_Based, false); // Color enemy materials based on HP
 	CFGVAR(Misc_Enemy_Custom_Name_Color, false); // Use custom color for all player names
+	CFGVAR(Misc_Ignore_Enemy_Collision, false); // players stop blocking movement (needs the server to agree: listen/local servers)
 
 #pragma endregion
 
@@ -744,6 +745,7 @@ namespace CFG
 
 	CFGVAR(Misc_MVM_Instant_Respawn_Key, 0);
 	CFGVAR(Misc_MVM_Instant_Revive, false);
+	CFGVAR(Misc_MvM_Auto_Revive, false); // send MVM_Revive_Response on MvM death - instant self-revive
 
 	CFGVAR(Misc_AntiCheat_Enabled, false);
 	CFGVAR(Misc_AntiCheat_SkipCritDetection, false);
@@ -815,7 +817,8 @@ namespace CFG
 	CFGVAR(Exploits_RapidFire_Ticks, 22);
 	CFGVAR(Exploits_RapidFire_Antiwarp, true);
 	CFGVAR(Exploits_FastRev, false);
-	
+	CFGVAR(Exploits_Acquire_Delay_Ticks, 1.4f); // hold fire this many ticks when a target becomes valid after an idle/trace-blocked phase (0 = off, excludes snipers)
+
 	CFGVAR(Exploits_Warp_Key, 0);
 	CFGVAR(Exploits_Warp_Mode, 1); //0 Slow 1 Full
 	CFGVAR(Exploits_Warp_Exploit, 0); //0 None 1 Fake Peek 2 0 Velocity
@@ -895,6 +898,13 @@ namespace CFG
 	CFGVAR(Misc_Auto_Accept_Items, false);
 	CFGVAR(Misc_Auto_FastClassSwitch, false);
 	CFGVAR(Misc_Auto_Rejoin_On_Kick, false);
+	CFGVAR(Misc_Auto_Balance_Dodge, false);
+	CFGVAR(Misc_Auto_Balance_Warn, false);
+	CFGVAR(Misc_Report_Spam, false);
+	CFGVAR(Misc_Report_Spam_Rate, 1);
+	CFGVAR(Misc_Trade_Spam, false);
+	CFGVAR(Misc_Trade_Spam_Rate, 1);
+	CFGVAR(Misc_Trade_Spam_Tagged_Only, false);
 	CFGVAR(Misc_Anti_AFK, true);
 	CFGVAR(Misc_PDA_Exploit_Sniper, false);
 	CFGVAR(Misc_Disable_Scroll_Input, false);
