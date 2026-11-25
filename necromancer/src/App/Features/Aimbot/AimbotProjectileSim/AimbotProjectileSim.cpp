@@ -232,7 +232,7 @@ Directs_t CAimbotProjectileSim::GetDirects(int iDirectTier)
 							flLow = 1.f;
 					}
 
-					const float flLerp = (50.f + (100.f - 50.f) * flLow) / 100.f;
+					const float flLerp = (70.f + (100.f - 70.f) * flLow) / 100.f;
 					vOff.z = vOff.z + (vMaxs.z - vOff.z) * flLerp;
 					vOff.x = std::clamp(vOff.x, vMins.x + 5.f, vMaxs.x - 5.f);
 					vOff.y = std::clamp(vOff.y, vMins.y + 5.f, vMaxs.y - 5.f);

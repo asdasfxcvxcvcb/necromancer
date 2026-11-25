@@ -16,16 +16,8 @@ MAKE_HOOK(CMatchInviteNotification_OnTick, Signatures::CMatchInviteNotification_
 	if (CFG::Misc_Extend_Queue)
 	{
 		const auto dFloatTime = Plat_FloatTime();
-		auto& dAutoJoinTime = *reinterpret_cast<double*>(uintptr_t(rcx) + 616);
+		auto& dAutoJoinTime = *reinterpret_cast<double*>(uintptr_t(rcx) + 648);
 		auto& dLastAutoJoinTime = s_mLastAutoJoinTime[rcx];
-
-		// +616 is a hardcoded struct offset borrowed from Amalgam. If a TF2
-		// update moves the field, writing here corrupts the panel and blows up
-		// its paint pass with no cheat frame anywhere near the crash. Only
-		// extend while the value still looks like an invite expiry - the game
-		// sets now..now+10 on a fresh invite, we set now..now+180. Anything
-		// else means the layout drifted: leave the panel alone and the
-		// feature quietly does nothing instead of corrupting it.
 		const bool bFreshInvite = dAutoJoinTime > dFloatTime - 30.0 && dAutoJoinTime < dFloatTime + JOIN_TIME + 30.0;
 		const bool bOurExtend = dAutoJoinTime == dLastAutoJoinTime && dAutoJoinTime > dFloatTime;
 		if (bFreshInvite || bOurExtend)
