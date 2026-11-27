@@ -9,7 +9,6 @@ class CESP
 
 public:
 	void Run();
-	void DrawProjectileSimulation(); // Draw projectile prediction paths
 };
 
 MAKE_SINGLETON_SCOPED(CESP, ESP, F);

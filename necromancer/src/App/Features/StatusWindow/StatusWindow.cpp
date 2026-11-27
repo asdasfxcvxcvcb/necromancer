@@ -693,7 +693,8 @@ void CStatusWindow::DrawSpree(int nX, int nY, int nW, int nBarH, int nRows, floa
 		H::Draw->OutlinedRect(nX, nY, nW, nFullH, HueColor(flPhase, nAlpha));
 	}
 
-	const float flArtScale = std::clamp(std::min((nW - 8.0f) / 84.0f, (nBodyH - 8.0f) / 60.0f), 0.5f, 3.0f);
+	float flArtScale = std::clamp(std::min((nW - 8.0f) / 84.0f, (nBodyH - 8.0f) / 60.0f), 0.5f, 3.0f);
+	flArtScale = std::max(0.5f, std::floor(flArtScale * 2.0f) / 2.0f);
 	const int nArtW = static_cast<int>(84.0f * flArtScale);
 	const int nArtH = static_cast<int>(60.0f * flArtScale);
 

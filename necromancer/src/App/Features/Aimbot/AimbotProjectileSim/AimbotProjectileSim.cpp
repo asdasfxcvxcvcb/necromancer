@@ -131,14 +131,20 @@ static bool AirSplash(C_TFWeaponBase* pWeapon, Info_t& tInfo)
 
 static int GetHitboxPriority(int nHitbox, Target_t& tTarget, Info_t& tInfo, C_BaseEntity* pProjectile = nullptr)
 {
-	if (!F::AimbotGlobal->IsHitboxValid(nHitbox, ProjectileHitboxFlags()))
+	const int iHitboxFlags = ProjectileHitboxFlags();
+	const bool bAirborne = tTarget.m_iTargetType == TargetEnum::Player
+		&& !(tTarget.m_pEntity->As<C_TFPlayer>()->m_fFlags() & FL_ONGROUND);
+
+	const bool bValid = F::AimbotGlobal->IsHitboxValid(nHitbox, iHitboxFlags)
+		|| bAirborne && nHitbox == BOUNDS_BODY && tInfo.m_flRadius > 0.f && iHitboxFlags & HitboxesEnum::Feet;
+	if (!bValid)
 		return -1;
 
 	int iHeadPriority = 0;
 	int iBodyPriority = 1;
 	int iFeetPriority = 2;
 
-	if (ProjectileHitboxFlags() & HitboxesEnum::Auto)
+	if (iHitboxFlags & HitboxesEnum::Auto)
 	{
 		bool bHeadshot = ProjectileHitboxFlags() & HitboxesEnum::Head
 			&& tTarget.m_iTargetType == TargetEnum::Player;
@@ -167,13 +173,19 @@ static int GetHitboxPriority(int nHitbox, Target_t& tTarget, Info_t& tInfo, C_Ba
 		if (bHeadshot)
 			tTarget.m_nAimedHitbox = HITBOX_HEAD;
 
-		const bool bLower = ProjectileHitboxFlags() & HitboxesEnum::PrioritizeFeet
+		const bool bLower = iHitboxFlags & HitboxesEnum::PrioritizeFeet
 			&& tInfo.m_flRadius > 0.f
-			&& tTarget.m_iTargetType == TargetEnum::Player && tTarget.m_pEntity->As<C_TFPlayer>()->m_fFlags() & FL_ONGROUND;
+			&& !bAirborne;
 
 		iHeadPriority = bHeadshot ? 0 : 2;
 		iBodyPriority = bHeadshot ? -1 : bLower ? 1 : 0;
 		iFeetPriority = bHeadshot ? -1 : bLower ? 0 : 1;
+	}
+	else if (bAirborne && iHitboxFlags & HitboxesEnum::Feet)
+	{
+		iHeadPriority = 1;
+		iBodyPriority = 0;
+		iFeetPriority = 3;
 	}
 
 	switch (nHitbox)
@@ -2383,32 +2395,36 @@ bool CAimbotProjectileSim::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, 
 		{
 			if (bRocket)
 				m_flRocketPathAttack = flNextAttack;
-			I::DebugOverlay->ClearAllOverlays();
+			G::PathStorage.clear();
+			G::BoxStorage.clear();
+
+			const bool bTimed = CFG::Visuals_Draw_Paths_Timed;
+			const float flFlight = TICKS_TO_TIME(m_vProjectilePath.size());
+			const float flBoxDuration = flFlight + (bTimed ? m_tInfo.m_flLatency : 0.f);
 
 			if (CFG::Visuals_Draw_Movement_Path_Style > 0 && !m_vPlayerPath.empty())
 			{
-				const auto& col = CFG::Color_Simulation_Movement;
-				const int r = col.r, g = col.g, b = col.b;
-
-				for (size_t n = 1; n < m_vPlayerPath.size(); n++)
-				{
-					if (CFG::Visuals_Draw_Movement_Path_Style == 2 && n % 2 == 0)
-						continue;
-					I::DebugOverlay->AddLineOverlay(m_vPlayerPath[n], m_vPlayerPath[n - 1], r, g, b, false, 2.0f);
-				}
+				const float flPathTime = bTimed ? -static_cast<float>(m_vPlayerPath.size()) : I::GlobalVars->curtime + TICKS_TO_TIME(m_vPlayerPath.size());
+				G::PathStorage.push_back({ m_vPlayerPath, flPathTime, CFG::Color_Simulation_Movement, CFG::Visuals_Draw_Movement_Path_Style, false });
+				G::PathStorage.push_back({ m_vPlayerPath, flPathTime, CFG::Color_Simulation_Movement, CFG::Visuals_Draw_Movement_Path_Style, true });
 			}
 
 			if (CFG::Visuals_Draw_Predicted_Path_Style > 0)
 			{
-				const auto& col = CFG::Color_Simulation_Projectile;
-				const int r = col.r, g = col.g, b = col.b;
+				const float flPathTime = bTimed
+					? -static_cast<float>(m_vProjectilePath.size()) - TIME_TO_TICKS(m_tInfo.m_flLatency)
+					: I::GlobalVars->curtime + flFlight;
+				G::PathStorage.push_back({ m_vProjectilePath, flPathTime, CFG::Color_Simulation_Projectile, CFG::Visuals_Draw_Predicted_Path_Style, false });
+				G::PathStorage.push_back({ m_vProjectilePath, flPathTime, CFG::Color_Simulation_Projectile, CFG::Visuals_Draw_Predicted_Path_Style, true });
+			}
 
-				for (size_t n = 1; n < m_vProjectilePath.size(); n++)
-				{
-					if (CFG::Visuals_Draw_Predicted_Path_Style == 2 && n % 2 == 0)
-						continue;
-					I::DebugOverlay->AddLineOverlay(m_vProjectilePath[n], m_vProjectilePath[n - 1], r, g, b, false, 2.0f);
-				}
+			if (CFG::Visuals_Draw_BBox)
+			{
+				const Color_t tEdge = CFG::Color_Simulation_BBox_Edge;
+				const Color_t tFace = CFG::Color_Simulation_BBox_Face;
+				G::BoxStorage.push_back({ m_vPredicted, tTarget.m_pEntity->m_vecMins(), tTarget.m_pEntity->m_vecMaxs(), Vec3(), I::GlobalVars->curtime + flBoxDuration, tEdge, tFace, false });
+				G::BoxStorage.push_back({ m_vPredicted, tTarget.m_pEntity->m_vecMins(), tTarget.m_pEntity->m_vecMaxs(), Vec3(), I::GlobalVars->curtime + flBoxDuration, tEdge, tFace, true });
+				G::BoxStorage.push_back({ m_vTarget, Vec3(-1.f, -1.f, -1.f), Vec3(1.f, 1.f, 1.f), Vec3(), I::GlobalVars->curtime + flBoxDuration, tEdge, { 0, 0, 0, 0 }, true });
 			}
 		}
 

@@ -50,6 +50,7 @@ namespace
 				if (!CFG::Perf_Extreme_Skip_ESP && !CFG::Perf_Extreme_Skip_All_Visuals)
 				{
 					F::ESP->Run();
+					H::Draw->DrawStoredBoxFills();
 					F::MoveSimDebug->Draw();
 					F::AutoSapper->DrawESP();
 					F::TeamWellBeing->Run();

@@ -484,6 +484,12 @@ static CMFlow SectionCombatInPrediction(CClientModeShared* ecx, float flInputSam
 	}
 	F::FakeLagFix->Update();
 
+	for (auto& tPath : G::PathStorage)
+	{
+		if (tPath.m_flTime < 0.f)
+			tPath.m_flTime = std::min(tPath.m_flTime + 1.f, 0.f);
+	}
+
 	F::CrashHandler->s_Context.m_pszLastFeature = "Aimbot";
 	{
 		F::Aimbot->Run(pCmd);

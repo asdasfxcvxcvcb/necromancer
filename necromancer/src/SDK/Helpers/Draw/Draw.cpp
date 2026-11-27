@@ -222,6 +222,18 @@ void CDraw::String(const CFont &font, int x, int y, Color_t clr, short pos, cons
 
 void CDraw::Line(int x, int y, int x1, int y1, Color_t clr)
 {
+	if (IsTransformed() && (y == y1 || x == x1))
+	{
+		const int nLx = x < x1 ? x : x1;
+		const int nHx = x < x1 ? x1 : x;
+		const int nLy = y < y1 ? y : y1;
+		const int nHy = y < y1 ? y1 : y;
+		const int nX0 = X(nLx), nX1 = X(nHx + 1);
+		const int nY0 = Y(nLy), nY1 = Y(nHy + 1);
+		I::MatSystemSurface->DrawSetColor(clr.r, clr.g, clr.b, clr.a);
+		I::MatSystemSurface->DrawFilledRect(nX0, nY0, nX1 > nX0 ? nX1 : nX0 + 1, nY1 > nY0 ? nY1 : nY0 + 1);
+		return;
+	}
 	I::MatSystemSurface->DrawSetColor(clr.r, clr.g, clr.b, clr.a);
 	I::MatSystemSurface->DrawLine(X(x), Y(y), X(x1), Y(y1));
 }
@@ -529,11 +541,7 @@ void CDraw::RenderPath(const std::vector<Vec3>& vPath, Color_t tColor, bool bZBu
 		{
 			RenderLine(vPath[i - 1], vPath[i], tColor, bZBuffer);
 			if (!(i % iSeparatorSpacing))
-			{
-				// Draw a small box at this point
-				I::DebugOverlay->AddBoxOverlay(vPath[i], { -1, -1, -1 }, { 1, 1, 1 }, { 0, 0, 0 }, 
-					tColor.r, tColor.g, tColor.b, tColor.a, 0.0f);
-			}
+				RenderWireframeBox(vPath[i], { -1.f, -1.f, -1.f }, { 1.f, 1.f, 1.f }, {}, tColor, bZBuffer);
 			break;
 		}
 		}
@@ -541,6 +549,15 @@ void CDraw::RenderPath(const std::vector<Vec3>& vPath, Color_t tColor, bool bZBu
 }
 
 void CDraw::RenderBox(const Vec3& vOrigin, const Vec3& vMins, const Vec3& vMaxs, const Vec3& vAngles, Color_t tColor, bool bZBuffer)
+{
+	if (!tColor.a)
+		return;
+
+	QAngle angles = { vAngles.x, vAngles.y, vAngles.z };
+	RenderUtils::RenderWireframeBox(vOrigin, angles, vMins, vMaxs, tColor, bZBuffer);
+}
+
+void CDraw::RenderWireframeBox(const Vec3& vOrigin, const Vec3& vMins, const Vec3& vMaxs, const Vec3& vAngles, Color_t tColor, bool bZBuffer)
 {
 	if (!tColor.a)
 		return;
@@ -575,6 +592,76 @@ void CDraw::DrawStoredPaths()
 		if (tBox.m_flTime < I::GlobalVars->curtime)
 			continue;
 
-		RenderBox(tBox.m_vOrigin, tBox.m_vMins, tBox.m_vMaxs, tBox.m_vAngles, tBox.m_tColorEdge, tBox.m_bZBuffer);
+		if (tBox.m_tColorEdge.a)
+			RenderWireframeBox(tBox.m_vOrigin, tBox.m_vMins, tBox.m_vMaxs, tBox.m_vAngles, tBox.m_tColorEdge, tBox.m_bZBuffer);
+	}
+}
+void CDraw::DrawStoredBoxFills()
+{
+	if (CFG::Misc_Clean_Screenshot && I::EngineClient->IsTakingScreenshot())
+		return;
+
+	for (const auto& tBox : G::BoxStorage)
+	{
+		if (tBox.m_flTime < I::GlobalVars->curtime)
+			continue;
+
+		if (!tBox.m_tColorFace.a || tBox.m_bZBuffer)
+			continue;
+
+		{
+			const Vec3 aCorners[8] = {
+				tBox.m_vOrigin + Math::RotatePoint(tBox.m_vMins, {}, tBox.m_vAngles),
+				tBox.m_vOrigin + Math::RotatePoint(Vec3(tBox.m_vMaxs.x, tBox.m_vMins.y, tBox.m_vMins.z), {}, tBox.m_vAngles),
+				tBox.m_vOrigin + Math::RotatePoint(Vec3(tBox.m_vMaxs.x, tBox.m_vMaxs.y, tBox.m_vMins.z), {}, tBox.m_vAngles),
+				tBox.m_vOrigin + Math::RotatePoint(Vec3(tBox.m_vMins.x, tBox.m_vMaxs.y, tBox.m_vMins.z), {}, tBox.m_vAngles),
+				tBox.m_vOrigin + Math::RotatePoint(Vec3(tBox.m_vMins.x, tBox.m_vMins.y, tBox.m_vMaxs.z), {}, tBox.m_vAngles),
+				tBox.m_vOrigin + Math::RotatePoint(Vec3(tBox.m_vMaxs.x, tBox.m_vMins.y, tBox.m_vMaxs.z), {}, tBox.m_vAngles),
+				tBox.m_vOrigin + Math::RotatePoint(tBox.m_vMaxs, {}, tBox.m_vAngles),
+				tBox.m_vOrigin + Math::RotatePoint(Vec3(tBox.m_vMins.x, tBox.m_vMaxs.y, tBox.m_vMaxs.z), {}, tBox.m_vAngles)
+			};
+
+			constexpr int aFaces[6][4] = {
+				{ 0, 1, 2, 3 }, { 4, 5, 6, 7 },
+				{ 0, 1, 5, 4 }, { 2, 3, 7, 6 },
+				{ 0, 4, 7, 3 }, { 1, 2, 6, 5 }
+			};
+
+			Vec3 aScreens[8] = {};
+			float aDepth[8] = {};
+			const matrix3x4_t &w2s = m_WorldToProjection.As3x4();
+			for (int c = 0; c < 8; c++)
+			{
+				aDepth[c] = w2s[3][0] * aCorners[c][0] + w2s[3][1] * aCorners[c][1] + w2s[3][2] * aCorners[c][2] + w2s[3][3];
+				W2S(aCorners[c], aScreens[c]);
+			}
+
+			int aOrder[6] = { 0, 1, 2, 3, 4, 5 };
+			std::sort(aOrder, aOrder + 6, [&](int a, int b)
+			{
+				float flA = 0.f, flB = 0.f;
+				for (int k = 0; k < 4; k++) { flA += aDepth[aFaces[a][k]]; flB += aDepth[aFaces[b][k]]; }
+				return flA > flB;
+			});
+
+			for (int f = 0; f < 6; f++)
+			{
+				const int* pFace = aFaces[aOrder[f]];
+				bool bFaceOk = true;
+				for (int k = 0; k < 4; k++)
+				{
+					if (aDepth[pFace[k]] <= 0.001f)
+						bFaceOk = false;
+				}
+				if (!bFaceOk)
+					continue;
+
+				Vertex_t aVerts[4];
+				for (int k = 0; k < 4; k++)
+					aVerts[k] = Vertex_t(Vector2D(aScreens[pFace[k]].x, aScreens[pFace[k]].y));
+
+				Polygon(4, aVerts, tBox.m_tColorFace);
+			}
+		}
 	}
 }

@@ -47,6 +47,8 @@ public:
 	int InverseMouseX(int x) const;
 	int InverseMouseY(int y) const;
 	bool IsTransformed() const;
+	int ScreenX(int x) const { return X(x); }
+	int ScreenY(int y) const { return Y(y); }
 	void UpdateScreenSize();
 	void UpdateW2SMatrix();
 
@@ -79,9 +81,11 @@ public:
 	void RenderPath(const std::vector<Vec3>& vPath, Color_t tColor, bool bZBuffer = false,
 		int iStyle = 1, float flTime = 0.f, int iSeparatorSpacing = 5, float flSeparatorLength = 5.f);
 	void RenderBox(const Vec3& vOrigin, const Vec3& vMins, const Vec3& vMaxs, const Vec3& vAngles, Color_t tColor, bool bZBuffer = false);
+	void RenderWireframeBox(const Vec3& vOrigin, const Vec3& vMins, const Vec3& vMaxs, const Vec3& vAngles, Color_t tColor, bool bZBuffer = false);
 
 	// Draw all stored paths/lines/boxes
 	void DrawStoredPaths();
+	void DrawStoredBoxFills();
 };
 
 MAKE_SINGLETON_SCOPED(CDraw, Draw, H);

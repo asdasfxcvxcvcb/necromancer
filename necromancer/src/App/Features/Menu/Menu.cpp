@@ -758,8 +758,495 @@ static const char *FindCuratedDescription(const void *pVar)
 		{ &CFG::Visuals_Freecam_Speed, "Freecam movement speed in units per second." },
 		{ &CFG::Visuals_ChatESP_Active, "Draws chat messages above the players who sent them." },
 		{ &CFG::Visuals_Thirdperson_Active, "Moves your camera behind the player model." },
+		{ &CFG::Aimbot_Hitscan_Auto_Scope, "Scopes automatically when a shot is ready to fire." },
+		{ &CFG::Aimbot_Hitscan_Auto_Rev, "Starts revving the minigun automatically when a target is in range." },
+		{ &CFG::Aimbot_Hitscan_Wait_For_Headshot, "Holds fire until the predicted shot lands on the head." },
+		{ &CFG::Aimbot_Hitscan_Wait_For_Charge, "Sniper only: holds fire until the rifle is charged enough for a one-shot." },
+		{ &CFG::Aimbot_Hitscan_Smooth_When_Spec, "Keeps smoothing active while spectating so nothing snaps on your screen." },
+		{ &CFG::Aimbot_Hitscan_FakeLagFix, "Compensates your own choked packets so shots still register while fakelag runs." },
+		{ &CFG::Aimbot_Hitscan_Advanced_Smooth_AutoShoot, "Fires only when the smoothed view has actually reached the target." },
+		{ &CFG::Aimbot_Hitscan_Sort_VisibleOnly, "Only picks targets the aimbot can actually see." },
+		{ &CFG::Aimbot_Hitscan_Silent_Return, "Heavy + silent aim: smoothly returns your real view to the aim direction after shots." },
+		{ &CFG::Aimbot_Hitscan_Target_Stickies, "Lets the hitscan aimbot target enemy sticky bombs (e.g. to pop or shoot them)." },
+		{ &CFG::Aimbot_Melee_Target_LagRecords, "Aims against the target's delayed network position, like hitscan does." },
+		{ &CFG::Aimbot_Melee_Always_Crit, "Melee swings only fire when a crit is predicted." },
+		{ &CFG::Aimbot_Melee_Predict_Swing, "Starts the swing early based on where the target will be when the melee connects." },
+		{ &CFG::Aimbot_Melee_Walk_To_Target, "Walks toward the melee target automatically when out of range." },
+		{ &CFG::Aimbot_Melee_Auto_Repair, "Engineer: melee-repairs your buildings automatically when damaged." },
+		{ &CFG::Aimbot_Melee_Swing_Predict_Lag, "Times swings against the target's lagged position." },
+		{ &CFG::Triggerbot_AutoAirblast_Active, "Auto-puffs airblast to reflect incoming projectiles." },
+		{ &CFG::Triggerbot_AutoAirblast_Always_On, "Airblasts without holding the triggerbot key." },
+		{ &CFG::Triggerbot_AutoAirblast_Aimbot_Support, "Turns your view toward the projectile before reflecting." },
+		{ &CFG::Triggerbot_AutoDetonate_Active, "Detonates your stickies automatically when an enemy walks into them." },
+		{ &CFG::Triggerbot_AutoDetonate_Always_On, "Detonates without holding the triggerbot key." },
+		{ &CFG::Triggerbot_AutoDetonate_Prevent_Self, "Never detonates if the blast would damage you." },
+		{ &CFG::Triggerbot_AutoDetonate_Timer_Enabled, "Adds a delay between enemy detection and detonation." },
+		{ &CFG::Triggerbot_AutoDetonate_DangerZone_Enabled, "Also detonates for Danger Zone mode blast radius." },
+		{ &CFG::Triggerbot_AutoBackstab_Active, "Auto-performs backstabs when you are behind an enemy." },
+		{ &CFG::Triggerbot_AutoBackstab_Always_On, "Backstabs without holding the triggerbot key." },
+		{ &CFG::Triggerbot_AutoBackstab_Knife_If_Lethal, "Uses the knife for the killing blow even when another weapon is out." },
+		{ &CFG::Triggerbot_AutoSapper_Active, "Auto-places sappers on enemy buildings you are looking at." },
+		{ &CFG::Triggerbot_AutoSapper_Always_On, "Sappers without holding the triggerbot key." },
+		{ &CFG::Triggerbot_AutoSapper_ESP, "Draws an outline on buildings that are in sapper range." },
+		{ &CFG::AutoUber_Always_On, "Uber logic runs without holding the triggerbot key." },
+		{ &CFG::AutoUber_Pop_On_Voice, "Pops uber when you use the 'Move up!' medic call voice command." },
+		{ &CFG::AutoUber_Friends_Only, "Only auto-ubers when you (or a Steam friend) are the one in danger." },
+		{ &CFG::AutoHeal_Always_On, "Heals teammates automatically without holding the triggerbot key." },
+		{ &CFG::AutoHeal_Friends_Only, "Only auto-heals Steam friends." },
+		{ &CFG::Aimbot_Projectile_AutoArrow, "Medic: fires crossbow bolts to heal or damage automatically." },
+		{ &CFG::Aimbot_Projectile_AutoArrow_FriendsOnly, "Only auto-fires healing arrows at Steam friends." },
+		{ &CFG::NavBot_AutoJump, "Bot jumps gaps and obstacles automatically." },
+		{ &CFG::NavBot_RouteVariety, "Bot varies its route between runs instead of repeating the same path." },
+		{ &CFG::NavBot_RouteVarietyStrength, "How strongly the bot deviates from the shortest route." },
+		{ &CFG::NavBot_WanderWhenIdle, "Bot roams the map when it has no objective to pursue." },
+		{ &CFG::NavBot_AvoidObstacles, "Bot steers around players, buildings and props blocking its path." },
+		{ &CFG::NavBot_PathLookAhead, "How far ahead of the bot it aims its movement; higher smooths corners." },
+		{ &CFG::NavBot_CornerSpeed, "Speed multiplier when turning through corners; lower = tighter, safer turns." },
+		{ &CFG::NavBot_StuckThreshold, "How long the bot must fail to move before it considers itself stuck." },
+		{ &CFG::NavBot_TeleportThreshold, "Distance at which the bot gives up walking and snaps to its nav point." },
+		{ &CFG::NavBot_StuckWiggle, "Wiggles left/right to unstick itself before teleporting." },
+		{ &CFG::NavBot_BlindWander, "Bot keeps walking even on maps with no navigation mesh." },
+		{ &CFG::NavBot_DeathPause, "Pauses the bot for a moment after dying so it doesn't act while dead." },
+		{ &CFG::NavBot_DeathPauseDuration, "How long the bot waits after death before moving again." },
+		{ &CFG::NavBot_Debug, "Prints nav bot debug info to the console." },
+		{ &CFG::NavBot_LookAtPath, "Bot's view follows its path instead of enemies (debug aid)." },
+		{ &CFG::NavBot_LookSpeed, "How fast the bot turns its view while following the path." },
+		{ &CFG::NavBot_DrawWaypoints, "Draws the nav waypoints the bot is using." },
+		{ &CFG::NavBot_FollowDistance, "How close the bot tries to stay to the player it is following." },
+		{ &CFG::NavBot_FollowSupplyDistance, "How far it may wander from the followed player to grab health/ammo." },
+		{ &CFG::NavBot_AvoidMelee, "With Best weapon mode: avoids picking melee even when close." },
+		{ &CFG::ESP_Players_Active, "Draws ESP info on players: names, boxes, health, bones and more (ticked in Draw)." },
+		{ &CFG::ESP_World_Active, "Draws ESP info on world objects like packs and money." },
+		{ &CFG::ESP_Buildings_Active, "Draws ESP info on buildings: level, health, builder and more." },
+		{ &CFG::Radar_Players_Active, "Shows players on the radar." },
+		{ &CFG::Radar_Buildings_Active, "Shows buildings on the radar." },
+		{ &CFG::Radar_World_Active, "Shows world pickups on the radar." },
+		{ &CFG::Materials_World_Active, "Replaces the material on world objects (packs, money, projectiles)." },
+		{ &CFG::Materials_ViewModel_Active, "Replaces the material on your first-person hands and weapon." },
+		{ &CFG::Materials_Players_Active, "Replaces the material on player models (chams)." },
+		{ &CFG::Materials_FakeModel_Active, "Applies a material to your fake-angle model when anti-aim is on." },
+		{ &CFG::Materials_Buildings_Active, "Replaces the material on buildings." },
+		{ &CFG::Materials_LagRecords_Active, "Draws the target's lagged back-history positions with a material." },
+		{ &CFG::Outlines_World_Active, "Glow outline on world objects." },
+		{ &CFG::Outlines_Players_Active, "Glow outline on player models." },
+		{ &CFG::Outlines_Buildings_Active, "Glow outline on buildings." },
+		{ &CFG::Outlines_LagRecords_Active, "Glow outline on lag record ghosts." },
+		{ &CFG::Visuals_ViewModel_Active, "Modifies your first-person viewmodel position and behaviour." },
+		{ &CFG::Visuals_ViewModel_Sway, "Adds weapon sway when you move the mouse." },
+		{ &CFG::Visuals_ViewModel_Minimal, "Shrinks the viewmodel toward the screen edge so it blocks less view." },
+		{ &CFG::Visuals_Viewmodel_Flip, "Mirrors the viewmodel to the other side of the screen." },
+		{ &CFG::Visuals_ViewModel_WorldModel, "Uses the world model instead of the viewmodel in first person." },
+		{ &CFG::Visuals_SpyCamera_Active, "Shows a small picture-in-picture camera view you can position." },
+		{ &CFG::Viuals_SpyWarning_Active, "Warns you when an enemy spy is watching you from behind." },
+		{ &CFG::Viuals_SpyWarning_Announce, "Also prints a chat warning when a spy is detected." },
+		{ &CFG::Visuals_Ragdolls_Active, "Overrides how death ragdolls behave and look." },
+		{ &CFG::Visuals_Beams_Active, "Draws custom beams (laser-style lines) at world positions." },
+		{ &CFG::Visuals_Paint_Active, "Paint mode: hold the key to draw colored marks on the world." },
+		{ &CFG::Visuals_TeamWellBeing_Active, "Shows a panel with your team's health and uber status." },
+		{ &CFG::Visuals_Flat_Textures, "Replaces world textures with flat colors (performance / look)." },
+		{ &CFG::Visuals_Remove_Sky_Fog, "Disables fog on the 3D skybox." },
+		{ &CFG::Visuals_Distance_Prop_Alpha, "Fades out far-away props to reduce clutter." },
+		{ &CFG::Visuals_World_Modulation_No_Sky_Change, "Applies world color modulation without touching the skybox." },
+		{ &CFG::Visuals_Disable_Detail_Props, "Removes small grass/detail props for FPS." },
+		{ &CFG::Visuals_Disable_Ragdolls, "Removes death ragdolls for FPS." },
+		{ &CFG::Visuals_Disable_Wearables, "Removes cosmetic wearables for FPS." },
+		{ &CFG::Visuals_Disable_Post_Processing, "Disables post-processing effects for FPS." },
+		{ &CFG::Visuals_Disable_Dropped_Weapons, "Hides dropped weapon models for FPS." },
+		{ &CFG::Visuals_Disable_Interp, "Uses the newest network position directly instead of interpolating." },
+		{ &CFG::Visuals_Simple_Models, "Renders simplified low-detail models for FPS." },
+		{ &CFG::Visuals_Auto_Interp, "Lowers interp automatically on weapons that benefit from it." },
+		{ &CFG::Perf_Minimal_Entities, "Skips updating entities the cheat doesn't need (big FPS win, some features degrade)." },
+		{ &CFG::SkinChanger_Australium, "Skin changer: forces Australium finish on supported weapons." },
+		{ &CFG::SkinChanger_Festivized, "Skin changer: forces the festive wrap look." },
+		{ &CFG::Visuals_Sheen_Active, "Forces a killstreak sheen (shimmer) on weapons." },
+		{ &CFG::Visuals_Sheen_Rainbow, "Sheen cycles through all colors instead of a fixed one." },
+		{ &CFG::Visuals_Crit_Indicator, "Shows whether the next shot will crit (bar or text)." },
+		{ &CFG::Visuals_Crit_Indicator_TextMode, "Shows the crit indicator as text instead of a bar." },
+		{ &CFG::Misc_NoiseMaker_Spam, "Re-triggers your noisemaker constantly." },
+		{ &CFG::Misc_MVM_Giant_Weapon_Sounds, "Plays the giant-robot weapon sounds for your weapons in MvM." },
+		{ &CFG::Misc_Equip_Region_Unlock, "Allows equipping cosmetic items that normally conflict." },
+		{ &CFG::Misc_Backpack_Expander, "Client-side backpack page expansion." },
+		{ &CFG::Misc_Shield_Turn_Rate, "Removes the turn-rate limit on the shield/mana charge." },
+		{ &CFG::Misc_Prevent_Server_Angle_Change, "Stops the server from snapping your view angles." },
+		{ &CFG::Misc_Extend_Queue, "Extends the casual queue join window." },
+		{ &CFG::Misc_PDA_Exploit_Sniper, "Sniper PDA exploit; use only on servers where you accept the risk." },
+		{ &CFG::Misc_Disable_Scroll_Input, "Stops the mouse wheel from switching weapons while the menu logic is active." },
+		{ &CFG::Misc_Pred_Error_Jitter_Fix, "Smooths out prediction-error jitter on your own player." },
+		{ &CFG::Misc_ComputeLightingOrigin_Fix, "Fixes lighting glitches caused by the engine's lighting origin optimization." },
+		{ &CFG::Misc_MVM_Instant_Revive, "MvM: instantly respawn-revives instead of waiting for the revive countdown." },
+		{ &CFG::Misc_MvM_Auto_Revive, "MvM: automatically buys the revive when you die with credits available." },
+		{ &CFG::Misc_Taunt_Slide_Control, "Lets you steer while taunt-sliding." },
+		{ &CFG::Misc_Taunt_Spin_Sine, "Taunt spin speed follows a sine wave instead of constant rotation." },
+		{ &CFG::Misc_Auto_Accept_Items, "Auto-accepts the item drop popup." },
+		{ &CFG::Misc_Auto_FastClassSwitch, "Instantly switches class on death without the menu." },
+		{ &CFG::Misc_Auto_Rejoin_On_Kick, "Automatically re-queues if you get vote-kicked." },
+		{ &CFG::Misc_Trade_Spam_Tagged_Only, "Trade spam only targets players you tagged." },
+		{ &CFG::Misc_Projectile_Dodge_Only_Warp, "Projectile dodge only reacts by warping, never by normal movement." },
+		{ &CFG::Misc_Projectile_Dodge_Use_Warp, "Projectile dodge may spend warp ticks to dodge." },
+		{ &CFG::Misc_Projectile_Dodge_Disable_DT_Airborne, "Disables doubletap shifts while you are airborne so dodges stay reliable." },
+		{ &CFG::Misc_Auto_Call_Medic_Low_HP, "Only auto-calls medic below the HP threshold instead of on any damage." },
+		{ &CFG::Soundpad_Randomize, "Plays a random file from your selection each time." },
+		{ &CFG::Soundpad_MuteMic, "Mutes your real microphone while a sound is playing." },
+		{ &CFG::Soundpad_Monitor, "Lets you hear the sound locally while it plays to others." },
+		{ &CFG::Soundpad_Indicator, "Shows an on-screen indicator while a sound is playing." },
+		{ &CFG::Soundpad_KeyStops, "Your voice key stops the current sound." },
+		{ &CFG::Perf_Extreme_FPS_Limit, "Caps the game's frame rate (0 = uncapped)." },
+		{ &CFG::Perf_Extreme_Minimal_Render, "Strips rendering down to the bare minimum for maximum FPS." },
 	};
 	const auto it = map.find(pVar);
+	return it != map.end() ? it->second : nullptr;
+}
+struct DescText_t { const char *szKey; const char *szText; };
+static const std::unordered_map<std::string, const char *> &GetTextDescMap()
+{
+	static const std::unordered_map<std::string, const char *> map = {
+		{ "t:Aim", "Combat automation: aimbot, triggerbot, auto airblast/backstab/uber/vaccinator/detonate/sapper/heal. Pick targets, aim styles and what to ignore." },
+		{ "t:Visuals", "Everything rendered: ESP boxes and info, radar, material changers (chams), glow outlines, skins/killstreaks, custom colors, removals and FPS options." },
+		{ "t:Exploits", "Tick-based exploits: doubletap and recharge, fakelag, anti-aim, crit forcing, no-spread seed prediction and casual region filtering." },
+		{ "t:Misc", "Server/game tweaks, movement helpers (bhop, auto rocket jump, duck air), chat and voice automation, auto-queue, auto-F1/F2 and account actions." },
+		{ "t:NavBot", "A bot that plays for you: walks the map using its navigation mesh, fights, captures objectives, grabs health/ammo and can follow you or tagged players." },
+		{ "t:Players", "Everyone on the current server. Tag friends/cheaters/streamers, search names, and open a player's page for encounter history and ban-database lookups." },
+		{ "t:Configs", "Manage cheat settings: load/save/delete config files, migrate old SEOwnedDE configs, unlock achievements and control autosave." },
+		{ "t:Soundpad", "Plays your local sound files (mp3/ogg/wav) through the microphone channel so other players hear them." },
+		{ "t:NecroNet", "The built-in account and chat network for necromancer users: sign in with Steam, add friends, chat in-game and appear on the public user listing." },
+		{ "t:PacMan", "A built-in Pac-Man minigame playable inside the menu. High score is saved in your config." },
+		{ "Aim Type|Normal", "Turns your real view toward the target every tick; everyone sees you aim." },
+		{ "Aim Type|Silent", "Aims only on the attack packet; your visible view stays where you look, but shots fire from the aim angle." },
+		{ "Aim Type|Smooth", "Turns toward the target over several ticks so it looks like human aim." },
+		{ "Aim Type|Triggerbot", "Never rotates your view; only fires when your crosshair is already on the target." },
+		{ "Hitbox|Head", "Only aims at the head; max damage but fewer hits." },
+		{ "Hitbox|Body", "Only aims at the chest/body; easier hits, less damage." },
+		{ "Hitbox|Auto", "Chooses head or body per shot based on distance, weapon and hit chance." },
+		{ "Hitbox|Switch", "Aims at the last chosen hitbox and swaps using the Switch Key." },
+		{ "Sort|FOV", "Targets whoever is closest to your crosshair." },
+		{ "Sort|Distance", "Targets whoever is physically nearest to you." },
+		{ "Splash|Off", "No splash aim; only direct projectile hits are aimed at." },
+		{ "Splash|Include", "Also considers points near the target that would splash-damage them." },
+		{ "Splash|Prefer", "Prefers splash points over direct hits when they are more likely to connect." },
+		{ "Splash|Only", "Only aims at splash points, never directly at the target." },
+		{ "Splash Mode|Trace", "Finds splash points by tracing against walls and floors (accurate)." },
+		{ "Splash Mode|Face", "Estimates splash points around the target's facing geometry (faster, less exact)." },
+		{ "Aim Position|Feet", "Aims at the target's feet - best for splash weapons like the rocket launcher." },
+		{ "Aim Position|Body", "Aims at the target's chest." },
+		{ "Aim Position|Head", "Aims at the target's head." },
+		{ "Aim Position|Auto", "Picks feet/body/head per situation: distance, cover and weapon type." },
+		{ "Warp Mode|Slow", "Spends warp ticks gradually for smaller, less obvious shifts." },
+		{ "Warp Mode|Full", "Dumps the entire tick bank in one instant shift." },
+		{ "Warp Exploit|None", "Just shifts ticks; no extra effect." },
+		{ "Warp Exploit|Fake Peek", "The warp briefly shows you out of cover, then snaps you back." },
+		{ "Warp Exploit|0 Velocity", "Warps while your reported velocity stays zero, confusing aimbot defenders." },
+		{ "Real Pitch|None", "No pitch modification on your real view." },
+		{ "Real Pitch|Up", "Forces your real view to look straight up." },
+		{ "Real Pitch|Down", "Forces your real view to look straight down." },
+		{ "Real Pitch|Zero", "Forces your real view pitch to level." },
+		{ "Real Pitch|Jitter", "Randomly jumps your real pitch every tick." },
+		{ "Real Pitch|Reverse Jitter", "Jitter that alternates between opposite pitch values." },
+		{ "Fake Pitch|None", "No pitch modification on your fake (server-side) view." },
+		{ "Fake Pitch|Up", "Server sees you looking straight up." },
+		{ "Fake Pitch|Down", "Server sees you looking straight down." },
+		{ "Fake Pitch|Jitter", "Server sees a randomly jumping pitch." },
+		{ "Fake Pitch|Reverse Jitter", "Server sees pitch alternating between opposite values." },
+		{ "Real Yaw|Forward", "Real view stays facing forward." },
+		{ "Real Yaw|Left", "Real view turned 90 degrees left." },
+		{ "Real Yaw|Right", "Real view turned 90 degrees right." },
+		{ "Real Yaw|Backwards", "Real view facing backwards." },
+		{ "Real Yaw|Edge", "Real view hugs the edge of the allowed angle window, antiaim-style." },
+		{ "Real Yaw|Jitter", "Real view randomly jumps left/right." },
+		{ "Real Yaw|Spin", "Real view spins continuously." },
+		{ "Fake Yaw|Forward", "Server sees you facing forward." },
+		{ "Fake Yaw|Left", "Server sees you facing left." },
+		{ "Fake Yaw|Right", "Server sees you facing right." },
+		{ "Fake Yaw|Backwards", "Server sees you facing backwards." },
+		{ "Fake Yaw|Edge", "Server sees your view hugging the angle window edge." },
+		{ "Fake Yaw|Jitter", "Server sees randomly jumping yaw." },
+		{ "Fake Yaw|Spin", "Server sees you spinning." },
+		{ "Real Base|View", "Real angle offsets are measured from where you actually look." },
+		{ "Real Base|Target", "Real angle offsets are measured from the direction of your current target." },
+		{ "Fake Base|View", "Fake angle offsets are measured from where you actually look." },
+		{ "Fake Base|Target", "Fake angle offsets are measured from your target's direction." },
+		{ "Mode|Legit", "Conservative behaviour that looks like normal play." },
+		{ "Mode|Rage", "Full-speed behaviour tuned for hits, not for looking legit." },
+		{ "Mode|Off", "Turns this feature off." },
+		{ "Mode|Yaw", "Twists your view sideways when a backstab is incoming so the stab fails." },
+		{ "Mode|Pitch", "Twists your view vertically when a backstab is incoming." },
+		{ "Mode|Fake", "Sends a fake angle so the enemy spy's stab misses." },
+		{ "Mode|Simple", "Scopes when the target is far enough away." },
+		{ "Mode|MoveSim", "Scopes using simulated target movement to predict the shot." },
+		{ "Pop For|Everyone", "Auto-uber/auto-vacc reacts to damage against anyone on your team." },
+		{ "Pop For|Friends Only", "Only reacts when you or a Steam friend are in danger." },
+		{ "Strict Level|Max", "Reacts to almost any incoming damage." },
+		{ "Strict Level|High", "Reacts quickly but ignores minor chip damage." },
+		{ "Strict Level|Medium", "Reacts to moderate threats only." },
+		{ "Strict Level|Low", "Reacts only to serious damage - saves charges." },
+		{ "Auto RJ Mode|High", "Jumps nearly straight up for maximum height." },
+		{ "Auto RJ Mode|Forward", "Adds forward momentum for distance jumps." },
+		{ "Auto RJ Mode|Dynamic", "Chooses the jump angle based on where you are aiming." },
+		{ "Aim Mode|Normal", "Performs the action using your real view direction." },
+		{ "Aim Mode|Silent", "Performs the action without turning your visible view." },
+		{ "Tracer From|Top", "Tracer lines start at the top of the target's box." },
+		{ "Tracer From|Center", "Tracer lines start at the box center." },
+		{ "Tracer From|Bottom", "Tracer lines start at the box bottom." },
+		{ "Tracer To|Top", "Tracer lines end at the top of your screen position." },
+		{ "Tracer To|Center", "Tracer lines end at your screen center." },
+		{ "Tracer To|Bottom", "Tracer lines end at the bottom of your screen." },
+		{ "Text Color|Default", "ESP text uses your configured team colors." },
+		{ "Text Color|White", "ESP text is forced white." },
+		{ "Bones Color|Default", "Bone lines use your configured team colors." },
+		{ "Bones Color|White", "Bone lines are forced white." },
+		{ "Material|Original", "Keeps the game's real texture." },
+		{ "Material|Flat", "Solid flat color, no shading." },
+		{ "Material|Shaded", "Flat color with simple shading for depth." },
+		{ "Material|Glossy", "Shiny reflective-looking finish." },
+		{ "Material|Glow", "Bright glowing finish that stands out in the dark." },
+		{ "Material|Plastic", "Smooth matte plastic look." },
+		{ "Style|Rectangle", "Radar drawn as a square." },
+		{ "Style|Circle", "Radar drawn as a circle." },
+		{ "Style|Bloom", "Soft bloomed glow outline." },
+		{ "Style|Crisp", "Sharp clean outline." },
+		{ "Style|Cartoony", "Thick cartoon-style outline." },
+		{ "Style|Cartoony Alt", "Alternate cartoon outline variant." },
+		{ "Style|TF2 Glow", "Mimics the game's own player glow effect." },
+		{ "Style|All", "Draws every stored lag record." },
+		{ "Style|Last Only", "Draws only the most recent lag record." },
+		{ "Weather|Off", "No weather effects." },
+		{ "Weather|Rain", "Adds a full rain effect to the map." },
+		{ "Weather|Light Rain", "Adds a subtle light rain effect." },
+		{ "World Modulation Mode|Night Mode", "Darkens the world automatically by the slider amount." },
+		{ "World Modulation Mode|Custom Color", "Tints the world with the color you configured." },
+		{ "Particles Mode|Original", "Keeps the game's real particle colors." },
+		{ "Particles Mode|Custom Color", "Recolors particles with your configured color." },
+		{ "Particles Mode|Rainbow", "Particles cycle through the rainbow." },
+		{ "Movement Path Style|Disabled", "Does not draw your predicted movement path." },
+		{ "Movement Path Style|Line", "Solid line showing where you will move." },
+		{ "Movement Path Style|Dashed Line", "Dashed line showing where you will move." },
+		{ "Movement Path Style|Alt Line", "Alternating-thickness line showing where you will move." },
+		{ "Projectile Path Style|Disabled", "Does not draw predicted projectile paths." },
+		{ "Projectile Path Style|Line", "Solid line showing the projectile's predicted path." },
+		{ "Projectile Path Style|Dashed Line", "Dashed line showing the projectile's predicted path." },
+		{ "Projectile Path Style|Alt Line", "Alternating-thickness line showing the projectile's predicted path." },
+		{ "Tracer Effect|Default", "Keeps the game's real bullet tracer." },
+		{ "Tracer Effect|C.A.P.P.E.R", "C.A.P.P.E.R laser-style tracer." },
+		{ "Tracer Effect|Machina (White)", "White Machina-style tracer." },
+		{ "Tracer Effect|Machina (Team)", "Team-colored Machina-style tracer." },
+		{ "Tracer Effect|Big Nasty", "Big Nasty shotgun-style tracer." },
+		{ "Tracer Effect|Short Circuit", "Short Circuit electric tracer." },
+		{ "Tracer Effect|Mrasmus Zap", "Electric zap-style tracer." },
+		{ "Tracer Effect|Random", "Random tracer style each shot." },
+		{ "Tracer Effect|Random (No Zap)", "Random tracer style, excluding the zap ones." },
+		{ "Crit Tracer Effect|Off", "Crit shots keep the normal tracer." },
+		{ "Crit Tracer Effect|C.A.P.P.E.R", "Crit shots use the C.A.P.P.E.R tracer." },
+		{ "Crit Tracer Effect|Machina (White)", "Crit shots use the white Machina tracer." },
+		{ "Crit Tracer Effect|Machina (Team)", "Crit shots use the team-colored Machina tracer." },
+		{ "Crit Tracer Effect|Big Nasty", "Crit shots use the Big Nasty tracer." },
+		{ "Crit Tracer Effect|Short Circuit", "Crit shots use the Short Circuit tracer." },
+		{ "Crit Tracer Effect|Mrasmus Zap", "Crit shots use the zap tracer." },
+		{ "Crit Tracer Effect|Random", "Crit shots use a random tracer." },
+		{ "Crit Tracer Effect|Random (No Zap)", "Crit shots use a random non-zap tracer." },
+		{ "Projectile Trail|Default", "Keeps the game's own projectile trail." },
+		{ "Projectile Trail|None", "Removes the projectile trail." },
+		{ "Projectile Trail|Rocket", "Rocket-style smoke trail." },
+		{ "Projectile Trail|Critical", "Critical-hit style trail." },
+		{ "Projectile Trail|Energy", "Energy-weapon style trail." },
+		{ "Projectile Trail|Charged", "Charged-shot style trail." },
+		{ "Projectile Trail|Ray", "Beam-ray style trail." },
+		{ "Projectile Trail|Fireball", "Burning fireball trail." },
+		{ "Projectile Trail|Teleport", "Teleport-style particle trail." },
+		{ "Projectile Trail|Fire", "Flame trail." },
+		{ "Projectile Trail|Flame", "Alternate flame trail." },
+		{ "Projectile Trail|Sparks", "Spark trail." },
+		{ "Projectile Trail|Flare", "Flare-gun style trail." },
+		{ "Projectile Trail|Trail", "Generic particle trail." },
+		{ "Projectile Trail|Health", "Health-cross style trail." },
+		{ "Projectile Trail|Smoke", "Smoke puffs trail." },
+		{ "Projectile Trail|Bubbles", "Bubble trail." },
+		{ "Projectile Trail|Halloween", "Halloween-themed trail." },
+		{ "Projectile Trail|Monoculus", "Monoculus eye style trail." },
+		{ "Projectile Trail|Sparkles", "Sparkle trail." },
+		{ "Projectile Trail|Rainbow", "Rainbow colored trail." },
+		{ "Removals Mode|Everyone", "Applies the removals to all players' effects." },
+		{ "Removals Mode|Local Only", "Only removes the effects on your own screen." },
+		{ "Tier|Off", "No killstreak effects on the weapon." },
+		{ "Tier|Basic", "Basic killstreak: kill counter eyes glow." },
+		{ "Tier|Specialized", "Adds a colored sheen shimmer on kills." },
+		{ "Tier|Professional", "Adds a sheen plus a killstreaker effect." },
+		{ "Effect|Default", "Keeps the game's normal ragdoll behaviour." },
+		{ "Effect|Burning", "Ragdolls appear on fire." },
+		{ "Effect|Electrocuted", "Ragdolls appear electrocuted." },
+		{ "Effect|Ash", "Ragdolls turn to ash piles." },
+		{ "Effect|Gold", "Ragdolls turn to gold statues." },
+		{ "Effect|Ice", "Ragdolls freeze in ice." },
+		{ "Effect|Dissolve", "Ragdolls dissolve away." },
+		{ "Effect|Random", "Picks a random ragdoll effect per death." },
+		{ "Streamer Mode|Off", "Hides cheat visuals from nobody." },
+		{ "Streamer Mode|Local", "Hides cheat visuals only from you (screenshots look clean)." },
+		{ "Streamer Mode|Friends", "Hides cheat visuals on Steam friends' clients... only affects your own view filters." },
+		{ "Streamer Mode|Party", "Hides cheat visuals for party members' info." },
+		{ "Streamer Mode|All", "Maximum hiding: cleanest possible screen." },
+		{ "Targets|Players", "Lets this feature target players." },
+		{ "Targets|Buildings", "Lets this feature target buildings (sentries, dispensers, teleporters)." },
+		{ "Ignore|Friends", "Never targets or affects players on your Steam friends list." },
+		{ "Ignore|Invisible", "Skips cloaked or disguised spies you can't properly see." },
+		{ "Ignore|Invulnerable", "Skips ubercharged/godmode targets." },
+		{ "Ignore|Taunting", "Skips players who are taunting." },
+		{ "Ignore|Stickies", "Skips enemy sticky bombs." },
+		{ "Ignore|Vaccinator Popped", "Skips targets with an active Vaccinator resist shield." },
+		{ "Ignore|Local", "Skips your own player/model." },
+		{ "Ignore|Enemies", "Skips enemy-team entities." },
+		{ "Ignore|Teammates", "Skips teammate entities." },
+		{ "Ignore|Tagged", "Skips players you tagged in the Players tab." },
+		{ "Ignore|Tagged Teammates", "Skips tagged players who are on your team." },
+		{ "Ignore|Friend Teammates", "Skips teammates who are also Steam friends." },
+		{ "Ignore|Health Packs", "Skips health pack pickups." },
+		{ "Ignore|Ammo Packs", "Skips ammo pack pickups." },
+		{ "Ignore|Halloween Gifts", "Skips Halloween gift pickups." },
+		{ "Ignore|MVM Money", "Skips MvM cash pickups." },
+		{ "Ignore|Local Projectiles", "Skips projectiles you fired." },
+		{ "Ignore|Enemy Projectiles", "Skips projectiles fired by enemies." },
+		{ "Ignore|Teammate Projectiles", "Skips projectiles fired by teammates." },
+		{ "Ignore|Cloaked", "Skips currently-cloaked spies." },
+		{ "Ignore|Razorback", "Skips players wearing a Razorback shield." },
+		{ "Ignore|Rocket", "Never reflects rockets." },
+		{ "Ignore|Sentry Rocket", "Never reflects sentry-fired rockets." },
+		{ "Ignore|Jarate", "Never reflects thrown jars (Jarate/Mad Milk)."},
+		{ "Ignore|Gas", "Never reflects gas-style projectiles." },
+		{ "Ignore|Milk", "Never reflects Mad Milk." },
+		{ "Ignore|Arrow", "Never reflects arrows." },
+		{ "Ignore|Flare", "Never reflects flares." },
+		{ "Ignore|Cleaver", "Never reflects flying cleavers." },
+		{ "Ignore|Healing Bolt", "Never reflects medicinal arrows." },
+		{ "Ignore|Pipebomb", "Never reflects pipebomb grenades." },
+		{ "Ignore|Ball of Fire", "Never reflects Dragon's Fury fire balls." },
+		{ "Ignore|Energy Ring", "Never reflects Bison-style energy rings." },
+		{ "Ignore|Energy Ball", "Never reflects Cow Mangler-style charge shots." },
+		{ "Draw|Name", "Shows the entity's name." },
+		{ "Draw|Weapon Name", "Shows the name of the weapon the player is holding." },
+		{ "Draw|Tags", "Shows any tags you gave the player." },
+		{ "Draw|Class", "Shows the player's current class as text." },
+		{ "Draw|Class Icon", "Shows the player's class as an icon." },
+		{ "Draw|Health", "Shows the entity's health as a number." },
+		{ "Draw|Health Bar", "Shows a health bar." },
+		{ "Draw|Uber", "Shows the medic's uber percentage." },
+		{ "Draw|Uber Bar", "Shows an uber charge bar." },
+		{ "Draw|Box", "Draws a bounding box around the entity." },
+		{ "Draw|Tracer", "Draws a line from your screen to the entity." },
+		{ "Draw|Bones", "Draws the skeleton bone lines." },
+		{ "Draw|Arrows", "Draws off-screen arrows pointing to entities behind you." },
+		{ "Draw|Conds", "Shows active condition effects (buffs/debuffs)." },
+		{ "Draw|Sniper Lines", "Draws sniper laser sight lines." },
+		{ "Draw|F2P Tag", "Marks free-to-play players." },
+		{ "Draw|Party Tag", "Marks players in your party." },
+		{ "Draw|Level", "Shows the building's level." },
+		{ "Draw|Level Bar", "Shows a building upgrade progress bar." },
+		{ "Behavior|Capture Objectives", "Bot pushes points, payload and intelligence." },
+		{ "Behavior|Defend Objectives", "Bot stays near objectives your team already owns." },
+		{ "Behavior|Search Health", "Bot goes to health packs when hurt." },
+		{ "Behavior|Search Ammo", "Bot goes to ammo packs when low." },
+		{ "Behavior|Reload Weapons", "Bot reloads when safe." },
+		{ "Behavior|Stalk Enemies", "Bot follows enemies it has spotted." },
+		{ "Behavior|Sniper Spots", "Bot uses known sniper positions when playing sniper." },
+		{ "Behavior|Escape Danger", "Bot retreats from explosions, stickies and fire." },
+		{ "Behavior|Wait For Setup", "Bot stays put during setup time." },
+		{ "Behavior|Follow Teammates", "Bot follows nearby teammates." },
+		{ "Behavior|Follow Tagged", "Bot follows players you tagged as follow-target." },
+		{ "Behavior|Group With Others", "Bot prefers staying near groups of teammates." },
+		{ "Danger Blacklist|Normal Threats", "Treats active dangers as no-go areas when pathing." },
+		{ "Danger Blacklist|Dormant Threats", "Also avoids dangers that haven't fired recently." },
+		{ "Danger Blacklist|Players", "Avoids pathing near players." },
+		{ "Danger Blacklist|Stickies", "Avoids pathing near sticky bombs." },
+		{ "Danger Blacklist|Projectiles", "Avoids pathing near live projectiles." },
+		{ "Danger Blacklist|Sentries", "Avoids pathing near sentry guns." },
+		{ "Show|Aimbot", "Shows a live aimbot status row (OFF/IDLE/ACTIVE)." },
+		{ "Show|Fake Lag", "Shows when fakelag is choking packets." },
+		{ "Show|Anti-Aim", "Shows when anti-aim is running." },
+		{ "Show|No Spread", "Shows seed prediction quality per shot." },
+		{ "Show|Airblast", "Shows when auto-airblast reflects." },
+		{ "Show|Auto-Uber", "Shows live uber charge while auto-uber is active." },
+		{ "Show|Auto Vacc", "Shows the auto-vaccinator's current resist and charge." },
+		{ "Show|Auto Heal", "Shows when auto-heal is healing." },
+		{ "Show|Detonate", "Shows when auto-detonate pops stickies." },
+		{ "Show|Backstab", "Shows when auto-backstab stabs." },
+		{ "Show|Duck Air", "Shows when crouch-while-airborne is ducking." },
+		{ "Show|Jumpbug", "Shows when a jumpbug triggers." },
+		{ "Show|Edge Jump", "Shows when an edge jump triggers." },
+		{ "Show|Rocket Jump", "Shows when auto rocket jump runs." },
+		{ "Show|FaN Jump", "Shows when a Force-A-Nature boost triggers." },
+		{ "Show|Thirdperson", "Shows when thirdperson is active." },
+		{ "Show|Warp", "Shows when a tick warp triggers." },
+		{ "Show|NavBot", "Shows when the nav bot is navigating." },
+		{ "Show|Killspree", "Shows kill-chain animations and announcements." },
+		{ "Removals|Scope", "Removes the sniper scope overlay." },
+		{ "Removals|Zoom", "Removes sniper zoom fog/blur." },
+		{ "Removals|Punch", "Removes view punch/recoil kick." },
+		{ "Removals|Screen Overlay", "Removes damage and effect screen overlays." },
+		{ "Removals|Screen Shake", "Removes screen shake." },
+		{ "Removals|Screen Fade", "Removes damage screen fades." },
+		{ "Removals|MOTD", "Skips the map-intro message window." },
+		{ "Flags|FBEAM_FADEIN", "Beam fades in at its start." },
+		{ "Flags|FBEAM_FADEOUT", "Beam fades out at its end." },
+		{ "Flags|FBEAM_SINENOISE", "Beam wobbles in a wave shape." },
+		{ "Flags|FBEAM_SOLID", "Beam renders solid instead of additive." },
+		{ "Flags|FBEAM_SHADEIN", "Beam shades in toward its start." },
+		{ "Flags|FBEAM_SHADEOUT", "Beam shades out toward its end." },
+		{ "Target|Local", "Applies the sheen to your own weapon view." },
+		{ "Target|Friend", "Applies the sheen on Steam friends' weapons." },
+		{ "Target|Teammates", "Applies the sheen on teammates' weapons." },
+		{ "Target|Enemy", "Applies the sheen on enemies' weapons." },
+		{ "b:NecroNet||Home", "Your profile page: avatar, display name, bio, presence status and server connection state." },
+		{ "b:NecroNet||Friends", "Your NecroNet friend list and incoming friend requests." },
+		{ "b:NecroNet||Listing", "The public list of NecroNet users who opted in; open profiles and send friend requests." },
+		{ "b:NecroNet||Chat", "Direct messages with the selected friend; links are clickable and text is selectable." },
+		{ "b:NecroNet||Connect", "Sign in to NecroNet through Steam. Your first login creates an account bound to your Steam ID." },
+		{ "b:NecroNet||Login", "Use an existing NecroNet account." },
+		{ "b:NecroNet||Register", "Create a new NecroNet account bound to your Steam ID." },
+		{ "b:NecroNet||Create Account", "Confirms creating the account with the username and password shown." },
+		{ "b:NecroNet||Sign In", "Confirms logging in with the username and password shown." },
+		{ "b:NecroNet||Cancel", "Cancels the pending action." },
+		{ "b:NecroNet||Change Avatar", "Pick an image file to upload as your NecroNet avatar." },
+		{ "b:NecroNet||Save Profile", "Uploads your display name, bio and avatar to NecroNet." },
+		{ "b:NecroNet||Logout", "Signs out of NecroNet." },
+		{ "b:NecroNet||Send Request", "Sends a friend request to the typed username." },
+		{ "b:NecroNet||Add", "Sends a friend request to this user." },
+		{ "b:NecroNet||Add Friend", "Sends a friend request to the viewed user." },
+		{ "b:NecroNet||Close", "Closes the viewed profile." },
+		{ "b:NecroNet||Send", "Sends the typed message." },
+		{ "b:NecroNet||Remove", "Removes this friend from your list." },
+		{ "b:NecroNet||Refresh", "Reloads the user list from the server." },
+		{ "b:Configs||Load", "Loads this config file and applies every setting in it." },
+		{ "b:Configs||Update", "Overwrites this config file with your current settings." },
+		{ "b:Configs||Delete", "Deletes this config file from disk." },
+		{ "b:Configs||Cancel", "Goes back without changing anything." },
+		{ "b:Configs||Migrate", "Copies the old SEOwnedDE config into necromancer's config folder." },
+		{ "b:Configs||Unlock All", "Marks every TF2 achievement as unlocked (asks for confirmation)." },
+		{ "b:Configs||Lock All", "Re-locks every TF2 achievement (asks for confirmation)." },
+		{ "b:Configs||View Config Folder", "Opens the folder your config files live in." },
+		{ "b:Configs||Unbind All Keys", "Clears every feature keybind at once." },
+		{ "b:Players||Check Sourcebans", "Searches public Sourcebans databases for previous bans on this Steam ID." },
+		{ "b:Players||Load Database", "Downloads the shared cheater database used for the FOUND IN DATABASE warning." },
+		{ "b:Players||Open Steam Profile", "Opens this player's Steam profile in your browser." },
+		{ "b:Players||Refresh", "Clears the cached result and fetches it again." },
+		{ "b:Players||< Back to Players", "Returns to the player list." },
+		{ "b:Soundpad||Refresh", "Rescans the soundpad folder for new audio files." },
+		{ "b:Soundpad||Stop All", "Stops every currently playing sound." },
+		{ "b:Soundpad||Play Selected", "Plays all ticked sounds." },
+		{ "b:Soundpad||Clear Selection", "Unticks every sound." },
+		{ "b:Soundpad||Open Folder", "Opens the folder soundpad loads files from." },
+		{ "b:Misc||Unlock CVars", "Reveals hidden, dev-only and cheat-marked console variables so you can change them." },
+		{ "b:Misc||Fix Invisible Players", "Runs a quick record/stop which forces the engine to rebuild broken player meshes." },
+		{ "b:Misc||Fix Chams/Outlines", "Rebuilds the cheat's materials and runs the same engine mesh rebuild." },
+		{ "b:Misc||Text Files", "Opens the folder containing your chat spam and killsay line files." },
+		{ "b:Misc||Refresh", "Reloads chat spam and killsay lines from disk." },
+		{ "b:Misc||Clear Follow Tags", "Removes follow-player tags from everyone." },
+		{ "b:Visuals||Refresh", "Reloads custom models from your user_models folder (rejoin the map to apply)." },
+		{ "b:Visuals||Open Folder", "Opens the menu background image folder." },
+		{ "b:PacMan||Run Pac Man", "Starts the Pac-Man minigame. Move with arrow keys or WASD." },
+		{ "b:PacMan||Stop Pac Man", "Stops the minigame." },
+	};
+	return map;
+}
+static const char *FindTextDescription(const char *szKey)
+{
+	const auto &map = GetTextDescMap();
+	const auto it = map.find(szKey);
 	return it != map.end() ? it->second : nullptr;
 }
 void CMenu::SetDescriptionContext(const char *szTab, const char *szGroup)
@@ -769,12 +1256,14 @@ void CMenu::SetDescriptionContext(const char *szTab, const char *szGroup)
 	if (szGroup)
 		m_strDescGroup = szGroup;
 }
-void CMenu::TrackControl(const char *szLabel, void *pVar, int nType, bool bHovered, const char *szBody, const char *szHint)
+void CMenu::TrackControl(const char *szLabel, void *pVar, int nType, bool bHovered, const char *szBody, const char *szHint, const char *szParentLabel)
 {
 	if (!bHovered)
 		return;
 	char szKey[512];
-	if (pVar)
+	if (szParentLabel)
+		snprintf(szKey, sizeof(szKey), "r_%s|%s", szParentLabel, szLabel ? szLabel : "?");
+	else if (pVar)
 		snprintf(szKey, sizeof(szKey), "v_%p_%s", pVar, szLabel ? szLabel : "?");
 	else
 		snprintf(szKey, sizeof(szKey), "c_%s|%s|%s", m_strDescTab.c_str(), m_strDescGroup.c_str(), szLabel ? szLabel : "?");
@@ -789,8 +1278,40 @@ void CMenu::TrackControl(const char *szLabel, void *pVar, int nType, bool bHover
 		else
 		{
 			const char *pszCurated = FindCuratedDescription(pVar);
+			const char *pszRow = nullptr;
+			char szRowKey[256];
+			if (szParentLabel && (nType == 6 || nType == 7))
+			{
+				snprintf(szRowKey, sizeof(szRowKey), "%s|%s", szParentLabel, szLabel ? szLabel : "?");
+				pszRow = FindTextDescription(szRowKey);
+			}
+			char szBtnKey[256];
+			const char *pszBtn = nullptr;
+			if (!pVar && !szParentLabel)
+			{
+				snprintf(szBtnKey, sizeof(szBtnKey), "b:%s|%s|%s", m_strDescTab.c_str(), m_strDescGroup.c_str(), szLabel ? szLabel : "?");
+				pszBtn = FindTextDescription(szBtnKey);
+				if (!pszBtn)
+				{
+					snprintf(szBtnKey, sizeof(szBtnKey), "b:%s||%s", m_strDescTab.c_str(), szLabel ? szLabel : "?");
+					pszBtn = FindTextDescription(szBtnKey);
+				}
+			}
+			char szTabKey[128];
+			const char *pszTab = nullptr;
+			if (nType == 10)
+			{
+				snprintf(szTabKey, sizeof(szTabKey), "t:%s", szLabel ? szLabel : "?");
+				pszTab = FindTextDescription(szTabKey);
+			}
 			if (pszCurated)
 				m_Description.m_strBody = pszCurated;
+			else if (pszRow)
+				m_Description.m_strBody = pszRow;
+			else if (pszBtn)
+				m_Description.m_strBody = pszBtn;
+			else if (pszTab)
+				m_Description.m_strBody = pszTab;
 			else
 			{
 				switch (nType)
@@ -798,9 +1319,9 @@ void CMenu::TrackControl(const char *szLabel, void *pVar, int nType, bool bHover
 				case 0: m_Description.m_strBody = "Toggles " + m_strDescGroup + " - " + (szLabel ? szLabel : "option") + " (" + m_strDescTab + " tab)."; break;
 				case 1:
 				case 2: m_Description.m_strBody = "Sets " + m_strDescGroup + " - " + (szLabel ? szLabel : "option") + " (" + m_strDescTab + " tab)."; break;
-				case 4: m_Description.m_strBody = "Runs " + m_strDescGroup + " - " + (szLabel ? szLabel : "action") + " (" + m_strDescTab + " tab)."; break;
-				case 6: m_Description.m_strBody = "Chooses " + m_strDescGroup + " - " + (szLabel ? szLabel : "option") + " (" + m_strDescTab + " tab)."; break;
-				case 7: m_Description.m_strBody = "Toggles entries in " + m_strDescGroup + " - " + (szLabel ? szLabel : "list") + " (" + m_strDescTab + " tab)."; break;
+				case 4: m_Description.m_strBody = "Runs " + (m_strDescGroup.empty() ? std::string() : m_strDescGroup + " - ") + (szLabel ? szLabel : "action") + " (" + m_strDescTab + " tab)."; break;
+				case 6: m_Description.m_strBody = "Uses " + (szLabel ? std::string(szLabel) : "this option") + " for " + m_strDescGroup + " - " + (szParentLabel ? szParentLabel : "option") + "."; break;
+				case 7: m_Description.m_strBody = "Toggles " + (szLabel ? std::string(szLabel) : "this entry") + " in " + m_strDescGroup + " - " + (szParentLabel ? szParentLabel : "list") + "."; break;
 				case 8: m_Description.m_strBody = "Color for " + m_strDescGroup + " - " + (szLabel ? szLabel : "item") + " (" + m_strDescTab + " tab)."; break;
 				case 5: m_Description.m_strBody = "Edits " + m_strDescGroup + " - " + (szLabel ? szLabel : "text") + " (" + m_strDescTab + " tab)."; break;
 				default: m_Description.m_strBody = (szLabel ? szLabel : "Control") + std::string(" (") + m_strDescTab + " tab)."; break;
@@ -1732,7 +2253,7 @@ bool CMenu::SelectSingle(const char *szLabel, int &nVar, const std::vector<std::
 			}
 			int nSelectY = (y + h + (nTextH + CFG::Menu_Spacing_Y)) + (h * real_n);
 			bool bSelectHovered = IsHovered(x, nSelectY, w, h, &nVar);
-			TrackControl(Select.first, &nVar, 6, bSelectHovered, (std::string("Sets ") + szLabel + " to " + Select.first + " (" + m_strDescTab + " tab).").c_str());
+			TrackControl(Select.first, &nVar, 6, bSelectHovered, nullptr, nullptr, szLabel);
 			H::LateRender->Rect(x, nSelectY, w, h, clr_dim);
 			H::LateRender->String(
 				EFonts::Menu,
@@ -1817,7 +2338,7 @@ bool CMenu::SelectMulti(const char *szLabel, std::vector<std::pair<const char *,
 			const auto &Select = vecSelects[n];
 			int nSelectY = (y + (nTextH + CFG::Menu_Spacing_Y) + h) + (h * n);
 			bool bSelectHovered = IsHovered(x, nSelectY, w, h, &vecSelects);
-			TrackControl(Select.first, &vecSelects, 7, bSelectHovered, (std::string("Toggles ") + Select.first + " in " + szLabel + " (" + m_strDescTab + " tab).").c_str());
+			TrackControl(Select.first, &vecSelects, 7, bSelectHovered, nullptr, nullptr, szLabel);
 			H::LateRender->Rect(x, nSelectY, w, h, clr_dim);
 			static int nYesWidth = []() -> int {
 				int w = 0, h = 0;
@@ -1856,6 +2377,10 @@ struct ColorPickerState {
 	int hueTextureID = -1;
 	float lastHue = -1.0f;
 	float alpha = 1.0f;
+	int m_nFocusChannel = -1;
+	std::string m_strEdit;
+	int m_nCaret = 0;
+	int m_nAnchor = 0;
 };
 std::unordered_map<Color_t*, ColorPickerState> m_mapColorStates;
 Color_t HSVtoRGB(float h, float s, float v) {
@@ -1926,6 +2451,9 @@ bool CMenu::ColorPicker(const char* szLabel, Color_t& colVar)
 			state.saturation = s;
 			state.value = v;
 			state.alpha = colVar.a / 255.0f;
+			state.m_nFocusChannel = -1;
+			state.m_strEdit.clear();
+			state.m_nCaret = state.m_nAnchor = 0;
 		}
 		m_bClickConsumed = true;
 	}
@@ -1936,9 +2464,23 @@ bool CMenu::ColorPicker(const char* szLabel, Color_t& colVar)
 		m_mapStates[&colVar] = false;
 		m_bClickConsumed = true;
 	}
-	if (H::Input->IsPressed(VK_ESCAPE) || H::Input->IsPressed(VK_INSERT) || H::Input->IsPressed(VK_F3) || (H::Input->IsPressed(VK_PRIOR) && H::Input->IsDown(VK_SHIFT))) {
+	if (H::Input->IsPressed(VK_INSERT) || H::Input->IsPressed(VK_F3) || (H::Input->IsPressed(VK_PRIOR) && H::Input->IsDown(VK_SHIFT))) {
 		m_mapStates[&colVar] = false;
 		m_mapContextMenuStates[&colVar] = false;
+	}
+	else if (H::Input->IsPressed(VK_ESCAPE))
+	{
+		auto itState = m_mapColorStates.find(&colVar);
+		if (itState != m_mapColorStates.end() && itState->second.m_nFocusChannel != -1)
+		{
+			itState->second.m_nFocusChannel = -1;
+			itState->second.m_strEdit.clear();
+		}
+		else
+		{
+			m_mapStates[&colVar] = false;
+			m_mapContextMenuStates[&colVar] = false;
+		}
 	}
 	H::Draw->Rect(x, y, w, h, colVar);
 	H::Draw->OutlinedRect(x, y, w, h, CFG::Menu_Accent_Primary);
@@ -2030,14 +2572,24 @@ bool CMenu::ColorPicker(const char* szLabel, Color_t& colVar)
 		int alphaBarWidth = 12;
 		int padding = 4;
 		int totalW = pickerW + padding + hueBarWidth + padding + alphaBarWidth + padding * 2;
-		int totalH = pickerH + padding * 2;
+		int inputRowHeight = 18;
+		int totalH = pickerH + padding * 2 + inputRowHeight + padding;
 		H::LateRender->Rect(pickerX - padding, pickerY - padding, totalW, totalH, CFG::Menu_Background);
 		H::LateRender->OutlinedRect(pickerX - padding, pickerY - padding, totalW, totalH, CFG::Menu_Accent_Primary);
 		ColorPickerState& state = m_mapColorStates[&colVar];
+		const int nInputRowY = pickerY + pickerH + padding;
+		const int nInputW = 47;
+		const int nInputGap = 4;
+		const int nChannels[4] = { colVar.r, colVar.g, colVar.b, (colVar.a * 100 + 127) / 255 };
+		const int nChannelMax[4] = { 255, 255, 255, 100 };
+		bool aHoveredInputs[4] = {};
+		for (int i = 0; i < 4; i++)
+			aHoveredInputs[i] = IsHovered(pickerX + i * (nInputW + nInputGap), nInputRowY, nInputW, inputRowHeight, &colVar);
+		const bool bHoveredInputs = aHoveredInputs[0] || aHoveredInputs[1] || aHoveredInputs[2] || aHoveredInputs[3];
 		bool hoveredSV = IsHovered(pickerX, pickerY, pickerW, pickerH, &colVar);
 		bool hoveredHue = IsHovered(pickerX + pickerW + padding, pickerY, hueBarWidth, pickerH, &colVar);
 		bool hoveredAlpha = IsHovered(pickerX + pickerW + padding + hueBarWidth + padding, pickerY, alphaBarWidth, pickerH, &colVar);
-		bool anyHovered = hoveredSV || hoveredHue || hoveredAlpha;
+		bool anyHovered = hoveredSV || hoveredHue || hoveredAlpha || bHoveredInputs;
 		if (H::Input->IsPressed(VK_LBUTTON) && !m_bClickConsumed && !anyHovered)
 			m_mapStates[&colVar] = false;
 		if (H::Input->IsHeld(VK_LBUTTON) && hoveredSV)
@@ -2064,6 +2616,51 @@ bool CMenu::ColorPicker(const char* szLabel, Color_t& colVar)
 			state.alpha = std::clamp((float)(mouseY - pickerY) / pickerH, 0.0f, 1.0f);
 			colVar.a = (unsigned char)(state.alpha * 255.0f);
 			m_bClickConsumed = true;
+		}
+		if (H::Input->IsHeld(VK_LBUTTON) && (hoveredSV || hoveredHue || hoveredAlpha) && state.m_nFocusChannel != -1)
+			state.m_nFocusChannel = -1;
+		for (int i = 0; i < 4; i++)
+		{
+			if (H::Input->IsPressed(VK_LBUTTON) && aHoveredInputs[i] && !m_bClickConsumed)
+			{
+				state.m_nFocusChannel = i;
+				state.m_strEdit = std::to_string(nChannels[i]);
+				state.m_nCaret = state.m_nAnchor = static_cast<int>(state.m_strEdit.size());
+				m_bClickConsumed = true;
+			}
+		}
+		if (state.m_nFocusChannel != -1)
+		{
+			TextInputEdit(state.m_strEdit, state.m_nCaret, state.m_nAnchor, 3);
+			for (size_t i = 0; i < state.m_strEdit.size();)
+			{
+				const char c = state.m_strEdit[i];
+				if (c < '0' || c > '9')
+					state.m_strEdit.erase(i, 1);
+				else
+					i++;
+			}
+			state.m_nCaret = (std::clamp)(state.m_nCaret, 0, static_cast<int>(state.m_strEdit.size()));
+			state.m_nAnchor = (std::clamp)(state.m_nAnchor, 0, static_cast<int>(state.m_strEdit.size()));
+
+			if (!state.m_strEdit.empty())
+			{
+				const int nVal = std::clamp(std::atoi(state.m_strEdit.c_str()), 0, nChannelMax[state.m_nFocusChannel]);
+				if (state.m_nFocusChannel == 3)
+				{
+					colVar.a = static_cast<unsigned char>(nVal * 255 / 100);
+					state.alpha = colVar.a / 255.0f;
+				}
+				else
+				{
+					(&colVar.r)[state.m_nFocusChannel] = static_cast<unsigned char>(nVal);
+					float h, s, v;
+					RGBtoHSV(colVar, h, s, v);
+					state.hue = h;
+					state.saturation = s;
+					state.value = v;
+				}
+			}
 		}
 		int step = 2;
 		for (int j = 0; j < pickerH; j += step)
@@ -2113,6 +2710,31 @@ bool CMenu::ColorPicker(const char* szLabel, Color_t& colVar)
 		int alphaCursorY = pickerY + (int)(state.alpha * pickerH);
 		H::LateRender->Rect(pickerX + pickerW + padding + hueBarWidth + padding, alphaCursorY - 1, alphaBarWidth, 3, { 0, 0, 0, 255 });
 		H::LateRender->Rect(pickerX + pickerW + padding + hueBarWidth + padding + 1, alphaCursorY, alphaBarWidth - 2, 1, { 255, 255, 255, 255 });
+
+		const Color_t aChannelColors[4] = { { 255, 60, 60, 255 }, { 60, 255, 60, 255 }, { 60, 120, 255, 255 }, { 255, 255, 255, 255 } };
+		const char* aChannelNames[4] = { "R", "G", "B", "A%" };
+		for (int i = 0; i < 4; i++)
+		{
+			const int nBoxX = pickerX + i * (nInputW + nInputGap);
+			const bool bFocused = state.m_nFocusChannel == i;
+			H::LateRender->Rect(nBoxX, nInputRowY, nInputW, inputRowHeight, CFG::Menu_Background);
+			H::LateRender->OutlinedRect(nBoxX, nInputRowY, nInputW, inputRowHeight, bFocused ? CFG::Menu_Text_Active : CFG::Menu_Accent_Primary);
+			H::LateRender->Rect(nBoxX + 2, nInputRowY + 2, 3, inputRowHeight - 4, aChannelColors[i]);
+
+			const std::string strValue = (bFocused ? state.m_strEdit : std::to_string(nChannels[i]));
+			const std::string strLabel = std::string(aChannelNames[i]) + " " + strValue;
+			H::LateRender->String(EFonts::Menu, nBoxX + 8, nInputRowY + inputRowHeight / 2, bFocused ? CFG::Menu_Text_Active : CFG::Menu_Text_Inactive, POS_CENTERY, strLabel.c_str(), ClipRegion_t{});
+
+			if (bFocused)
+			{
+				const std::string strPrefix = std::string(aChannelNames[i]) + " ";
+				const std::string strBefore = strValue.substr(0, static_cast<size_t>((std::clamp)(state.m_nCaret, 0, static_cast<int>(strValue.size()))));
+				int nW1 = 0, nH1 = 0, nW2 = 0, nH2 = 0;
+				I::MatSystemSurface->GetTextSize(H::Fonts->Get(EFonts::Menu).m_dwFont, Utils::ConvertUtf8ToWide(strPrefix + strBefore).c_str(), nW1, nH1);
+				I::MatSystemSurface->GetTextSize(H::Fonts->Get(EFonts::Menu).m_dwFont, Utils::ConvertUtf8ToWide(strPrefix).c_str(), nW2, nH2);
+				H::LateRender->Rect(nBoxX + 8 + nW1 - nW2, nInputRowY + 2, 1, inputRowHeight - 4, CFG::Menu_Text_Active);
+			}
+		}
 	}
 	m_nCursorY += h + CFG::Menu_Spacing_Y;
 	return bCallback;
@@ -2275,7 +2897,7 @@ void CMenu::MainWindow()
 		int boxH = 50;
 		bool bHovered = IsHovered(x, y, boxW, boxH, nullptr);
 		SetDescriptionContext(label, nullptr);
-		TrackControl(label, nullptr, 10, bHovered, (std::string("Switches to the ") + label + " tab.").c_str());
+		TrackControl(label, nullptr, 10, bHovered);
 		bool bCallback = false;
 		if (bHovered && H::Input->IsPressed(VK_LBUTTON) && !m_bClickConsumed)
 			bCallback = m_bClickConsumed = true;
@@ -2301,6 +2923,20 @@ void CMenu::MainWindow()
 		int centerY = iconY + iconSize / 2;
 		int frame = static_cast<int>(animTime) % 2;
 		float pulse = active ? (1.0f + std::sin(animTime * 1.5f) * 0.12f) : 1.0f;
+		const bool bSnapIcon = m_flLayoutScale >= 1.0f;
+		if (bSnapIcon)
+		{
+			const int nIconPix = std::max(1, static_cast<int>(std::floor(m_flLayoutScale + 0.001f)));
+			const int nCellX0 = H::Draw->ScreenX(iconX);
+			const int nCellY0 = H::Draw->ScreenY(iconY);
+			const int nCellW = H::Draw->ScreenX(iconX + iconSize) - nCellX0;
+			const int nCellH = H::Draw->ScreenY(iconY + iconSize) - nCellY0;
+			const int nIconSz = iconSize * nIconPix;
+			H::Draw->PushTransform(static_cast<float>(iconX), static_cast<float>(iconY),
+				static_cast<float>(nCellX0 + std::max(0, (nCellW - nIconSz) / 2)),
+				static_cast<float>(nCellY0 + std::max(0, (nCellH - nIconSz) / 2)),
+				static_cast<float>(nIconPix));
+		}
 		switch(type) {
 			case 0:
 			{
@@ -3175,6 +3811,8 @@ void CMenu::MainWindow()
 				break;
 			}
 		}
+		if (bSnapIcon)
+			H::Draw->PopTransform();
 		Color_t textColor = active ? CFG::Menu_Text_Active : CFG::Menu_Text_Inactive;
 		if (hoverState > 0.01f && !active) {
 			textColor.r = static_cast<byte>(textColor.r + (CFG::Menu_Text_Active.r - textColor.r) * hoverState);
@@ -4077,16 +4715,22 @@ void CMenu::MainWindow()
 					{
 						{ "Disabled", 0 },
 						{ "Line", 1 },
-						{ "Dashed Line", 2 },
-						{ "Alt Line", 3 }
+						{ "Separators", 2 },
+						{ "Spaced", 3 },
+						{ "Arrows", 4 },
+						{ "Boxes", 5 }
 					});
 				SelectSingle("Projectile Path Style", CFG::Visuals_Draw_Predicted_Path_Style,
 					{
 						{ "Disabled", 0 },
 						{ "Line", 1 },
-						{ "Dashed Line", 2 },
-						{ "Alt Line", 3 }
+						{ "Separators", 2 },
+						{ "Spaced", 3 },
+						{ "Arrows", 4 },
+						{ "Boxes", 5 }
 					});
+				CheckBox("Timed Paths", CFG::Visuals_Draw_Paths_Timed);
+				CheckBox("Draw BBox", CFG::Visuals_Draw_BBox);
 				SelectSingle("Projectile Trail", CFG::Visuals_Projectile_Trail,
 					{
 						{ "Default", 0 },
@@ -4554,6 +5198,8 @@ void CMenu::MainWindow()
 				ColorPicker("Prop Modulation", CFG::Color_Props);
 				ColorPicker("Movement Sim", CFG::Color_Simulation_Movement);
 				ColorPicker("Projectile Sim", CFG::Color_Simulation_Projectile);
+				ColorPicker("BBox Edge", CFG::Color_Simulation_BBox_Edge);
+				ColorPicker("BBox Face", CFG::Color_Simulation_BBox_Face);
 				ColorPicker("FakeLag", CFG::Color_FakeLag);
 				ColorPicker("Fake Model", CFG::Color_FakeModel);
 				ColorPicker("Lag Record", CFG::Color_LagRecord);
@@ -6011,7 +6657,17 @@ void CMenu::MainWindow()
 		{
 			const int nAvailW = (CFG::Menu_Pos_X + CFG::Menu_Width - 1) - m_nCursorX;
 			const int nAvailH = (CFG::Menu_Pos_Y + CFG::Menu_Height - 1) - m_nCursorY;
+			const bool bSnapGame = m_flLayoutScale >= 1.0f;
+			if (bSnapGame)
+			{
+				const int nGamePix = std::max(1, static_cast<int>(std::floor(m_flLayoutScale + 0.001f)));
+				H::Draw->PushTransform(static_cast<float>(m_nCursorX), static_cast<float>(m_nCursorY),
+					static_cast<float>(H::Draw->ScreenX(m_nCursorX)), static_cast<float>(H::Draw->ScreenY(m_nCursorY)),
+					static_cast<float>(nGamePix));
+			}
 			F::PacMan->Render(m_nCursorX, m_nCursorY, nAvailW, nAvailH);
+			if (bSnapGame)
+				H::Draw->PopTransform();
 		}
 		else
 		{

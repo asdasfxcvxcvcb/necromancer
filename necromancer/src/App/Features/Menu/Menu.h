@@ -98,7 +98,7 @@ private:
 	void Drag(int &x, int &y, int w, int h, int offset_y);
 	bool IsHovered(int x, int y, int w, int h, void *pVar, bool bStrict = false);
 	bool IsHoveredSimple(int x, int y, int w, int h);
-	void TrackControl(const char *szLabel, void *pVar, int nType, bool bHovered, const char *szBody = nullptr, const char *szHint = nullptr);
+	void TrackControl(const char *szLabel, void *pVar, int nType, bool bHovered, const char *szBody = nullptr, const char *szHint = nullptr, const char *szParentLabel = nullptr);
 	void DrawDescriptionPanel();
 	void SetDescriptionContext(const char *szTab, const char *szGroup);
 

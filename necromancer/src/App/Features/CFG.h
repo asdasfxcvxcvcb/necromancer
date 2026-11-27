@@ -474,6 +474,8 @@ namespace CFG
 	CFGVAR(Visuals_Crit_Indicator_Debug, false);
 	CFGVAR(Visuals_Draw_Movement_Path_Style, 1); //0 Off 1 Line 2 Separators 3 Spaced 4 Arrows 5 Boxes (Amalgam-style)
 	CFGVAR(Visuals_Draw_Predicted_Path_Style, 1); //0 Off 1 Line 2 Separators 3 Spaced 4 Arrows 5 Boxes (Amalgam-style)
+	CFGVAR(Visuals_Draw_Paths_Timed, true);
+	CFGVAR(Visuals_Draw_BBox, true);
 	CFGVAR(Visuals_Projectile_Trail, 0); //0 Default 1 None 2 Rocket 3 Critical 4 Energy 5 Charged 6 Ray 7 Fireball 8 Teleport 9 Fire 10 Flame 11 Sparks 12 Flare 13 Trail 14 Health 15 Smoke 16 Bubbles 17 Halloween 18 Monoculus 19 Sparkles 20 Rainbow
 	
 	// Amalgam Simulation Visuals
@@ -1024,6 +1026,8 @@ namespace CFG
 	CFGVAR(Color_Sheen_Tint, Color_t({ 255, 255, 255, 255 }));
 	CFGVAR(Color_Simulation_Movement, Color_t({ 255, 255, 255, 255 }));
 	CFGVAR(Color_Simulation_Projectile, Color_t({ 255, 255, 255, 255 }));
+	CFGVAR(Color_Simulation_BBox_Edge, Color_t({ 255, 255, 255, 255 }));
+	CFGVAR(Color_Simulation_BBox_Face, Color_t({ 255, 255, 255, 0 }));
 	CFGVAR(Color_Trajectory, Color_t({ 255, 255, 255, 255 })); // Single trajectory color
 	CFGVAR(Color_FakeLag, Color_t({ 255, 165, 0, 255 })); // FakeLag indicator color (orange)
 
