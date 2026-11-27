@@ -3,6 +3,7 @@
 #include "../../CFG.h"
 #include "../../MovementSimulation/MovementSimulation.h"
 #include "../../ProjectileSim/ProjectileSim.h"
+#include "../../AutoUberPop/AutoUberPop.h"
 
 #include <unordered_map>
 
@@ -1348,6 +1349,74 @@ bool CAutoAirblast::FindAimbotTargetArc(C_TFPlayer* pLocal, C_BaseProjectile* pP
 }
 
 
+struct AirblastAdvance_t
+{
+	Vec3 Position{};
+	bool Died{};
+};
+
+static float GetAirblastAdvanceTime()
+{
+	float flInterp = 0.f;
+	if (const auto pInterp = I::CVar->FindVar("cl_interp"))
+		flInterp = pInterp->GetFloat();
+	if (const auto pRate = I::CVar->FindVar("cl_updaterate"))
+		if (pRate->GetFloat() > 1.f)
+			if (const auto pRatio = I::CVar->FindVar("cl_interp_ratio"))
+				flInterp = std::max(flInterp, pRatio->GetFloat() / pRate->GetFloat());
+
+	return SDKUtils::GetRealLatency() + flInterp;
+}
+
+static AirblastAdvance_t AdvanceProjectileToServerPos(C_BaseEntity* pProjectile, const Vec3& vel, float flAdvance)
+{
+	AirblastAdvance_t out{};
+	if (!pProjectile)
+		return out;
+
+	out.Position = pProjectile->m_vecOrigin();
+
+	const auto eClassId = pProjectile->GetClassId();
+	const bool bStraight = eClassId == ETFClassIds::CTFProjectile_Rocket
+		|| eClassId == ETFClassIds::CTFProjectile_SentryRocket
+		|| eClassId == ETFClassIds::CTFProjectile_EnergyBall
+		|| eClassId == ETFClassIds::CTFProjectile_EnergyRing;
+	const bool bDiesOnWall = eClassId == ETFClassIds::CTFProjectile_Rocket
+		|| eClassId == ETFClassIds::CTFProjectile_SentryRocket
+		|| eClassId == ETFClassIds::CTFProjectile_Flare
+		|| eClassId == ETFClassIds::CTFProjectile_BallOfFire
+		|| eClassId == ETFClassIds::CTFProjectile_Cleaver
+		|| eClassId == ETFClassIds::CTFProjectile_Jar
+		|| eClassId == ETFClassIds::CTFProjectile_JarMilk
+		|| eClassId == ETFClassIds::CTFProjectile_JarGas;
+
+	const float flGravity = bStraight ? 0.f : SDKUtils::GetGravity() * ProjectileDanger::GRAVITY_SCALE;
+	const int nTicks = std::clamp(TIME_TO_TICKS(flAdvance), 1, 66);
+
+	Vec3 vPos = out.Position;
+	Vec3 vVel = vel;
+	CTraceFilterWorldAndProps filter{};
+
+	for (int i = 0; i < nTicks; i++)
+	{
+		const Vec3 vOld = vPos;
+		vVel.z -= flGravity * TICK_INTERVAL;
+		vPos += vVel * TICK_INTERVAL;
+
+		CGameTrace trace{};
+		SDKUtils::Trace(vOld, vPos, MASK_SOLID, &filter, &trace);
+		if (trace.fraction < 1.0f)
+		{
+			vPos = trace.endpos;
+			out.Died = bDiesOnWall;
+			break;
+		}
+	}
+
+	out.Position = vPos;
+	return out;
+}
+
 // ============================================================================
 // FIND TARGET PROJECTILE (Original logic)
 // ============================================================================
@@ -1401,7 +1470,15 @@ static bool FindTargetProjectile(C_TFPlayer* local, TargetProjectile& outTarget)
 		if (pProjectile->GetClassId() == ETFClassIds::CTFProjectile_Arrow && fabsf(vel.Length()) <= 10.0f)
 			continue;
 
-		auto pos = pProjectile->m_vecOrigin() + (vel * SDKUtils::GetLatency());
+		const float flAdvance = GetAirblastAdvanceTime();
+		if (pProjectile->m_vecOrigin().DistTo(local->GetShootPos()) > 160.0f + vel.Length() * flAdvance + 64.0f)
+			continue;
+
+		const auto tAdvanced = AdvanceProjectileToServerPos(pProjectile, vel, flAdvance);
+		if (tAdvanced.Died)
+			continue;
+
+		auto pos = tAdvanced.Position;
 
 		if (pos.DistTo(local->GetShootPos()) > 160.0f)
 			continue;

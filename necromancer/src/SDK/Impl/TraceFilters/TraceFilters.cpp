@@ -256,3 +256,8 @@ bool CTraceFilterWorldAndProps::ShouldHitEntity(IHandleEntity* pServerEntity, in
 
 	return false;
 }
+
+bool CTraceFilterRocket::ShouldHitEntity(IHandleEntity* pServerEntity, int)
+{
+	return pServerEntity && pServerEntity != pSkip && pServerEntity != pSkipWeapon;
+}

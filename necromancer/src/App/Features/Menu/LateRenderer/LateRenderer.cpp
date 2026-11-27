@@ -1,8 +1,8 @@
 #include "LateRenderer.h"
 
-void CLateRenderer::String(const CFont &font, int x, int y, Color_t col, short align, const char *str, const ClipRegion_t &clip)
+void CLateRenderer::String(EFonts eFont, int x, int y, Color_t col, short align, const char *str, const ClipRegion_t &clip)
 {
-	m_vecStrings.emplace_back(String_t{ font, x, y, col, align, str, clip });
+	m_vecStrings.emplace_back(String_t{ eFont, x, y, col, align, str, clip });
 }
 
 void CLateRenderer::Rect(int x, int y, int w, int h, Color_t col)
@@ -30,11 +30,8 @@ void CLateRenderer::Clear()
 
 void CLateRenderer::DrawAll()
 {
-	for (const auto &Texture : m_vecTextures) {
-		I::MatSystemSurface->DrawSetColor(255, 255, 255, 255);
-		I::MatSystemSurface->DrawSetTexture(Texture.m_nID);
-		I::MatSystemSurface->DrawTexturedRect(Texture.m_nX, Texture.m_nY, Texture.m_nX + Texture.m_nW, Texture.m_nY + Texture.m_nH);
-	}
+	for (const auto &Texture : m_vecTextures)
+		H::Draw->Texture(Texture.m_nX, Texture.m_nY, Texture.m_nW, Texture.m_nH, Texture.m_nID, POS_DEFAULT);
 
 	for (const auto &Rect : m_vecRects)
 		H::Draw->Rect(Rect.m_nX, Rect.m_nY, Rect.m_nW, Rect.m_nH, Rect.m_Color);
@@ -45,13 +42,12 @@ void CLateRenderer::DrawAll()
 	for (const auto &String : m_vecStrings)
 	{
 		if (String.m_Clip.x) {
-			I::MatSystemSurface->DisableClipping(false);
-			I::MatSystemSurface->SetClippingRect(String.m_Clip.x, String.m_Clip.y, String.m_Clip.x + String.m_Clip.w, String.m_Clip.y + String.m_Clip.h);
+			H::Draw->StartClipping(String.m_Clip.x, String.m_Clip.y, String.m_Clip.w, String.m_Clip.h);
 		}
 
-		H::Draw->String(String.m_dwFont, String.m_nX, String.m_nY, String.m_Color, String.m_nAlign, "%s", String.m_strString.c_str());
+		H::Draw->String(H::Fonts->Get(String.m_eFont), String.m_nX, String.m_nY, String.m_Color, String.m_nAlign, "%s", String.m_strString.c_str());
 
 		if (String.m_Clip.x)
-			I::MatSystemSurface->DisableClipping(true);
+			H::Draw->EndClipping();
 	}
 }

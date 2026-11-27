@@ -48,7 +48,7 @@ static bool GetArrowBones(C_BaseEntity* pEntity, matrix3x4_t* pOut)
 	return pEntity->As<C_TFPlayer>()->SetupBones(pOut, 128, BONE_USED_BY_HITBOX, I::GlobalVars->curtime) != 0;
 }
 
-static float ArrowScanHeadMargin(C_TFPlayer* pVictim, matrix3x4_t* aBones, const Vec3& vScanStart, const Vec3& vScanEnd);
+static void AddArrowHeadPoints(Directs_t& mDirects, int iPriority, int iFlags, C_TFPlayer* pVictim, matrix3x4_t* aBones, int nHeadBone, const Vec3& vCenter, const Vec3& vMins, const Vec3& vMaxs, const Vec3& vEye, Vec3& vPreferredOut, bool& bPreferredValidOut);
 
 static float FullFraction(const Vec3& vDir, const CGameTrace& trace)
 {
@@ -62,26 +62,26 @@ static float FullFraction(const Vec3& vStart, const Vec3& vEnd, const CGameTrace
 	return FullFraction(vEnd - vStart, trace);
 }
 
-static void GetHitboxInfoFromBones(C_BaseAnimating* pEntity, matrix3x4_t* pBones, int nHitbox, Vec3* pCenter, Vec3* pMins, Vec3* pMaxs)
+static bool GetHitboxInfoFromBones(C_BaseAnimating* pEntity, matrix3x4_t* pBones, int nHitbox, Vec3* pCenter, Vec3* pMins, Vec3* pMaxs)
 {
 	if (!pEntity || !pBones)
-		return;
+		return false;
 
 	auto pModel = pEntity->GetModel();
 	if (!pModel)
-		return;
+		return false;
 
 	auto pHDR = I::ModelInfoClient->GetStudiomodel(pModel);
 	if (!pHDR)
-		return;
+		return false;
 
 	auto pSet = pHDR->pHitboxSet(pEntity->m_nHitboxSet());
-	if (!pSet)
-		return;
+	if (!pSet || nHitbox < 0 || nHitbox >= pSet->numhitboxes)
+		return false;
 
 	auto pBox = pSet->pHitbox(nHitbox);
-	if (!pBox)
-		return;
+	if (!pBox || pBox->bone < 0 || pBox->bone >= 128)
+		return false;
 
 	if (pMins)
 		*pMins = pBox->bbmin;
@@ -89,6 +89,7 @@ static void GetHitboxInfoFromBones(C_BaseAnimating* pEntity, matrix3x4_t* pBones
 		*pMaxs = pBox->bbmax;
 	if (pCenter)
 		Math::VectorTransform((pBox->bbmin + pBox->bbmax) * 0.5f, pBones[pBox->bone], *pCenter);
+	return true;
 }
 
 static float ArmTime(C_TFWeaponBase* pWeapon)
@@ -185,7 +186,7 @@ static int GetHitboxPriority(int nHitbox, Target_t& tTarget, Info_t& tInfo, C_Ba
 	return -1;
 }
 
-Directs_t CAimbotProjectileSim::GetDirects(int iDirectTier)
+Directs_t CAimbotProjectileSim::GetDirects()
 {
 	Directs_t mDirects = {};
 
@@ -214,34 +215,15 @@ Directs_t CAimbotProjectileSim::GetDirects(int iDirectTier)
 					break;
 				auto* aBones = m_aArrowBones;
 
-				Vec3 vCenter, vBBoxMins, vBBoxMaxs;
-				GetHitboxInfoFromBones(tTarget.m_pEntity->As<C_BaseAnimating>(), aBones, HITBOX_HEAD, &vCenter, &vBBoxMins, &vBBoxMaxs);
-				const bool bBow = m_tInfo.m_pWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW;
-
-				if (bBow && iDirectTier == 0)
+				Vec3 vCenter = {}, vBBoxMins = {}, vBBoxMaxs = {};
+				if (!GetHitboxInfoFromBones(tTarget.m_pEntity->As<C_BaseAnimating>(), aBones, HITBOX_HEAD, &vCenter, &vBBoxMins, &vBBoxMaxs))
 				{
-					Vec3 vOff = vCenter + (vBBoxMins + vBBoxMaxs) / 2 - tTarget.m_pEntity->m_vecOrigin();
-					float flLow = 0.f;
-					const Vec3 vDelta = tTarget.m_vPos + m_tInfo.m_vTargetEye - m_tInfo.m_vLocalEye;
-					if (vDelta.z > 0)
-					{
-						const float flXY = vDelta.Length2D();
-						if (flXY)
-							flLow = Math::RemapVal(vDelta.z / flXY, 0.f, 0.5f, 0.f, 1.f);
-						else
-							flLow = 1.f;
-					}
-
-					const float flLerp = (70.f + (100.f - 70.f) * flLow) / 100.f;
-					vOff.z = vOff.z + (vMaxs.z - vOff.z) * flLerp;
-					vOff.x = std::clamp(vOff.x, vMins.x + 5.f, vMaxs.x - 5.f);
-					vOff.y = std::clamp(vOff.y, vMins.y + 5.f, vMaxs.y - 5.f);
-					vOff.z = std::clamp(vOff.z, vMins.z + 5.f, vMaxs.z - 5.f);
-					mDirects[iPriority] = { vOff, iFlags };
+					m_bArrowBonesValid = false;
 					break;
 				}
+				const bool bBow = m_tInfo.m_pWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW;
 
-				if (bBow && iDirectTier == 1)
+				if (bBow)
 				{
 					const auto pHDR = I::ModelInfoClient->GetStudiomodel(tTarget.m_pEntity->GetModel());
 					const auto pSet = pHDR ? pHDR->pHitboxSet(tTarget.m_pEntity->As<C_BaseAnimating>()->m_nHitboxSet()) : nullptr;
@@ -251,21 +233,7 @@ Directs_t CAimbotProjectileSim::GetDirects(int iDirectTier)
 					if (nHeadBone < 0 || nHeadBone >= 128)
 						break;
 
-					mDirects[iPriority] = { vCenter - tTarget.m_pEntity->m_vecOrigin(), iFlags, true };
-					const Vec3 vLocalCenter = (vBBoxMins + vBBoxMaxs) * 0.5f;
-					const Vec3 vHalfExtent = (vBBoxMaxs - vBBoxMins) * 0.5f;
-					int iVariant = 0;
-					for (int a = 0; a < 3; a++)
-					{
-						for (int s = 0; s < 2; s++)
-						{
-							Vec3 vLocal = vLocalCenter;
-							vLocal[a] += (s ? 1.f : -1.f) * vHalfExtent[a] * 0.4f;
-							Vec3 vWorld;
-							Math::VectorTransform(vLocal, aBones[nHeadBone], vWorld);
-							mDirects[iPriority + 100 * ++iVariant] = { vWorld - tTarget.m_pEntity->m_vecOrigin(), iFlags, true };
-						}
-					}
+					AddArrowHeadPoints(mDirects, iPriority, iFlags, tTarget.m_pEntity->As<C_TFPlayer>(), aBones, nHeadBone, vCenter, vBBoxMins, vBBoxMaxs, m_tInfo.m_vLocalEye, m_vArrowPreferred, m_bArrowPreferredValid);
 					break;
 				}
 
@@ -292,120 +260,6 @@ Directs_t CAimbotProjectileSim::GetDirects(int iDirectTier)
 				vOff.z = std::clamp(vOff.z, vMins.z + 5.f, vMaxs.z - 5.f);
 				if (!bBow)
 					mDirects[iPriority] = { vOff, iFlags };
-
-				if (m_tInfo.m_pWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW)
-				{
-					const auto pHDR = I::ModelInfoClient->GetStudiomodel(tTarget.m_pEntity->GetModel());
-					const auto pSet = pHDR ? pHDR->pHitboxSet(tTarget.m_pEntity->As<C_BaseAnimating>()->m_nHitboxSet()) : nullptr;
-					if (pSet && HITBOX_HEAD < pSet->numhitboxes)
-					{
-						const int nHeadBone = pSet->pHitbox(HITBOX_HEAD)->bone;
-						if (nHeadBone >= 0 && nHeadBone < 128)
-						{
-							int iVariant = 0;
-							constexpr float flCol[2] = { 0.3f, 0.7f };
-							constexpr float flRow[2] = { 0.5f, 0.78f };
-							Vec3 vHeadRel(aBones[nHeadBone][0][3], aBones[nHeadBone][1][3], aBones[nHeadBone][2][3]);
-							vHeadRel -= tTarget.m_vPos;
-							std::vector<std::tuple<Vec3, float, float>> vBBoxPoints;
-							for (int f = 0; f < 5; f++)
-							{
-								for (int cA = 0; cA < 2; cA++)
-								{
-									for (int cB = 0; cB < 2; cB++)
-									{
-										const float flA = flCol[cA];
-										const float flB = flRow[cB];
-										Vec3 vOff;
-										switch (f)
-										{
-										case 0: vOff = Vec3(vMaxs.x, vMins.y + (vMaxs.y - vMins.y) * flA, vMins.z + (vMaxs.z - vMins.z) * flB); break;
-										case 1: vOff = Vec3(vMins.x, vMins.y + (vMaxs.y - vMins.y) * flA, vMins.z + (vMaxs.z - vMins.z) * flB); break;
-										case 2: vOff = Vec3(vMins.x + (vMaxs.x - vMins.x) * flA, vMaxs.y, vMins.z + (vMaxs.z - vMins.z) * flB); break;
-										case 3: vOff = Vec3(vMins.x + (vMaxs.x - vMins.x) * flA, vMins.y, vMins.z + (vMaxs.z - vMins.z) * flB); break;
-										case 4: vOff = Vec3(vMins.x + (vMaxs.x - vMins.x) * flA, vMins.y + (vMaxs.y - vMins.y) * flB, vMaxs.z); break;
-										}
-										vBBoxPoints.push_back({ vOff, -1.f, 0.f });
-									}
-								}
-
-								Vec3 vFaceCenter;
-								switch (f)
-								{
-								case 0: vFaceCenter = Vec3(vMaxs.x, std::clamp(vHeadRel.y, vMins.y + 2.f, vMaxs.y - 2.f), std::clamp(vHeadRel.z, vMins.z + 2.f, vMaxs.z - 2.f)); break;
-								case 1: vFaceCenter = Vec3(vMins.x, std::clamp(vHeadRel.y, vMins.y + 2.f, vMaxs.y - 2.f), std::clamp(vHeadRel.z, vMins.z + 2.f, vMaxs.z - 2.f)); break;
-								case 2: vFaceCenter = Vec3(std::clamp(vHeadRel.x, vMins.x + 2.f, vMaxs.x - 2.f), vMaxs.y, std::clamp(vHeadRel.z, vMins.z + 2.f, vMaxs.z - 2.f)); break;
-								case 3: vFaceCenter = Vec3(std::clamp(vHeadRel.x, vMins.x + 2.f, vMaxs.x - 2.f), vMins.y, std::clamp(vHeadRel.z, vMins.z + 2.f, vMaxs.z - 2.f)); break;
-								case 4: vFaceCenter = Vec3(std::clamp(vHeadRel.x, vMins.x + 2.f, vMaxs.x - 2.f), std::clamp(vHeadRel.y, vMins.y + 2.f, vMaxs.y - 2.f), vMaxs.z); break;
-								}
-
-								constexpr int nPlus[5][2] = { { 0, 0 }, { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 } };
-								for (auto& [nDU, nDV] : nPlus)
-								{
-									Vec3 vOff = vFaceCenter;
-									switch (f)
-									{
-									case 0: case 1: vOff.y += nDU * 8.f; vOff.z += nDV * 8.f; break;
-									case 2: case 3: vOff.x += nDU * 8.f; vOff.z += nDV * 8.f; break;
-									case 4: vOff.x += nDU * 8.f; vOff.y += nDV * 8.f; break;
-									}
-									vBBoxPoints.push_back({ vOff, -1.f, 0.f });
-								}
-							}
-
-							for (auto& [vOff, flMargin, flDistSq] : vBBoxPoints)
-							{
-								const Vec3 vPoint = tTarget.m_vPos + vOff;
-								const Vec3 vTo = vPoint - m_tInfo.m_vLocalEye;
-								if (vTo.IsZero())
-									continue;
-								flMargin = ArrowScanHeadMargin(tTarget.m_pEntity->As<C_TFPlayer>(), aBones, m_tInfo.m_vLocalEye, vPoint + vTo.Normalized() * 16.0f);
-								flDistSq = vTo.LengthSqr();
-							}
-
-							std::sort(vBBoxPoints.begin(), vBBoxPoints.end(), [](const auto& a, const auto& b)
-								{
-									if (std::get<1>(a) != std::get<1>(b))
-										return std::get<1>(a) > std::get<1>(b);
-									return std::get<2>(a) < std::get<2>(b);
-								});
-							for (auto& [vOff, flMargin, flDistSq] : vBBoxPoints)
-							{
-								if (flMargin < 0.f || ++iVariant > 12)
-									break;
-								mDirects[iPriority + 100 * iVariant] = { vOff, iFlags, true };
-							}
-
-							for (int h = 0; h < 2; h++)
-							{
-								const Vec3 vWorld = vCenter + Vec3(0.f, 0.f, (h + 1) * 2.0f);
-								mDirects[iPriority + 100 * ++iVariant] = { vWorld - tTarget.m_pEntity->m_vecOrigin(), iFlags, true };
-							}
-
-							for (int h = 0; h < 5; h++)
-							{
-								const Vec3 vWorld = vCenter + Vec3(0.f, 0.f, 6.0f + h * 6.0f);
-								mDirects[iPriority + 100 * ++iVariant] = { vWorld - tTarget.m_pEntity->m_vecOrigin(), iFlags, true };
-							}
-
-							for (int h = 5; h < 9; h++)
-							{
-								const Vec3 vWorld = vCenter + Vec3(0.f, 0.f, (h + 1) * 6.0f);
-								mDirects[iPriority + 100 * ++iVariant] = { vWorld - tTarget.m_pEntity->m_vecOrigin(), iFlags, true };
-							}
-
-							for (int c = 0; c < 8; c++)
-							{
-								const Vec3 vLocal(c & 1 ? vBBoxMins.x : vBBoxMaxs.x,
-									c & 2 ? vBBoxMins.y : vBBoxMaxs.y,
-									c & 4 ? vBBoxMins.z : vBBoxMaxs.z);
-								Vec3 vWorld;
-								Math::VectorTransform(vLocal, aBones[nHeadBone], vWorld);
-								mDirects[iPriority + 100 * ++iVariant] = { vWorld - tTarget.m_pEntity->m_vecOrigin(), iFlags, true };
-							}
-						}
-					}
-				}
 			}
 			else
 				mDirects[iPriority] = { Vec3(0, 0, vMaxs.z - 5.f), iFlags };
@@ -1040,51 +894,186 @@ static Vec3 ArrowInverseTransform(const Vec3& v, const matrix3x4_t& m)
 		vDelta.Dot(Vec3(m[0][2], m[1][2], m[2][2])));
 }
 
-static float ArrowScanHeadMargin(C_TFPlayer* pVictim, matrix3x4_t* aBones, const Vec3& vScanStart, const Vec3& vScanEnd)
+static void AddArrowHeadPoints(Directs_t& mDirects, int iPriority, int iFlags, C_TFPlayer* pVictim, matrix3x4_t* aBones, int nHeadBone, const Vec3& vCenter, const Vec3& vMins, const Vec3& vMaxs, const Vec3& vEye, Vec3& vPreferredOut, bool& bPreferredValidOut)
 {
-	if (!pVictim || !pVictim->GetModel())
-		return -1.f;
-
-	const auto pHDR = I::ModelInfoClient->GetStudiomodel(pVictim->GetModel());
-	if (!pHDR)
-		return -1.f;
-	const auto pSet = pHDR->pHitboxSet(pVictim->m_nHitboxSet());
-	if (!pSet || !pSet->numhitboxes)
-		return -1.f;
-
-	float flClosestDist = std::numeric_limits<float>::max();
-	float flSecondDist = std::numeric_limits<float>::max();
-	int nClosestBox = -1;
-	for (int i = 0; i < pSet->numhitboxes; i++)
+	const Vec3 vOrigin = pVictim->m_vecOrigin();
+	const Vec3 vEntityMins = pVictim->m_vecMins();
+	const Vec3 vEntityMaxs = pVictim->m_vecMaxs();
+	Vec3 vSimple = vCenter - vOrigin;
+	float flLow = 0.f;
+	const Vec3 vDelta = vOrigin + pVictim->m_vecViewOffset() - vEye;
+	if (vDelta.z > 0.f)
 	{
-		const auto pBox = pSet->pHitbox(i);
-		if (!pBox || pBox->bone < 0 || pBox->bone >= 128)
-			continue;
+		const float flXY = vDelta.Length2D();
+		flLow = flXY ? Math::RemapVal(vDelta.z / flXY, 0.f, 0.5f, 0.f, 1.f) : 1.f;
+	}
+	const float flLerp = (70.f + 30.f * flLow) / 100.f;
+	vSimple.z += (vEntityMaxs.z - vSimple.z) * flLerp;
+	vSimple.x = std::clamp(vSimple.x, vEntityMins.x + 5.f, vEntityMaxs.x - 5.f);
+	vSimple.y = std::clamp(vSimple.y, vEntityMins.y + 5.f, vEntityMaxs.y - 5.f);
+	vSimple.z = std::clamp(vSimple.z, vEntityMins.z + 5.f, vEntityMaxs.z - 5.f);
+	mDirects[iPriority] = { vSimple, iFlags, true };
 
-		const Vec3 vLocalStart = ArrowInverseTransform(vScanStart, aBones[pBox->bone]);
-		const Vec3 vLocalEnd = ArrowInverseTransform(vScanEnd, aBones[pBox->bone]);
-		Vec3 vLocalDir = vLocalEnd - vLocalStart;
-		const float flLocalLen = vLocalDir.Length();
-		if (flLocalLen < 1e-8f)
-			continue;
-		vLocalDir /= flLocalLen;
+	Vec3 vForward = vCenter - vEye;
+	const bool bViewBasis = vForward.LengthSqr() >= 1e-6f;
+	Vec3 vRight = {};
+	Vec3 vUp = {};
+	float flMinX = 0.f;
+	float flMaxX = 0.f;
+	float flMinY = 0.f;
+	float flMaxY = 0.f;
+	float flWidth = 0.f;
+	float flHeight = 0.f;
 
-		const float flEntry = ArrowRayBoxEntry(vLocalStart, vLocalDir, flLocalLen, pBox->bbmin, pBox->bbmax);
-		if (flEntry < 0.f)
-			continue;
-		if (flEntry < flClosestDist)
+	if (bViewBasis)
+	{
+		vForward = vForward.Normalized();
+		vRight = vForward.Cross({ 0.f, 0.f, 1.f });
+		if (vRight.LengthSqr() < 1e-6f)
+			vRight = { 0.f, 1.f, 0.f };
+		else
+			vRight = vRight.Normalized();
+		vUp = vRight.Cross(vForward).Normalized();
+
+		flMinX = std::numeric_limits<float>::max();
+		flMaxX = std::numeric_limits<float>::lowest();
+		flMinY = std::numeric_limits<float>::max();
+		flMaxY = std::numeric_limits<float>::lowest();
+		for (int c = 0; c < 8; c++)
 		{
-			flSecondDist = flClosestDist;
-			flClosestDist = flEntry;
-			nClosestBox = i;
+			const Vec3 vLocal(c & 1 ? vMins.x : vMaxs.x, c & 2 ? vMins.y : vMaxs.y, c & 4 ? vMins.z : vMaxs.z);
+			Vec3 vWorld;
+			Math::VectorTransform(vLocal, aBones[nHeadBone], vWorld);
+			const Vec3 vDelta = vWorld - vCenter;
+			flMinX = std::min(flMinX, vDelta.Dot(vRight));
+			flMaxX = std::max(flMaxX, vDelta.Dot(vRight));
+			flMinY = std::min(flMinY, vDelta.Dot(vUp));
+			flMaxY = std::max(flMaxY, vDelta.Dot(vUp));
 		}
-		else if (flEntry < flSecondDist)
-			flSecondDist = flEntry;
+		flWidth = flMaxX - flMinX;
+		flHeight = flMaxY - flMinY;
 	}
 
-	if (nClosestBox < 0 || pSet->pHitbox(nClosestBox)->group != HITGROUP_HEAD)
-		return -1.f;
-	return flSecondDist - flClosestDist;
+	auto ClampedViewPoint = [&](float flR, float flU, Vec3& vOffsetOut)
+	{
+		const Vec3 vWorld = vCenter + vRight * flR + vUp * flU;
+		const Vec3 vLocal = ArrowInverseTransform(vWorld, aBones[nHeadBone]);
+		const Vec3 vClamped(std::clamp(vLocal.x, vMins.x, vMaxs.x),
+			std::clamp(vLocal.y, vMins.y, vMaxs.y),
+			std::clamp(vLocal.z, vMins.z, vMaxs.z));
+		Vec3 vWorldClamped;
+		Math::VectorTransform(vClamped, aBones[nHeadBone], vWorldClamped);
+		vOffsetOut = vWorldClamped - vOrigin;
+	};
+
+	if (bViewBasis && flWidth >= 0.1f && flHeight >= 0.1f)
+	{
+		const float flMidX = (flMinX + flMaxX) * 0.5f;
+		const float flMidY = (flMinY + flMaxY) * 0.5f;
+		const float aViewR[5] = { flMidX, flMidX, flMidX, flMidX + flWidth * 0.35f, flMidX - flWidth * 0.35f };
+		const float aViewU[5] = { flMinY + flHeight * 0.78f, flMidY, flMinY + flHeight * 0.85f, flMidY, flMidY };
+
+		ClampedViewPoint(aViewR[0], aViewU[0], vPreferredOut);
+		bPreferredValidOut = true;
+		mDirects[iPriority + 100] = { vPreferredOut, iFlags, true };
+
+		std::vector<Vec3> vAdded = { vPreferredOut };
+		for (int n = 1; n < 5; n++)
+		{
+			Vec3 vOffset;
+			ClampedViewPoint(aViewR[n], aViewU[n], vOffset);
+			bool bDup = false;
+			for (const auto& vExisting : vAdded)
+			{
+				if (vExisting.DistToSqr(vOffset) < 0.25f)
+				{
+					bDup = true;
+					break;
+				}
+			}
+			if (bDup)
+				continue;
+			mDirects[iPriority + 100 * (n + 1)] = { vOffset, iFlags, true };
+			vAdded.push_back(vOffset);
+		}
+	}
+	else
+	{
+		const Vec3 vLocalCenter = (vMins + vMaxs) * 0.5f;
+		const Vec3 vHalfExtent = (vMaxs - vMins) * 0.5f;
+		const Vec3 aLocalPoints[5] = {
+			{ vLocalCenter.x, vLocalCenter.y, vMins.z + (vMaxs.z - vMins.z) * 0.78f },
+			{ vLocalCenter.x, vLocalCenter.y, vMins.z + (vMaxs.z - vMins.z) * 0.50f },
+			{ vLocalCenter.x, vLocalCenter.y, vMins.z + (vMaxs.z - vMins.z) * 0.85f },
+			{ vLocalCenter.x + vHalfExtent.x * 0.4f, vLocalCenter.y, vMins.z + (vMaxs.z - vMins.z) * 0.78f },
+			{ vLocalCenter.x - vHalfExtent.x * 0.4f, vLocalCenter.y, vMins.z + (vMaxs.z - vMins.z) * 0.78f }
+		};
+		Vec3 vPreferredWorld;
+		Math::VectorTransform(aLocalPoints[0], aBones[nHeadBone], vPreferredWorld);
+		vPreferredOut = vPreferredWorld - vOrigin;
+		bPreferredValidOut = true;
+		for (int n = 0; n < 5; n++)
+		{
+			Vec3 vWorld;
+			Math::VectorTransform(aLocalPoints[n], aBones[nHeadBone], vWorld);
+			mDirects[iPriority + 100 * (n + 1)] = { vWorld - vOrigin, iFlags, true };
+		}
+	}
+
+	if (!bViewBasis || flWidth < 0.1f || flHeight < 0.1f)
+		return;
+
+	const float flMidX = (flMinX + flMaxX) * 0.5f;
+	const float flMidY = (flMinY + flMaxY) * 0.5f;
+	constexpr int nAngles = 8;
+	constexpr float flRings[2] = { 0.5f, 1.2f };
+	std::vector<std::pair<float, Vec3>> vAround;
+	for (const float flRing : flRings)
+	{
+		const float flExpandX = flWidth * flRing;
+		const float flExpandY = flHeight * flRing;
+		const float flAX[nAngles] = { flMinX - flExpandX, flMaxX + flExpandX, flMinX - flExpandX, flMaxX + flExpandX, flMidX, flMidX, flMinX - flExpandX, flMaxX + flExpandX };
+		const float flAY[nAngles] = { flMinY - flExpandY, flMinY - flExpandY, flMaxY + flExpandY, flMaxY + flExpandY, flMinY - flExpandY, flMaxY + flExpandY, flMidY, flMidY };
+		for (int n = 0; n < nAngles; n++)
+		{
+			const Vec3 vWorld = vCenter + vRight * flAX[n] + vUp * flAY[n];
+			Vec3 vRel = vWorld - vOrigin;
+			vRel.x = std::clamp(vRel.x, vEntityMins.x - 2.f, vEntityMaxs.x + 2.f);
+			vRel.y = std::clamp(vRel.y, vEntityMins.y - 2.f, vEntityMaxs.y + 2.f);
+			vRel.z = std::clamp(vRel.z, vEntityMins.z - 2.f, vEntityMaxs.z + 2.f);
+
+			bool bDup = false;
+			for (const auto& tExisting : vAround)
+			{
+				if (tExisting.second.DistToSqr(vRel) < 1.f)
+				{
+					bDup = true;
+					break;
+				}
+			}
+			if (bDup)
+				continue;
+
+			const Vec3 vLocal = ArrowInverseTransform(vOrigin + vRel, aBones[nHeadBone]);
+			const Vec3 vClamped(std::clamp(vLocal.x, vMins.x, vMaxs.x),
+				std::clamp(vLocal.y, vMins.y, vMaxs.y),
+				std::clamp(vLocal.z, vMins.z, vMaxs.z));
+			vAround.push_back({ (vLocal - vClamped).LengthSqr(), vRel });
+		}
+	}
+
+	std::sort(vAround.begin(), vAround.end(), [](const auto& a, const auto& b)
+		{
+			return a.first < b.first;
+		});
+	int iAround = 0;
+	for (auto& [flDistSq, vRel] : vAround)
+	{
+		if (iAround >= 8)
+			break;
+		mDirects[iPriority + 100 * (6 + iAround)] = { vRel, iFlags, true };
+		iAround++;
+	}
 }
 
 static int ArrowTouchResolveGroup(C_TFPlayer* pVictim, matrix3x4_t* aBones, const Vec3& vBoneDelta, const Vec3& vTouchOrigin, const Vec3& vVelocity, float flRemainingFraction, int* pOutStep = nullptr, int* pOutBox = nullptr, float* pOutHeadDist = nullptr, float* pOutWinDist = nullptr, float* pOutMargin = nullptr, int* pOutRunnerBox = nullptr)
@@ -1153,54 +1142,51 @@ static int ArrowTouchResolveGroup(C_TFPlayer* pVictim, matrix3x4_t* aBones, cons
 		return pSet->pHitbox(nDirectBox)->group;
 	}
 
-	const Vec3 vScanStart = vShift - vDir * 16.0f;
+	const Vec3 vScanStart = vShift + vDir * 16.f;
 	float flClosestDist = std::numeric_limits<float>::max();
 	float flSecondDist = std::numeric_limits<float>::max();
 	int nClosestBox = -1;
-	nSecondBox = -1;
+	int nRunnerBox = -1;
 	for (int i = 0; i < pSet->numhitboxes; i++)
 	{
 		const auto pBox = pSet->pHitbox(i);
 		if (!pBox || pBox->bone < 0 || pBox->bone >= 128)
 			continue;
 
-		const Vec3 vLocalStart = ArrowInverseTransform(vScanStart, aBones[pBox->bone]);
-		Vec3 vLocalDir = ArrowInverseTransform(vScanStart + vDir * 256.f, aBones[pBox->bone]) - vLocalStart;
-		const float flLocalLen = vLocalDir.Length();
-		if (flLocalLen < 1e-8f)
+		const Vec3 vBoneOrigin(aBones[pBox->bone][0][3], aBones[pBox->bone][1][3], aBones[pBox->bone][2][3]);
+		const Vec3 vDelta = vBoneOrigin - vScanStart;
+		const float flLen = vDelta.Length();
+		if (flLen < 1e-8f)
 			continue;
-		vLocalDir /= flLocalLen;
 
-		const float flEntry = ArrowRayBoxEntry(vLocalStart, vLocalDir, flLocalLen, pBox->bbmin, pBox->bbmax);
-		if (flEntry < 0.f)
-			continue;
-		const float flDist = flEntry;
-		if (i == 0 && pOutHeadDist)
-			*pOutHeadDist = flDist;
+		const float flEntry = ArrowRayBoxEntry(vScanStart, vDelta / flLen, flLen, vBoneOrigin + pBox->bbmin, vBoneOrigin + pBox->bbmax);
+		const float flDist = flEntry >= 0.f ? flEntry : flLen;
 		if (flDist < flClosestDist)
 		{
 			flSecondDist = flClosestDist;
+			nRunnerBox = nClosestBox;
 			flClosestDist = flDist;
 			nClosestBox = i;
 		}
 		else if (flDist < flSecondDist)
 		{
 			flSecondDist = flDist;
-			nSecondBox = i;
+			nRunnerBox = i;
 		}
 	}
-	if (pOutWinDist)
-		*pOutWinDist = flClosestDist;
-	if (pOutMargin)
-		*pOutMargin = flSecondDist - flClosestDist;
-	if (pOutRunnerBox)
-		*pOutRunnerBox = nSecondBox;
+
 	if (nClosestBox >= 0)
 	{
 		if (pOutStep)
 			*pOutStep = 2;
 		if (pOutBox)
 			*pOutBox = nClosestBox;
+		if (pOutWinDist)
+			*pOutWinDist = flClosestDist;
+		if (pOutMargin)
+			*pOutMargin = flSecondDist == std::numeric_limits<float>::max() ? 0.f : flSecondDist - flClosestDist;
+		if (pOutRunnerBox)
+			*pOutRunnerBox = nRunnerBox;
 		return pSet->pHitbox(nClosestBox)->group;
 	}
 
@@ -1220,6 +1206,14 @@ bool CAimbotProjectileSim::TestAngle(const Vec3& vPoint, const Vec3& vAngles, in
 		&& tTarget.m_iTargetType == TargetEnum::Player;
 
 	m_bObstructed = false;
+	m_flLastHitMargin = -1.f;
+	if (bArrowHeadshot && !m_bArrowCommitStage)
+	{
+		const int iBudgetFloor = m_bArrowFallbackStage ? 0 : 8;
+		if (m_iArrowTestBudget <= iBudgetFloor)
+			return false;
+		m_iArrowTestBudget--;
+	}
 
 	int iSimFlags = ProjSimEnum::Trace | ProjSimEnum::InitCheck
 		| ProjSimEnum::NoRandomAngles | ProjSimEnum::PredictCmdNum;
@@ -1277,12 +1271,21 @@ bool CAimbotProjectileSim::TestAngle(const Vec3& vPoint, const Vec3& vAngles, in
 	if (bVictimBones)
 		memcpy(aVictimBones, m_aArrowBones, sizeof(aVictimBones));
 
+	const int iLatencyTicks = TIME_TO_TICKS(m_tInfo.m_flLatency);
+	const bool bMoveEnemy = bArrowHeadshot && !m_tMoveStorage.m_vPath.empty();
+
 	tTarget.m_pEntity->SetAbsOrigin(tTarget.m_vPos);
 	tTarget.m_pEntity->m_vecMins() = { std::clamp(tTarget.m_pEntity->m_vecMins().x, -24.f, 0.f), std::clamp(tTarget.m_pEntity->m_vecMins().y, -24.f, 0.f), tTarget.m_pEntity->m_vecMins().z };
 	tTarget.m_pEntity->m_vecMaxs() = { std::clamp(tTarget.m_pEntity->m_vecMaxs().x, 0.f, 24.f), std::clamp(tTarget.m_pEntity->m_vecMaxs().y, 0.f, 24.f), tTarget.m_pEntity->m_vecMaxs().z };
 	for (int n = 1; n <= iSimTime; n++)
 	{
 		F::ProjSim.RunTick(m_tProjInfo);
+
+		if (bMoveEnemy)
+		{
+			const int iPathIdx = std::clamp(n + iLatencyTicks, 0, int(m_tMoveStorage.m_vPath.size()) - 1);
+			tTarget.m_pEntity->SetAbsOrigin(m_tMoveStorage.m_vPath[iPathIdx]);
+		}
 
 		if (bDidHit)
 		{
@@ -1315,11 +1318,12 @@ bool CAimbotProjectileSim::TestAngle(const Vec3& vPoint, const Vec3& vAngles, in
 				if (bValid && bArrowHeadshot && bVictimBones)
 				{
 					const Vec3 vTouchVel = (vNew - vOld) / I::GlobalVars->interval_per_tick;
-					const Vec3 vBoneDelta = tTarget.m_vPos - tOriginal.m_vOrigin;
-					const int nCenterGroup = ArrowTouchResolveGroup(tTarget.m_pEntity->As<C_TFPlayer>(), aVictimBones, vBoneDelta, trace.endpos, vTouchVel, 1.f - trace.fraction);
+					const Vec3 vBoneDelta = tTarget.m_pEntity->GetAbsOrigin() - tOriginal.m_vOrigin;
+					float flTouchMargin = -1.f;
+					const int nCenterGroup = ArrowTouchResolveGroup(tTarget.m_pEntity->As<C_TFPlayer>(), aVictimBones, vBoneDelta, trace.endpos, vTouchVel, 1.f, nullptr, nullptr, nullptr, nullptr, &flTouchMargin);
+					m_flLastHitMargin = flTouchMargin;
 					if (nCenterGroup != HITGROUP_HEAD)
 						bValid = false;
-
 				}
 				break;
 			case PointTypeEnum::Geometry:
@@ -1448,7 +1452,7 @@ bool CAimbotProjectileSim::HandlePoint(const Vec3& vOrigin, int iSimTime, float 
 
 	if (!TestAngle(vPoint, vAngles, iSimTime, iType, iFlags, false, bStrictHead))
 	{
-		if (!m_iResult && m_bObstructed
+		if (!m_iResult && m_bObstructed && !m_bArrowFallbackStage
 			&& AimTypeValue() == AimTypeEnum::Silent
 			&& CFG::Aimbot_Projectile_Neckbreaker && !CFG::Misc_AntiCheat_Enabled)
 		{
@@ -1458,7 +1462,8 @@ bool CAimbotProjectileSim::HandlePoint(const Vec3& vOrigin, int iSimTime, float 
 			if (bLob)
 				iSolveFlags |= CalculateFlagsEnum::LobAngle;
 			const int iTolerance = m_tInfo.m_bIgnoreTiming && bLob ? std::numeric_limits<int>::max() : iType == PointTypeEnum::Direct ? -1 : m_tInfo.m_iArmTime ? -1 : 0;
-			for (int iRoll = iStep; iRoll < 360 && m_iRollBudget > 0; iRoll += iStep)
+			const int iArrowBudgetFloor = bStrictHead && m_tInfo.m_pWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW && !m_bArrowCommitStage ? (m_bArrowFallbackStage ? 0 : 8) : 0;
+			for (int iRoll = iStep; iRoll < 360 && m_iRollBudget > 0 && (!bStrictHead || m_iArrowTestBudget > iArrowBudgetFloor); iRoll += iStep)
 			{
 				m_iRollBudget--;
 				Solution_t tRollSolution;
@@ -1532,6 +1537,12 @@ bool CAimbotProjectileSim::HandleDirect(DirectHistory_t& mDirectHistory)
 		return bReturn;
 
 	auto it = mDirectHistory.begin();
+	if (m_tInfo.m_pWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW)
+	{
+		auto itRegular = mDirectHistory.find(PointFlagsEnum::Regular);
+		if (itRegular != mDirectHistory.end())
+			it = itRegular;
+	}
 	const int iType = it->first;
 	auto& vDirectHistory = it->second;
 
@@ -1550,12 +1561,70 @@ bool CAimbotProjectileSim::HandleDirect(DirectHistory_t& mDirectHistory)
 	m_flTimeTo = vDirectHistory.front().m_flTime + m_tInfo.m_flLatency;
 
 	m_iRollBudget = 360 / std::max(CFG::Aimbot_Projectile_NeckbreakerStep, 15);
-	for (auto& tHistory : vDirectHistory)
+
+	const bool bArrowHeadStage = m_tInfo.m_pWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW
+		&& m_tInfo.m_pTarget->m_iTargetType == TargetEnum::Player
+		&& m_tInfo.m_pTarget->m_nAimedHitbox == HITBOX_HEAD;
+	if (bArrowHeadStage)
 	{
-		if (HandlePoint(tHistory.m_vOrigin, tHistory.m_iSimtime, tHistory.m_flPitch, tHistory.m_flYaw, tHistory.m_flTime, tHistory.m_vPoint, PointTypeEnum::Direct, iType, tHistory.m_bStrictHead))
+		const bool bOldUpdate = m_bUpdate;
+		m_bUpdate = false;
+		bool bFound = false;
+		float flBestMargin = -1.f;
+		float flBestScore = std::numeric_limits<float>::max();
+		Direct_t tBest;
+		for (const auto& tHistory : vDirectHistory)
 		{
-			bReturn = true;
-			break;
+			if (tHistory.m_bStrictHead && m_iArrowTestBudget <= (m_bArrowFallbackStage ? 0 : 8))
+				break;
+
+			m_iResult = false;
+			HandlePoint(tHistory.m_vOrigin, tHistory.m_iSimtime, tHistory.m_flPitch, tHistory.m_flYaw, tHistory.m_flTime, tHistory.m_vPoint, PointTypeEnum::Direct, iType, tHistory.m_bStrictHead);
+			if (m_iResult == 0)
+				continue;
+
+			const float flMargin = std::max(m_flLastHitMargin, 0.f);
+			const Vec3 vCandOffset = tHistory.m_vPoint - tHistory.m_vOrigin;
+			const float flScoreDist = m_bArrowPreferredValid ? vCandOffset.DistToSqr(m_vArrowPreferred) : 0.f;
+			const bool bPosBetter = m_bArrowPreferredValid && flScoreDist < flBestScore - 1.f;
+			const bool bPosTie = !m_bArrowPreferredValid || fabsf(flScoreDist - flBestScore) <= 1.f;
+			const bool bMarginTie = flMargin > flBestMargin - 0.05f;
+			if (!bFound
+				|| bPosBetter
+				|| bPosTie && flMargin > flBestMargin + 0.05f
+				|| bPosTie && bMarginTie && tHistory.m_flTime < tBest.m_flTime
+				|| bPosTie && bMarginTie && fabsf(tHistory.m_flTime - tBest.m_flTime) <= 0.001f && tHistory.m_iPriority < tBest.m_iPriority)
+			{
+				tBest = tHistory;
+				flBestScore = flScoreDist;
+				flBestMargin = flMargin;
+				bFound = true;
+			}
+		}
+		m_bUpdate = bOldUpdate;
+
+		if (bFound)
+		{
+			m_iRollBudget = 360 / std::max(CFG::Aimbot_Projectile_NeckbreakerStep, 15);
+			m_bArrowCommitStage = true;
+			m_iResult = false;
+			HandlePoint(tBest.m_vOrigin, tBest.m_iSimtime, tBest.m_flPitch, tBest.m_flYaw, tBest.m_flTime, tBest.m_vPoint, PointTypeEnum::Direct, iType, tBest.m_bStrictHead);
+			m_bArrowCommitStage = false;
+			bReturn = m_iResult != 0;
+		}
+	}
+	else
+	{
+		for (auto& tHistory : vDirectHistory)
+		{
+			if (tHistory.m_bStrictHead && m_iArrowTestBudget <= (m_bArrowFallbackStage ? 0 : 8)
+				&& m_tInfo.m_pWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW)
+				break;
+			if (HandlePoint(tHistory.m_vOrigin, tHistory.m_iSimtime, tHistory.m_flPitch, tHistory.m_flYaw, tHistory.m_flTime, tHistory.m_vPoint, PointTypeEnum::Direct, iType, tHistory.m_bStrictHead))
+			{
+				bReturn = true;
+				break;
+			}
 		}
 	}
 
@@ -1612,10 +1681,13 @@ bool CAimbotProjectileSim::HandleSplash(SplashHistory_t& mSplashHistory)
 	return bReturn;
 }
 
-int CAimbotProjectileSim::CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, bool bUpdate, int iDirectTier)
+int CAimbotProjectileSim::CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, bool bUpdate)
 {
 	m_tMoveStorage = {};
 	m_bArrowBonesValid = false;
+	m_bArrowPreferredValid = false;
+	m_iArrowTestBudget = 20;
+	m_bArrowFallbackStage = false;
 
 	const bool bIsPlayer = tTarget.m_iTargetType == TargetEnum::Player && IsPlayer(tTarget.m_pEntity);
 	bool bSim = false;
@@ -1641,8 +1713,7 @@ int CAimbotProjectileSim::CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TFWeap
 	}
 
 	m_tInfo = { pLocal, pWeapon, &tTarget };
-	m_tInfo.m_vLocalEye = (Shifting::bShifting && Shifting::nCurrentShiftTick)
-		? pLocal->GetShootPos() : GetShootPos(pLocal);
+	m_tInfo.m_vLocalEye = SDKUtils::GetPredictedShootPos(pLocal);
 	m_tInfo.m_flLatency = std::max(SDKUtils::GetLatency() - F::LagRecords->GetFakeLatency(), 0.0f)
 		+ TICKS_TO_TIME(AnticipatedChokeTicks());
 	tTarget.m_vPos = tTarget.m_pEntity->m_vecOrigin();
@@ -1681,13 +1752,23 @@ int CAimbotProjectileSim::CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TFWeap
 	}
 	m_tInfo.m_bIgnoreTiming = true && m_tInfo.m_flRadius;
 
-	Directs_t mDirects = GetDirects(iDirectTier);
+	Directs_t mDirects = GetDirects();
 	Splashes_t vSplashes = GetSplashes();
 
 	DirectHistory_t mDirectHistory = {};
 	SplashHistory_t mSplashHistory = {};
 
 	const int iMaxTime = TIME_TO_TICKS(std::min(m_tProjInfo.m_flLifetime, CFG::Aimbot_Projectile_Max_Simulation_Time));
+	const bool bArrowHead = pWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW
+		&& tTarget.m_iTargetType == TargetEnum::Player && tTarget.m_nAimedHitbox == HITBOX_HEAD;
+	std::vector<Vec3> vArrowOrigins;
+	int iArrowOriginCount = 0;
+	if (bArrowHead)
+	{
+		vArrowOrigins.resize(iMaxTime + 1);
+		vArrowOrigins[0] = tTarget.m_vPos;
+		iArrowOriginCount = 1;
+	}
 	for (int i = 1 - TIME_TO_TICKS(m_tInfo.m_flLatency); i <= iMaxTime; i++)
 	{
 		if (!m_tMoveStorage.m_bFailed)
@@ -1697,6 +1778,11 @@ int CAimbotProjectileSim::CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TFWeap
 		}
 		if (i < 0)
 			continue;
+		if (bArrowHead)
+		{
+			vArrowOrigins[i] = tTarget.m_vPos;
+			iArrowOriginCount = i + 1;
+		}
 
 		for (auto it = mDirects.begin(); it != mDirects.end();)
 		{
@@ -1704,6 +1790,11 @@ int CAimbotProjectileSim::CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TFWeap
 				break;
 
 			auto& [iIndex, tOffset] = *it;
+			if (bArrowHead && tOffset.m_bStrictHead && iIndex >= 600)
+			{
+				++it;
+				continue;
+			}
 			Vec3& vOffset = tOffset.m_vOffset;
 			const int iType = tOffset.m_iFlags & -tOffset.m_iFlags;
 
@@ -1775,7 +1866,16 @@ int CAimbotProjectileSim::CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TFWeap
 			++it;
 		}
 
-		if (mDirects.empty() && vSplashes.empty())
+		bool bHasActiveDirects = false;
+		for (const auto& [iIndex, tOffset] : mDirects)
+		{
+			if (!bArrowHead || !tOffset.m_bStrictHead || iIndex < 600)
+			{
+				bHasActiveDirects = true;
+				break;
+			}
+		}
+		if (!bHasActiveDirects && vSplashes.empty())
 			break;
 	}
 
@@ -1790,13 +1890,55 @@ int CAimbotProjectileSim::CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TFWeap
 		splash: if (HandleSplash(mSplashHistory)) break;
 	}
 
-	F::MoveSim->Restore(m_tMoveStorage);
+	if (!m_iResult && bArrowHead && m_iArrowTestBudget > 0)
+	{
+		m_bArrowFallbackStage = true;
+		for (int i = 0; i < iArrowOriginCount; i++)
+		{
+			for (auto it = mDirects.begin(); it != mDirects.end();)
+			{
+				auto& [iIndex, tOffset] = *it;
+				if (!tOffset.m_bStrictHead || iIndex < 600)
+				{
+					++it;
+					continue;
+				}
 
-	if (!m_iResult && iDirectTier < 2
-		&& pWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW
-		&& tTarget.m_iTargetType == TargetEnum::Player
-		&& tTarget.m_nAimedHitbox == HITBOX_HEAD)
-		return CanHit(tTarget, pLocal, pWeapon, bUpdate, iDirectTier + 1);
+				const int iType = tOffset.m_iFlags & -tOffset.m_iFlags;
+				int iFlags = CalculateFlagsEnum::Accuracy;
+				if (iType == PointFlagsEnum::Lob)
+					iFlags |= CalculateFlagsEnum::LobAngle;
+
+				Solution_t tSolution;
+				const Vec3 vPoint = vArrowOrigins[i] + tOffset.m_vOffset;
+				if (iType == PointFlagsEnum::Lob && !ShouldLob(m_tMoveStorage, m_tInfo))
+					tSolution.m_iCalculated = CalculatedEnum::Bad;
+				else
+					CalculateAngle(m_tInfo.m_vLocalEye, vPoint, i, tSolution, iFlags, -1);
+				if (tSolution.m_iCalculated == CalculatedEnum::Good)
+				{
+					mDirectHistory[iType].emplace_back(History_t(vArrowOrigins[i], i), tSolution.m_flPitch, tSolution.m_flYaw, tSolution.m_flTime, vPoint, iIndex, true);
+					tOffset.m_iFlags &= ~iType;
+				}
+				else if (tSolution.m_iCalculated == CalculatedEnum::Bad)
+					tOffset.m_iFlags &= ~iType;
+
+				if (!tOffset.m_iFlags)
+				{
+					it = mDirects.erase(it);
+					continue;
+				}
+				++it;
+			}
+		}
+		while (!mDirectHistory.empty() && m_iArrowTestBudget > 0)
+		{
+			if (HandleDirect(mDirectHistory))
+				break;
+		}
+	}
+
+	F::MoveSim->Restore(m_tMoveStorage);
 
 	if (!bUpdate)
 		return m_iResult;
@@ -2052,6 +2194,13 @@ std::vector<Target_t> CAimbotProjectileSim::SortTargets(C_TFPlayer* pLocal, C_TF
 bool CAimbotProjectileSim::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd)
 {
 	const int nWeaponID = pWeapon->GetWeaponID();
+	const bool bRocket = nWeaponID == TF_WEAPON_ROCKETLAUNCHER || nWeaponID == TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT;
+	const int iWeaponIndex = pWeapon->entindex();
+	if (!bRocket || m_iRocketPathWeapon != iWeaponIndex)
+	{
+		m_iRocketPathWeapon = bRocket ? iWeaponIndex : 0;
+		m_flRocketPathAttack = -1.f;
+	}
 
 	if (CFG::Aimbot_Projectile_Sort == 0)
 		G::flAimbotFOV = CFG::Aimbot_Projectile_FOV;
@@ -2060,9 +2209,15 @@ bool CAimbotProjectileSim::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, 
 		pCmd->buttons |= IN_ATTACK;
 
 	const bool bKeyAim = CFG::Aimbot_Always_On || H::Input->IsDown(CFG::Aimbot_Key);
-	if (!AimTypeValue()
-		|| !bKeyAim
-		|| !F::AimbotGlobal->ShouldAim() && nWeaponID != TF_WEAPON_FLAMETHROWER)
+	if (!AimTypeValue() || !bKeyAim)
+	{
+		G::bFiring = false;
+		G::Attacking = SDKUtils::IsAttacking(pLocal, pWeapon, pCmd, true);
+		return false;
+	}
+	if (nWeaponID == TF_WEAPON_COMPOUND_BOW)
+		pCmd->buttons &= ~IN_ATTACK2;
+	if (!F::AimbotGlobal->ShouldAim() && nWeaponID != TF_WEAPON_FLAMETHROWER)
 	{
 		G::bFiring = false;
 		G::Attacking = SDKUtils::IsAttacking(pLocal, pWeapon, pCmd, true);
@@ -2186,16 +2341,21 @@ bool CAimbotProjectileSim::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, 
 				break;
 			case TF_WEAPON_ROCKETLAUNCHER:
 			case TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT:
-			case TF_WEAPON_PARTICLE_CANNON:
-			case TF_WEAPON_RAYGUN:
-			case TF_WEAPON_DRG_POMSON:
-			case TF_WEAPON_CROSSBOW:
+				if (Shifting::bShifting && !Shifting::bShiftingWarp && !pWeapon->IsInReload()
+					&& pWeapon->m_flNextPrimaryAttack() > TICKS_TO_TIME(pLocal->m_nTickBase()))
+					break;
 				pCmd->buttons |= IN_ATTACK, pCmd->buttons &= ~IN_ATTACK2;
 				if (pWeapon->m_iItemDefinitionIndex() == Soldier_m_TheBeggarsBazooka)
 				{
 					if (pWeapon->m_iClip1() > 0)
 						pCmd->buttons &= ~IN_ATTACK;
 				}
+				break;
+			case TF_WEAPON_PARTICLE_CANNON:
+			case TF_WEAPON_RAYGUN:
+			case TF_WEAPON_DRG_POMSON:
+			case TF_WEAPON_CROSSBOW:
+				pCmd->buttons |= IN_ATTACK, pCmd->buttons &= ~IN_ATTACK2;
 				break;
 			default:
 				pCmd->buttons |= IN_ATTACK;
@@ -2213,10 +2373,16 @@ bool CAimbotProjectileSim::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, 
 				m_tAimTarget = { tTarget.m_pEntity->entindex(), I::GlobalVars->tickcount, 0 };
 			m_tAimPoint = { tTarget.m_vPos, I::GlobalVars->tickcount };
 			m_iLastSolutionTick = I::GlobalVars->tickcount;
+			m_bFreshSolution = true;
 		}
 
-		if (G::Attacking == 1 && !m_vProjectilePath.empty())
+		const float flNextAttack = pWeapon->m_flNextPrimaryAttack();
+		const bool bFireReady = !bRocket || flNextAttack <= TICKS_TO_TIME(pLocal->m_nTickBase());
+		const bool bNewRocketPath = !bRocket || m_flRocketPathAttack != flNextAttack;
+		if (G::Attacking == 1 && bFireReady && bNewRocketPath && !m_vProjectilePath.empty())
 		{
+			if (bRocket)
+				m_flRocketPathAttack = flNextAttack;
 			I::DebugOverlay->ClearAllOverlays();
 
 			if (CFG::Visuals_Draw_Movement_Path_Style > 0 && !m_vPlayerPath.empty())
@@ -2246,13 +2412,6 @@ bool CAimbotProjectileSim::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, 
 			}
 		}
 
-		if (G::Attacking != 1 && (pCmd->buttons & IN_ATTACK))
-		{
-			SDKUtils::FixMovement(pCmd, tTarget.m_vAngleTo);
-			pCmd->viewangles = tTarget.m_vAngleTo;
-			G::bSilentAngles = true;
-		}
-
 		Aim(pCmd, tTarget.m_vAngleTo);
 		if (G::bPSilentAngles)
 		{
@@ -2279,6 +2438,11 @@ bool CAimbotProjectileSim::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, 
 		G::bSilentAngles = true;
 	}
 
+	if (Shifting::bShifting && !Shifting::bShiftingWarp
+		&& (nWeaponID == TF_WEAPON_ROCKETLAUNCHER || nWeaponID == TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT)
+		&& pWeapon->m_flNextPrimaryAttack() <= TICKS_TO_TIME(pLocal->m_nTickBase()))
+		pCmd->buttons |= IN_ATTACK;
+
 	G::bFiring = false;
 	G::Attacking = SDKUtils::IsAttacking(pLocal, pWeapon, pCmd, true);
 	return false;
@@ -2290,9 +2454,11 @@ bool CAimbotProjectileSim::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, 
 		{
 			m_bLastTickHeld = false;
 			m_bLastTickAimbotCharge = false;
+			m_bFreshSolution = false;
 			return false;
 		}
 
+		m_bFreshSolution = false;
 		const bool bSuccess = RunMain(pLocal, pWeapon, pCmd);
 
 		float flAmount = 0.f;
@@ -2307,6 +2473,11 @@ bool CAimbotProjectileSim::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, 
 			const float flCharge = pWeapon->As<C_TFGrenadeLauncher>()->m_flDetonateTime() > 0.f ? I::GlobalVars->curtime - pWeapon->As<C_TFGrenadeLauncher>()->m_flDetonateTime() : -flMortar;
 			flAmount = flMortar ? Math::RemapVal(flCharge, -flMortar, 0.f, 0.f, 1.f) : 0.f;
 		}
+		else if (pWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW)
+		{
+			const float flCharge = pWeapon->As<C_TFPipebombLauncher>()->m_flChargeBeginTime() > 0.f ? I::GlobalVars->curtime - pWeapon->As<C_TFPipebombLauncher>()->m_flChargeBeginTime() : 0.f;
+			flAmount = std::min(flCharge, 1.f);
+		}
 
 		const bool bKeyAim = CFG::Aimbot_Always_On || H::Input->IsDown(CFG::Aimbot_Key);
 		const bool bUserAttacking = G::OriginalCmd.buttons & IN_ATTACK;
@@ -2319,8 +2490,9 @@ bool CAimbotProjectileSim::RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, 
 			const bool bDisengaged = m_bLastTickHeld && !bKeyAim;
 			if (!bUserAttacking)
 				m_bManualBailLatch = false;
-			const bool bManualBail = bUserAttacking && flAmount > 0.95f && !bRecentSolution;
-			if ((m_bLastTickAimbotCharge && ((bReleased && !bSuccess && (bDisengaged || !bRecentSolution)) || (bAimbotCharging && flAmount > 0.95f))) || bManualBail)
+			const bool bBow = pWeapon->GetWeaponID() == TF_WEAPON_COMPOUND_BOW;
+			const bool bManualBail = bUserAttacking && flAmount > 0.95f && !bRecentSolution && !bBow;
+			if ((m_bLastTickAimbotCharge && ((bReleased && !bSuccess && (bDisengaged || !bRecentSolution || bBow)) || (bAimbotCharging && flAmount > 0.95f))) || bManualBail)
 			{
 				CancelShot(pLocal, pWeapon, pCmd, m_iLastTickCancel);
 				if (bManualBail && m_iLastTickCancel)

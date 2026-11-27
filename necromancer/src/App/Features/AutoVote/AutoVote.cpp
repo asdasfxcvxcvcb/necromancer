@@ -31,6 +31,23 @@ static bool IsIgnoredIndex(int iIndex)
 	return F::Players->GetInfo(iIndex, priority) && priority.Ignored;
 }
 
+static void AutoTagVoteCaller(int iCaller, int iTarget)
+{
+	if (!IsValidPlayerIndex(iCaller) || !IsValidPlayerIndex(iTarget))
+		return;
+
+	if (iTarget != I::EngineClient->GetLocalPlayer() && !IsSteamFriendIndex(iTarget) && !IsIgnoredIndex(iTarget))
+		return;
+
+	PlayerPriority priority{};
+	F::Players->GetInfo(iCaller, priority);
+	if (priority.RetardLegit)
+		return;
+
+	priority.RetardLegit = true;
+	F::Players->Mark(iCaller, priority);
+}
+
 // Amalgam's AutoF1 basis: the TARGET is tagged as a cheater in the playerlist
 static bool IsPrioritizedIndex(int iIndex)
 {
@@ -77,7 +94,7 @@ static bool CanRetryTarget(int iTarget)
 
 void CAutoVote::UserMessage(bf_read& msgData)
 {
-	if (!CFG::Misc_Auto_F1 && !CFG::Misc_Auto_F2)
+	if (!CFG::Misc_Auto_F1 && !CFG::Misc_Auto_F2 && !CFG::Players_Auto_Tag_Votekickers)
 		return;
 
 	const int nStartBit = msgData.GetNumBitsRead();
@@ -96,6 +113,9 @@ void CAutoVote::UserMessage(bf_read& msgData)
 
 	if (bOverflow || !iVoteID)
 		return;
+
+	if (CFG::Players_Auto_Tag_Votekickers)
+		AutoTagVoteCaller(iCaller, iTarget);
 
 	for (const auto& entry : m_vecQueue)
 	{

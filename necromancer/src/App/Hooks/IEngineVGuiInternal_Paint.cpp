@@ -116,6 +116,7 @@ MAKE_HOOK(IEngineVGuiInternal_Paint, Memory::GetVFunc(I::EngineVGui, 14), void, 
 			F::AutoQueue->Run();
 		}
 
+		H::Fonts->EnsureValid();
 		I::MatSystemSurface->StartDrawing();
 		{
 			RunPaintDrawGuarded();

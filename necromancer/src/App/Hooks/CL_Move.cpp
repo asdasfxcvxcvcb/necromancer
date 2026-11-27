@@ -297,7 +297,7 @@ MAKE_HOOK(CL_Move, Signatures::CL_Move.Get(), void, __fastcall,
 		// per frame until the drain in RunFastRev stops it
 		int nTicks = bFastRevBatch
 			? std::min(Shifting::nAvailableTicks, std::max(MAX_NEW_COMMANDS + MAX_BACKUP_COMMANDS - I::ClientState->chokedcommands, 1))
-			: F::RapidFire->GetReleaseTicks();
+			: std::min(F::RapidFire->GetReleaseTicks(), Shifting::GetServerProcessBudget(I::ClientState->chokedcommands));
 
 		if (nTicks > 0)
 		{

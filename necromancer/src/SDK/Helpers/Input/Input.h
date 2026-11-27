@@ -19,8 +19,8 @@ public:
 	inline bool IsPressed(short key) { return m_Keys[key] == PRESSED; }
 	inline bool IsHeld(short key) { return m_Keys[key] == HELD; }
 	inline bool IsDown(short key) { return IsPressed(key) || IsHeld(key); }
-	inline int GetMouseX() { return m_nMouseX; }
-	inline int GetMouseY() { return m_nMouseY; }
+	int GetMouseX();
+	int GetMouseY();
 	inline bool IsGameFocused() { return m_bGameFocused; }
 	void PushChar(unsigned int nUnit)
 	{

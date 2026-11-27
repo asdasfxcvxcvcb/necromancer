@@ -521,12 +521,7 @@ static void NetDrawAvatar(const std::string &strKey, const std::string &strB64, 
 	H::Draw->Rect(x, y, nSize, nSize, CFG::Menu_Background);
 	const int nTex = NetAvatarTexture(strKey, strB64);
 	if (nTex > 0)
-	{
-		I::MatSystemSurface->DrawSetColor(255, 255, 255, 255);
-		I::MatSystemSurface->DrawSetTexture(nTex);
-		I::MatSystemSurface->DrawTexturedRect(x, y, x + nSize, y + nSize);
-		return;
-	}
+		H::Draw->Texture(x, y, nSize, nSize, nTex, POS_DEFAULT);
 }
 static void NetDrawOutlined(int x, int y, const Color_t &clr, const char *szText)
 {
@@ -671,8 +666,293 @@ bool CMenu::IsHoveredSimple(int x, int y, int w, int h)
 	bool bBottom = my <= y + h;
 	return bLeft && bRight && bTop && bBottom;
 }
+static const char *FindCuratedDescription(const void *pVar)
+{
+	static const std::unordered_map<const void *, const char *> map = {
+		{ &CFG::Aimbot_Active, "Master aimbot switch. When on, the aimbot picks targets and turns your view toward them." },
+		{ &CFG::Aimbot_AutoShoot, "Fires automatically while the aimbot is locked on a target." },
+		{ &CFG::Aimbot_Always_On, "Keeps the aimbot engaged without holding its key." },
+		{ &CFG::Aimbot_Key, "Hold this key to engage the aimbot when Always On is off." },
+		{ &CFG::Aimbot_Ignore_Untagged_Key, "While held, the aimbot skips players you have not tagged." },
+		{ &CFG::Aimbot_Hitscan_Fake_Latency, "Chokes input packets so your aim resolves against older enemy positions." },
+		{ &CFG::Aimbot_Hitscan_Fake_Interp, "Adds artificial interpolation delay to widen the aimable window." },
+		{ &CFG::Aimbot_Projectile_Neckbreaker, "Twists the visible head position to land otherwise impossible shots." },
+		{ &CFG::Triggerbot_Active, "Master triggerbot switch for the Auto sub-features." },
+		{ &CFG::Triggerbot_Key, "Hold to activate triggerbot features that are not Always On." },
+		{ &CFG::AutoUber_Active, "Automatically pops your Uber when incoming damage crosses the strictness threshold." },
+		{ &CFG::Triggerbot_AutoVaccinator_Active, "Cycles and pops Vaccinator resist types against the damage you are about to take." },
+		{ &CFG::Triggerbot_AutoVaccinator_NoPop, "Only cycles resist types; never spends a charge automatically." },
+		{ &CFG::Exploits_Shifting_Recharge_Key, "Hold to recharge doubletap ticks faster than normal." },
+		{ &CFG::Exploits_RapidFire_Key, "Tap to shift extra ticks and fire multiple shots in one update." },
+		{ &CFG::Exploits_FastSticky_Key, "Tap to charge and release stickies with compressed timing." },
+		{ &CFG::Exploits_Warp_Key, "Tap to perform a tick warp for peeks or velocity exploits." },
+		{ &CFG::Exploits_Shifting_Recharge_Limit, "Maximum doubletap ticks the recharge bank can hold." },
+		{ &CFG::Exploits_FastSticky_Ticks, "Fixed sticky charge ticks; 0 lets the feature pick automatically." },
+		{ &CFG::Exploits_RapidFire_Ticks, "How many ticks each doubletap shift spends. Higher hits harder but is easier to detect." },
+		{ &CFG::Exploits_Acquire_Delay_Ticks, "Delays tick acquisition so shifts line up with your fire input." },
+		{ &CFG::Exploits_Warp_Mode, "Slow warps a few ticks at a time; Full dumps the whole bank at once." },
+		{ &CFG::Exploits_Warp_Exploit, "Optional payload during a warp: fake peek frames or zeroed velocity." },
+		{ &CFG::Exploits_RapidFire_Antiwarp, "Stops doubletap shifts while a warp is in progress." },
+		{ &CFG::Exploits_FastRev, "Speeds up sniper revolver-style charge release." },
+		{ &CFG::Exploits_FakeLag_Enabled, "Chokes your packets adaptively to stay under the server movement budget." },
+		{ &CFG::Exploits_FakeLag_Max_Ticks, "Highest number of choked ticks per burst." },
+		{ &CFG::Exploits_FakeLag_Only_Moving, "Only chokes packets while you are moving." },
+		{ &CFG::Exploits_FakeLag_Activate_On_Sightline, "Forces fakelag whenever an enemy can see you." },
+		{ &CFG::Exploits_AntiBackstab_Mode, "Twists your view when a spy lines up a backstab." },
+		{ &CFG::Exploits_AntiAim_Enabled, "Runs the anti-aim angles each tick." },
+		{ &CFG::Exploits_LegitAA_Enabled, "Uses small human-looking angle corrections instead of full anti-aim." },
+		{ &CFG::Exploits_Crits_Force_Crit_Key, "Hold to force critical hits while crits are available." },
+		{ &CFG::Exploits_Crits_Skip_Random_Crits, "Skips shots that would consume a random crit roll." },
+		{ &CFG::Exploits_Crits_Effects, "Shows the real crit particle, sound and glow while forcing crits." },
+		{ &CFG::Exploits_SeedPred_Active, "Predicts the weapon spread seed so shots land center." },
+		{ &CFG::Exploits_Region_Selector_Active, "Restricts casual matchmaking to the regions you tick below." },
+		{ &CFG::Misc_AntiCheat_Enabled, "Clamps ticks and fakelag to safer values for anti-cheat servers." },
+		{ &CFG::Misc_AntiCheat_IgnoreTickLimit, "Ignores the safe tick clamp even with compatibility enabled." },
+		{ &CFG::Misc_IgnoreVAC_Enabled, "Blocks VAC status checks so flagged sessions keep running." },
+		{ &CFG::Misc_Bunnyhop, "Automatically jumps the tick you touch the ground." },
+		{ &CFG::Misc_EdgeJump, "Jumps automatically at ledges when the edge key is held." },
+		{ &CFG::Misc_AutoJumpbug, "Unducks and jumps on landing frames to skip fall damage." },
+		{ &CFG::Misc_Choke_On_Bhop, "Chokes packets while bunnyhopping to look smoother." },
+		{ &CFG::Misc_Fast_Stop, "Cancels momentum instantly when you release movement keys." },
+		{ &CFG::Misc_Fast_Accelerate, "Pushes extra acceleration on strafe inputs." },
+		{ &CFG::Misc_Ignore_Enemy_Collision, "Lets your movement pass through enemy players." },
+		{ &CFG::Misc_Auto_Strafe, "Turns your view toward the best air-strafe direction." },
+		{ &CFG::Misc_Auto_Rocket_Jump_Key, "Hold to auto-perform rocket jumps with the selected mode." },
+		{ &CFG::Misc_Taunt_Slide, "Lets you move freely while taunting." },
+		{ &CFG::Misc_Fake_Taunt, "Sends a taunt that only other clients see." },
+		{ &CFG::Misc_Pure_Bypass, "Bypasses sv_pure so custom files load on protected servers." },
+		{ &CFG::Misc_No_Push, "Stops teammates and enemies from pushing you." },
+		{ &CFG::Misc_Anti_AFK, "Moves slightly so the server never marks you AFK." },
+		{ &CFG::Misc_Ping_Reducer, "Tunes the command rate the client asks the server for." },
+		{ &CFG::Misc_Ping_Reducer_Active, "Enables the command-rate tuning." },
+		{ &CFG::Misc_Report_Spam, "Sends GC player reports at the configured rate. High rates get flagged." },
+		{ &CFG::Misc_Trade_Spam, "Sends trade requests at the configured rate." },
+		{ &CFG::Misc_Auto_Queue, "Re-queues casual automatically after a match ends." },
+		{ &CFG::Misc_Auto_F1, "Accepts vote kicks against you automatically." },
+		{ &CFG::Misc_Auto_F2, "Declines vote kicks against you automatically." },
+		{ &CFG::Misc_Auto_Disguise, "Auto-disguises as the picked enemy class after kills." },
+		{ &CFG::Misc_Auto_Balance_Dodge, "Leaves the server before an autobalance swap hits you." },
+		{ &CFG::Misc_Auto_Balance_Warn, "Shows a warning when an autobalance swap is likely." },
+		{ &CFG::Misc_Auto_Call_Medic_On_Damage, "Calls for a medic automatically at the HP threshold." },
+		{ &CFG::Misc_Auto_VoiceCommand_Spam, "Spams the selected voice command line." },
+		{ &CFG::Misc_Projectile_Dodge_Enabled, "Moves you out of incoming projectile paths." },
+		{ &CFG::Misc_Chat_Spammer_Active, "Sends chat lines from your text files on an interval." },
+		{ &CFG::Misc_Chat_Killsay_Active, "Sends a killsay line after each kill." },
+		{ &CFG::Players_Auto_Tag_Votekickers, "Tags anyone who starts a vote kick against you, friends or ignored players." },
+		{ &CFG::Visuals_FOV_Override, "Overrides your field of view in first person." },
+		{ &CFG::Visuals_StatusWindow_Active, "Shows the draggable status panel with live feature states." },
+		{ &CFG::Visuals_SpectatorList_Active, "Lists who is currently watching you." },
+		{ &CFG::Radar_Active, "Draws the radar overlay with players, buildings and world objects." },
+		{ &CFG::ESP_Active, "Master ESP switch for tracers and per-entity text colors." },
+		{ &CFG::Materials_Active, "Master material-changer switch." },
+		{ &CFG::Outlines_Active, "Master outline/glow switch." },
+		{ &CFG::SkinChanger_Active, "Applies killstreak and skin overrides to your weapons." },
+		{ &CFG::NavBot_Enabled, "Runs the navigation bot using the map mesh." },
+		{ &CFG::Perf_Extreme_Skip_All_Visuals, "Disables every visual feature for maximum FPS." },
+		{ &CFG::Soundpad_Active, "Plays sound files through your microphone channel." },
+		{ &CFG::Menu_Snow, "Snow particles over the menu background." },
+		{ &CFG::Menu_Background_Image_Enabled, "Uses a custom image as the menu background." },
+		{ &CFG::NecroNet_Notifications, "Shows popups for NecroNet friend requests and messages." },
+		{ &CFG::Misc_Clean_Screenshot, "Hides all cheat visuals while a screenshot is being taken." },
+		{ &CFG::Misc_Streamer_Mode, "Hides cheat info from the selected group of players." },
+		{ &CFG::Visuals_Freecam_Speed, "Freecam movement speed in units per second." },
+		{ &CFG::Visuals_ChatESP_Active, "Draws chat messages above the players who sent them." },
+		{ &CFG::Visuals_Thirdperson_Active, "Moves your camera behind the player model." },
+	};
+	const auto it = map.find(pVar);
+	return it != map.end() ? it->second : nullptr;
+}
+void CMenu::SetDescriptionContext(const char *szTab, const char *szGroup)
+{
+	if (szTab)
+		m_strDescTab = szTab;
+	if (szGroup)
+		m_strDescGroup = szGroup;
+}
+void CMenu::TrackControl(const char *szLabel, void *pVar, int nType, bool bHovered, const char *szBody, const char *szHint)
+{
+	if (!bHovered)
+		return;
+	char szKey[512];
+	if (pVar)
+		snprintf(szKey, sizeof(szKey), "v_%p_%s", pVar, szLabel ? szLabel : "?");
+	else
+		snprintf(szKey, sizeof(szKey), "c_%s|%s|%s", m_strDescTab.c_str(), m_strDescGroup.c_str(), szLabel ? szLabel : "?");
+
+	const float flNow = I::EngineClient->Time();
+	if (m_Description.m_strKey != szKey)
+	{
+		m_Description.m_strKey = szKey;
+		m_Description.m_strTitle = szLabel ? szLabel : "";
+		if (szBody)
+			m_Description.m_strBody = szBody;
+		else
+		{
+			const char *pszCurated = FindCuratedDescription(pVar);
+			if (pszCurated)
+				m_Description.m_strBody = pszCurated;
+			else
+			{
+				switch (nType)
+				{
+				case 0: m_Description.m_strBody = "Toggles " + m_strDescGroup + " - " + (szLabel ? szLabel : "option") + " (" + m_strDescTab + " tab)."; break;
+				case 1:
+				case 2: m_Description.m_strBody = "Sets " + m_strDescGroup + " - " + (szLabel ? szLabel : "option") + " (" + m_strDescTab + " tab)."; break;
+				case 4: m_Description.m_strBody = "Runs " + m_strDescGroup + " - " + (szLabel ? szLabel : "action") + " (" + m_strDescTab + " tab)."; break;
+				case 6: m_Description.m_strBody = "Chooses " + m_strDescGroup + " - " + (szLabel ? szLabel : "option") + " (" + m_strDescTab + " tab)."; break;
+				case 7: m_Description.m_strBody = "Toggles entries in " + m_strDescGroup + " - " + (szLabel ? szLabel : "list") + " (" + m_strDescTab + " tab)."; break;
+				case 8: m_Description.m_strBody = "Color for " + m_strDescGroup + " - " + (szLabel ? szLabel : "item") + " (" + m_strDescTab + " tab)."; break;
+				case 5: m_Description.m_strBody = "Edits " + m_strDescGroup + " - " + (szLabel ? szLabel : "text") + " (" + m_strDescTab + " tab)."; break;
+				default: m_Description.m_strBody = (szLabel ? szLabel : "Control") + std::string(" (") + m_strDescTab + " tab)."; break;
+				}
+			}
+		}
+		m_Description.m_strHint = szHint ? szHint : "";
+		m_Description.m_flHoverStart = flNow;
+		m_Description.m_nSide = 0;
+	}
+	m_Description.m_flHoverStart = std::min(m_Description.m_flHoverStart, flNow);
+	if (m_Description.m_flHoverStart <= 0.0f)
+		m_Description.m_flHoverStart = flNow;
+	m_Description.m_flLastTrackTime = flNow;
+}
+void CMenu::DrawDescriptionPanel()
+{
+	const float flNow = I::EngineClient->Time();
+	const bool bTracked = (flNow - m_Description.m_flLastTrackTime) < 0.05f;
+	const float flDwell = 0.45f;
+	const float flShow = (bTracked && (flNow - m_Description.m_flHoverStart) >= flDwell) ? 1.0f : 0.0f;
+	m_Description.m_flAlpha += (flShow - m_Description.m_flAlpha) * std::min(1.0f, 10.0f * I::GlobalVars->frametime);
+	if (m_Description.m_flAlpha < 0.02f)
+	{
+		if (!bTracked)
+			m_Description.m_strKey.clear();
+		return;
+	}
+	if (m_Description.m_strTitle.empty())
+		return;
+
+	const auto &font = H::Fonts->Get(EFonts::Menu);
+	const int nDesignW = GetDesignScreenW();
+	const int nDesignH = GetDesignScreenH();
+	const int nMenuR = CFG::Menu_Pos_X + CFG::Menu_Width;
+	const int nMenuB = CFG::Menu_Pos_Y + CFG::Menu_Height;
+	const int nPanelW = 260;
+	const int nPad = 8;
+	const int nLineH = font.m_nTall + 2;
+
+	auto Measure = [&](const std::string &strLine) -> int {
+		int w_out = 0, h_out = 0;
+		I::MatSystemSurface->GetTextSize(font.m_dwFont, Utils::ConvertUtf8ToWide(strLine).c_str(), w_out, h_out);
+		return w_out;
+	};
+	auto Wrap = [&](const std::string &strText, int nMaxW, int nMaxLines) -> std::vector<std::string> {
+		std::vector<std::string> vecLines;
+		size_t nPos = 0;
+		while (nPos < strText.size() && static_cast<int>(vecLines.size()) < nMaxLines)
+		{
+			size_t nLo = 1, nHi = strText.size() - nPos, nFit = 1;
+			while (nLo <= nHi)
+			{
+				const size_t nMid = (nLo + nHi) / 2;
+				if (Measure(strText.substr(nPos, nMid)) <= nMaxW)
+				{
+					nFit = nMid;
+					nLo = nMid + 1;
+				}
+				else nHi = nMid - 1;
+			}
+			size_t nTake = nFit;
+			if (nPos + nFit < strText.size())
+			{
+				const size_t nSpace = strText.find_last_of(' ', (nPos + nFit) - 1);
+				if (nSpace != std::string::npos && nSpace > nPos)
+					nTake = (nSpace - nPos) + 1;
+			}
+			if (nTake == 0)
+				nTake = 1;
+			vecLines.push_back(strText.substr(nPos, nTake));
+			nPos += nTake;
+			while (nPos < strText.size() && strText[nPos] == ' ')
+				nPos++;
+		}
+		return vecLines;
+	};
+
+	const int nMaxBodyLines = 7;
+	std::vector<std::string> vecBody = Wrap(m_Description.m_strBody, nPanelW - nPad * 2, nMaxBodyLines);
+	std::vector<std::string> vecHint = m_Description.m_strHint.empty() ? std::vector<std::string>() : Wrap(m_Description.m_strHint, nPanelW - nPad * 2, 2);
+	int nPanelH = nPad + nLineH + 2 + (static_cast<int>(vecBody.size()) * nLineH) + (vecHint.empty() ? 0 : nLineH * static_cast<int>(vecHint.size())) + nPad;
+
+	int nSide = m_Description.m_nSide;
+	if (nSide == 0)
+	{
+		if (nMenuR + 8 + nPanelW <= nDesignW)
+			nSide = 1;
+		else if (CFG::Menu_Pos_X - 8 - nPanelW >= 0)
+			nSide = 2;
+		else if (nMenuB + 8 + nPanelH <= nDesignH)
+			nSide = 3;
+		else if (CFG::Menu_Pos_Y - 8 - nPanelH >= 0)
+			nSide = 4;
+		else
+			nSide = 5;
+		m_Description.m_nSide = nSide;
+	}
+	int nX = 0, nY = 0;
+	switch (nSide)
+	{
+	case 1: nX = nMenuR + 8; nY = CFG::Menu_Pos_Y; break;
+	case 2: nX = CFG::Menu_Pos_X - 8 - nPanelW; nY = CFG::Menu_Pos_Y; break;
+	case 3: nX = CFG::Menu_Pos_X; nY = nMenuB + 8; break;
+	case 4: nX = CFG::Menu_Pos_X; nY = CFG::Menu_Pos_Y - 8 - nPanelH; break;
+	default:
+		nX = std::clamp(CFG::Menu_Pos_X, 0, std::max(0, nDesignW - nPanelW));
+		nY = std::clamp(CFG::Menu_Pos_Y, 0, std::max(0, nDesignH - nPanelH));
+		break;
+	}
+	nY = std::clamp(nY, 0, std::max(0, nDesignH - nPanelH));
+
+	const float flAlpha = m_Description.m_flAlpha;
+	const int nSlide = static_cast<int>((1.0f - flAlpha) * 12.0f);
+	int nSlideX = 0, nSlideY = 0;
+	if (nSide == 1) nSlideX = -nSlide;
+	else if (nSide == 2) nSlideX = nSlide;
+	else if (nSide == 3) nSlideY = -nSlide;
+	else if (nSide == 4) nSlideY = nSlide;
+
+	Color_t clrBg = CFG::Menu_Background;
+	clrBg.a = static_cast<byte>(250 * flAlpha);
+	Color_t clrOutline = CFG::Menu_Accent_Primary;
+	clrOutline.a = static_cast<byte>(255 * flAlpha);
+	Color_t clrTitle = CFG::Menu_Text_Active;
+	clrTitle.a = static_cast<byte>(255 * flAlpha);
+	Color_t clrBody = CFG::Menu_Text_Inactive;
+	clrBody.a = static_cast<byte>(255 * flAlpha);
+	Color_t clrHint = CFG::Menu_Text_Disabled;
+	clrHint.a = static_cast<byte>(255 * flAlpha);
+
+	const int nPX = nX + nSlideX, nPY = nY + nSlideY;
+	H::Draw->Rect(nPX, nPY, nPanelW, nPanelH, clrBg);
+	H::Draw->OutlinedRect(nPX, nPY, nPanelW, nPanelH, clrOutline);
+	H::Draw->StartClipping(nPX, nPY, nPanelW, nPanelH);
+	H::Draw->String(font, nPX + nPad, nPY + nPad, clrTitle, POS_DEFAULT, "%s", m_Description.m_strTitle.c_str());
+	int nTextY = nPY + nPad + nLineH + 2;
+	for (const auto &strLine : vecBody)
+	{
+		H::Draw->String(font, nPX + nPad, nTextY, clrBody, POS_DEFAULT, "%s", strLine.c_str());
+		nTextY += nLineH;
+	}
+	for (const auto &strLine : vecHint)
+	{
+		H::Draw->String(font, nPX + nPad, nTextY, clrHint, POS_DEFAULT, "%s", strLine.c_str());
+		nTextY += nLineH;
+	}
+	H::Draw->EndClipping();
+}
 void CMenu::GroupBoxStart(const char *szLabel, int nWidth)
 {
+	SetDescriptionContext(nullptr, szLabel);
 	m_nCursorY += CFG::Menu_Spacing_Y * 2;
 	m_nLastGroupBoxY = m_nCursorY;
 	m_nLastGroupBoxW = nWidth;
@@ -718,6 +998,7 @@ bool CMenu::CheckBox(const char *szLabel, bool &bVar)
 		return w + w_out + 1;
 	}();
 	bool bHovered = IsHovered(x, y, w_with_text, h, &bVar);
+	TrackControl(szLabel, &bVar, 0, bHovered);
 	std::string checkboxId = std::string("chk_") + szLabel + "_" + std::to_string(x) + "_" + std::to_string(y);
 	if (m_buttonHoverStates.find(checkboxId) == m_buttonHoverStates.end())
 		m_buttonHoverStates[checkboxId] = 0.0f;
@@ -780,6 +1061,7 @@ bool CMenu::SliderFloat(const char *szLabel, float &flVar, float flMin, float fl
 	int h = CFG::Menu_Slider_Height;
 	int nTextH = H::Fonts->Get(EFonts::Menu).m_nTall;
 	bool bHovered = IsHovered(x, y + (nTextH + CFG::Menu_Spacing_Y), w, h, &flVar, true);
+	TrackControl(szLabel, &flVar, 1, bHovered, nullptr, "Drag the bar; right-click steps the value.");
 	bool bAcceptsInput = [&]() -> bool
 	{
 		for (const auto &State : m_mapStates)
@@ -871,6 +1153,7 @@ bool CMenu::SliderInt(const char *szLabel, int &nVar, int nMin, int nMax, int nS
 	int h = CFG::Menu_Slider_Height;
 	int nTextH = H::Fonts->Get(EFonts::Menu).m_nTall;
 	bool bHovered = IsHovered(x, y + (nTextH + CFG::Menu_Spacing_Y), w, h, &nVar, true);
+	TrackControl(szLabel, &nVar, 2, bHovered, nullptr, "Drag the bar; right-click steps the value.");
 	bool bAcceptsInput = [&]() -> bool
 	{
 		for (const auto &State : m_mapStates)
@@ -993,6 +1276,7 @@ bool CMenu::InputKey(const char *szLabel, int &nKeyOut)
 		return w + w_out + 1;
 	}();
 	bool bHovered = IsHovered(x, y, w_with_text, h, &nKeyOut);
+	TrackControl(szLabel, &nKeyOut, 3, bHovered, nullptr, "Click, then press a key. Esc clears; Insert or F3 cancels.");
 	bool bActive = m_mapStates[&nKeyOut] || bHovered;
 	if (!m_mapStates[&nKeyOut] && bHovered && H::Input->IsPressed(VK_LBUTTON) && !m_bClickConsumed)
 		m_mapStates[&nKeyOut] = m_bClickConsumed = true;
@@ -1086,6 +1370,7 @@ bool CMenu::Button(const char *szLabel, bool bActive, int nCustomWidth)
 	w += CFG::Menu_Spacing_X * 2;
 	h += CFG::Menu_Spacing_Y - 1;
 	bool bHovered = IsHovered(x, y, w, h, nullptr);
+	TrackControl(szLabel, nullptr, 4, bHovered);
 	std::string buttonId = std::string("btn_") + szLabel + "_" + std::to_string(x) + "_" + std::to_string(y);
 	if (m_buttonHoverStates.find(buttonId) == m_buttonHoverStates.end())
 		m_buttonHoverStates[buttonId] = 0.0f;
@@ -1149,6 +1434,7 @@ bool CMenu::playerListButton(const wchar_t *label, int nCustomWidth, Color_t clr
 	w += CFG::Menu_Spacing_X * 2;
 	h += CFG::Menu_Spacing_Y - 1;
 	bool bHovered = IsHovered(x, y, w, h, nullptr);
+	TrackControl(nullptr, nullptr, 9, bHovered, "Player row: opens this player's detail page.");
 	if (bHovered && H::Input->IsPressed(VK_LBUTTON) && !m_bClickConsumed)
 		bCallback = m_bClickConsumed = true;
 	Color_t clrA = CFG::Menu_Accent_Primary;
@@ -1201,6 +1487,7 @@ bool CMenu::InputText(const char *szLabel, const char *szLabel2, std::string &st
 	w += CFG::Menu_Spacing_X * 2;
 	h += CFG::Menu_Spacing_Y - 1;
 	bool bHovered = IsHovered(x, y, w, h, nullptr);
+	TrackControl(szLabel, &strOutput, 5, bHovered, nullptr, "Click to edit. Enter confirms; Esc cancels.");
 	Color_t clr = CFG::Menu_Accent_Primary;
 	Color_t clr_dim = { clr.r, clr.g, clr.b, bHovered ? static_cast<byte>(50) : static_cast<byte>(0) };
 	if (!m_mapStates[&strOutput])
@@ -1255,7 +1542,7 @@ bool CMenu::InputText(const char *szLabel, const char *szLabel2, std::string &st
 		H::LateRender->Rect(x, y, w, h, CFG::Menu_Background);
 		H::LateRender->OutlinedRect(x, y, w, h, clr);
 		H::LateRender->String(
-			H::Fonts->Get(EFonts::Menu),
+			EFonts::Menu,
 			x + CFG::Menu_Spacing_X,
 			y + (CFG::Menu_Spacing_Y * 3),
 			CFG::Menu_Text_Inactive,
@@ -1353,7 +1640,7 @@ bool CMenu::InputText(const char *szLabel, const char *szLabel2, std::string &st
 		}
 
 		H::LateRender->String(
-			H::Fonts->Get(EFonts::Menu),
+			EFonts::Menu,
 			nTextX,
 			nTextY,
 			CFG::Menu_Text_Active,
@@ -1389,6 +1676,7 @@ bool CMenu::SelectSingle(const char *szLabel, int &nVar, const std::vector<std::
 	int h = CFG::Menu_Select_Height;
 	int nTextH = H::Fonts->Get(EFonts::Menu).m_nTall;
 	bool bHovered = IsHovered(x, y + (nTextH + CFG::Menu_Spacing_Y), w, h, &nVar);
+	TrackControl(szLabel, &nVar, 6, bHovered, nullptr, "Click to open the options list.");
 	bool bActive = bHovered || m_mapStates[&nVar];
 	if (!m_bClickConsumed && bHovered && H::Input->IsPressed(VK_LBUTTON)) {
 		m_mapStates[&nVar] = !m_mapStates[&nVar];
@@ -1444,9 +1732,10 @@ bool CMenu::SelectSingle(const char *szLabel, int &nVar, const std::vector<std::
 			}
 			int nSelectY = (y + h + (nTextH + CFG::Menu_Spacing_Y)) + (h * real_n);
 			bool bSelectHovered = IsHovered(x, nSelectY, w, h, &nVar);
+			TrackControl(Select.first, &nVar, 6, bSelectHovered, (std::string("Sets ") + szLabel + " to " + Select.first + " (" + m_strDescTab + " tab).").c_str());
 			H::LateRender->Rect(x, nSelectY, w, h, clr_dim);
 			H::LateRender->String(
-				H::Fonts->Get(EFonts::Menu),
+				EFonts::Menu,
 				x + (w / 2), nSelectY,
 				bSelectHovered ? CFG::Menu_Text_Active : CFG::Menu_Text_Inactive,
 				POS_CENTERX,
@@ -1474,6 +1763,7 @@ bool CMenu::SelectMulti(const char *szLabel, std::vector<std::pair<const char *,
 	int h = CFG::Menu_Select_Height;
 	int nTextH = H::Fonts->Get(EFonts::Menu).m_nTall;
 	bool bHovered = IsHovered(x, y + (nTextH + CFG::Menu_Spacing_Y), w, h, &vecSelects);
+	TrackControl(szLabel, &vecSelects, 7, bHovered, nullptr, "Click to open; each row toggles independently.");
 	bool bActive = bHovered || m_mapStates[&vecSelects];
 	if (!m_bClickConsumed && bHovered && H::Input->IsPressed(VK_LBUTTON)) {
 		m_mapStates[&vecSelects] = !m_mapStates[&vecSelects];
@@ -1502,8 +1792,7 @@ bool CMenu::SelectMulti(const char *szLabel, std::vector<std::pair<const char *,
 			strSelected += Select.first;
 		}
 	}
-	I::MatSystemSurface->DisableClipping(false);
-	I::MatSystemSurface->SetClippingRect(x, y + (nTextH + CFG::Menu_Spacing_Y), x + (w - CFG::Menu_Spacing_X), y + (nTextH + CFG::Menu_Spacing_Y) + h);
+	H::Draw->StartClipping(x, y + (nTextH + CFG::Menu_Spacing_Y), w - CFG::Menu_Spacing_X, h);
 	H::Draw->String(
 		H::Fonts->Get(EFonts::Menu),
 		x + CFG::Menu_Spacing_X, y + (nTextH + CFG::Menu_Spacing_Y) + (h / 2) - 1,
@@ -1511,7 +1800,7 @@ bool CMenu::SelectMulti(const char *szLabel, std::vector<std::pair<const char *,
 		POS_CENTERY,
 		strSelected.empty() ? "None" : strSelected.c_str()
 	);
-	I::MatSystemSurface->DisableClipping(true);
+	H::Draw->EndClipping();
 	if (m_mapStates[&vecSelects])
 	{
 		bool bSelectRegionHovered = IsHovered(x, y + (nTextH + CFG::Menu_Spacing_Y), w, h * static_cast<int>(vecSelects.size() + 1), &vecSelects);
@@ -1528,6 +1817,7 @@ bool CMenu::SelectMulti(const char *szLabel, std::vector<std::pair<const char *,
 			const auto &Select = vecSelects[n];
 			int nSelectY = (y + (nTextH + CFG::Menu_Spacing_Y) + h) + (h * n);
 			bool bSelectHovered = IsHovered(x, nSelectY, w, h, &vecSelects);
+			TrackControl(Select.first, &vecSelects, 7, bSelectHovered, (std::string("Toggles ") + Select.first + " in " + szLabel + " (" + m_strDescTab + " tab).").c_str());
 			H::LateRender->Rect(x, nSelectY, w, h, clr_dim);
 			static int nYesWidth = []() -> int {
 				int w = 0, h = 0;
@@ -1535,14 +1825,14 @@ bool CMenu::SelectMulti(const char *szLabel, std::vector<std::pair<const char *,
 				return w;
 			}();
 			H::LateRender->String(
-				H::Fonts->Get(EFonts::Menu),
+				EFonts::Menu,
 				x + CFG::Menu_Spacing_X, nSelectY,
 				bSelectHovered ? CFG::Menu_Text_Active : CFG::Menu_Text_Inactive,
 				POS_DEFAULT,
 				Select.first, { x, nSelectY, w - nYesWidth, nTextH }
 			);
 			H::LateRender->String(
-				H::Fonts->Get(EFonts::Menu),
+				EFonts::Menu,
 				x + w - CFG::Menu_Spacing_X, nSelectY,
 				bSelectHovered ? CFG::Menu_Text_Active : CFG::Menu_Text_Inactive,
 				POS_LEFT,
@@ -1623,6 +1913,7 @@ bool CMenu::ColorPicker(const char* szLabel, Color_t& colVar)
 		return w + w_out + 1;
 		}();
 	bool bHovered = IsHovered(x, y, w_with_text, h, &colVar);
+	TrackControl(szLabel, &colVar, 8, bHovered, nullptr, "Click to open the picker; right-click for copy and paste.");
 	if (bHovered && H::Input->IsPressed(VK_LBUTTON) && !m_bClickConsumed) {
 		for (auto& pair : m_mapContextMenuStates)
 			pair.second = false;
@@ -1677,6 +1968,10 @@ bool CMenu::ColorPicker(const char* szLabel, Color_t& colVar)
 		int pasteButtonW = menuWidth - menuPadding * 2;
 		bool hoveredCopy = IsHovered(copyButtonX, copyButtonY, copyButtonW, buttonHeight, &colVar);
 		bool hoveredPaste = IsHovered(pasteButtonX, pasteButtonY, pasteButtonW, buttonHeight, &colVar);
+		if (hoveredCopy)
+			TrackControl("Copy", nullptr, 4, true, "Copies this color to the clipboard for pasting into another color swatch.");
+		else if (hoveredPaste)
+			TrackControl("Paste", nullptr, 4, true, "Applies the last copied color to this swatch.");
 		bool hoveredMenu = IsHovered(menuX, menuY, menuWidth, menuHeight, &colVar);
 		if (H::Input->IsPressed(VK_LBUTTON) && !m_bClickConsumed && !hoveredMenu)
 			m_mapContextMenuStates[&colVar] = false;
@@ -1705,7 +2000,7 @@ bool CMenu::ColorPicker(const char* szLabel, Color_t& colVar)
 		H::LateRender->Rect(copyButtonX, copyButtonY, copyButtonW, buttonHeight, hoveredCopy ? CFG::Menu_Accent_Primary : CFG::Menu_Background);
 		H::LateRender->OutlinedRect(copyButtonX, copyButtonY, copyButtonW, buttonHeight, CFG::Menu_Accent_Primary);
 		H::LateRender->String(
-			H::Fonts->Get(EFonts::Menu),
+			EFonts::Menu,
 			copyButtonX + copyButtonW / 2,
 			copyButtonY + buttonHeight / 2,
 			hoveredCopy ? CFG::Menu_Text_Active : CFG::Menu_Text_Inactive,
@@ -1716,7 +2011,7 @@ bool CMenu::ColorPicker(const char* szLabel, Color_t& colVar)
 		H::LateRender->Rect(pasteButtonX, pasteButtonY, pasteButtonW, buttonHeight, hoveredPaste ? CFG::Menu_Accent_Primary : CFG::Menu_Background);
 		H::LateRender->OutlinedRect(pasteButtonX, pasteButtonY, pasteButtonW, buttonHeight, CFG::Menu_Accent_Primary);
 		H::LateRender->String(
-			H::Fonts->Get(EFonts::Menu),
+			EFonts::Menu,
 			pasteButtonX + pasteButtonW / 2,
 			pasteButtonY + buttonHeight / 2,
 			hoveredPaste ? CFG::Menu_Text_Active : CFG::Menu_Text_Inactive,
@@ -1944,9 +2239,7 @@ void CMenu::MainWindow()
 	if (CFG::Menu_Background_Image_Enabled && MenuBackground::g_nTextureId != -1 && I::MatSystemSurface)
 	{
 		byte imgAlpha = static_cast<byte>(CFG::Menu_Background_Image_Transparency * 255 * (alpha / 255.0f));
-		I::MatSystemSurface->DrawSetColor(255, 255, 255, imgAlpha);
-		I::MatSystemSurface->DrawSetTexture(MenuBackground::g_nTextureId);
-		I::MatSystemSurface->DrawTexturedRect(menuX, menuY, menuX + scaledW, menuY + scaledH);
+		H::Draw->Texture(menuX, menuY, scaledW, scaledH, MenuBackground::g_nTextureId, POS_DEFAULT, { 255, 255, 255, imgAlpha });
 	}
 	Color_t borderColor = CFG::Menu_Accent_Primary;
 	borderColor.a = alpha;
@@ -1981,6 +2274,8 @@ void CMenu::MainWindow()
 		int boxW = CFG::Menu_Tab_Button_Width;
 		int boxH = 50;
 		bool bHovered = IsHovered(x, y, boxW, boxH, nullptr);
+		SetDescriptionContext(label, nullptr);
+		TrackControl(label, nullptr, 10, bHovered, (std::string("Switches to the ") + label + " tab.").c_str());
 		bool bCallback = false;
 		if (bHovered && H::Input->IsPressed(VK_LBUTTON) && !m_bClickConsumed)
 			bCallback = m_bClickConsumed = true;
@@ -2931,6 +3226,23 @@ void CMenu::MainWindow()
 	);
 	m_nCursorX = CFG::Menu_Pos_X + m_nLastButtonW + (CFG::Menu_Spacing_X * 3) - 1;
 	m_nCursorY = CFG::Menu_Pos_Y + CFG::Menu_Drag_Bar_Height + CFG::Menu_Spacing_Y;
+	const char *pszMainTabName = "Aim";
+	switch (MainTab)
+	{
+	case EMainTabs::AIM: pszMainTabName = "Aim"; break;
+	case EMainTabs::VISUALS: pszMainTabName = "Visuals"; break;
+	case EMainTabs::EXPLOITS: pszMainTabName = "Exploits"; break;
+	case EMainTabs::MISC: pszMainTabName = "Misc"; break;
+	case EMainTabs::NAVBOT: pszMainTabName = "NavBot"; break;
+	case EMainTabs::PLAYERS: pszMainTabName = "Players"; break;
+	case EMainTabs::CONFIGS: pszMainTabName = "Configs"; break;
+	case EMainTabs::SOUND: pszMainTabName = "Soundpad"; break;
+	case EMainTabs::NETWORK: pszMainTabName = "NecroNet"; break;
+	case EMainTabs::PACMAN: pszMainTabName = "PacMan"; break;
+	case EMainTabs::PLAYER_DETAILS: pszMainTabName = "Players"; break;
+	default: break;
+	}
+	SetDescriptionContext(pszMainTabName, nullptr);
 	if (MainTab == EMainTabs::AIM)
 	{
 		enum class EAimTabs { AIMBOT, TRIGGERBOT };
@@ -5101,6 +5413,7 @@ void CMenu::MainWindow()
 				const int nInputWidth = 150;
 				const int nInputHeight = H::Fonts->Get(EFonts::Menu).m_nTall + 4;
 				bool bHovered = IsHoveredSimple(m_nCursorX, m_nCursorY - 2, nInputWidth, nInputHeight);
+				TrackControl("Search Players", nullptr, 5, bHovered, "Filters the player list by name. Click the box to type.");
 				if (bHovered && H::Input->IsPressed(VK_LBUTTON))
 				{
 					bPlayerSearchFocused = true;
@@ -5155,11 +5468,16 @@ void CMenu::MainWindow()
 					{
 						H::Draw->Line(nCursorDrawX, m_nCursorY, nCursorDrawX, m_nCursorY + H::Fonts->Get(EFonts::Menu).m_nTall - 2, CFG::Menu_Text_Active);
 					}
+					}
+					int nAutoTagTextW = 0, nAutoTagTextH = 0;
+					I::MatSystemSurface->GetTextSize(H::Fonts->Get(EFonts::Menu).m_dwFont, Utils::ConvertUtf8ToWide("Auto-tag votekickers").c_str(), nAutoTagTextW, nAutoTagTextH);
+					m_nCursorX = CFG::Menu_Pos_X + CFG::Menu_Width - nAutoTagTextW - CFG::Menu_CheckBox_Width - CFG::Menu_Spacing_X - 4;
+					m_nCursorY = by + 1;
+					CheckBox("Auto-tag votekickers", CFG::Players_Auto_Tag_Votekickers);
+					m_nCursorX = bx;
+					m_nCursorY = by + nInputHeight + CFG::Menu_Spacing_Y;
 				}
-				m_nCursorX = bx;
-				m_nCursorY = by + nInputHeight + CFG::Menu_Spacing_Y;
-			}
-			static std::vector<int> vecPlayerIndices;
+				static std::vector<int> vecPlayerIndices;
 			vecPlayerIndices.clear();
 			bool bLocalRowFound = false;
 			std::string strSearchLower = strSearchFilter;
@@ -5325,6 +5643,7 @@ void CMenu::MainWindow()
 					int alertW = 45;
 					int alertH = H::Fonts->Get(EFonts::Menu).m_nTall + CFG::Menu_Spacing_Y - 1;
 					bool bAlertHovered = IsHovered(m_nCursorX, m_nCursorY, alertW, alertH, nullptr);
+					TrackControl("Ban Alert", nullptr, 9, bAlertHovered, "This player has bans on record. Click to open their details page.");
 					Color_t alertBg = bAlertHovered ? Color_t{ 220, 60, 60, 255 } : Color_t{ 180, 40, 40, 255 };
 					H::Draw->Rect(m_nCursorX, m_nCursorY, alertW, alertH, alertBg);
 					H::Draw->OutlinedRect(m_nCursorX, m_nCursorY, alertW, alertH, { 255, 80, 80, 255 });
@@ -6642,6 +6961,7 @@ void CMenu::MainWindow()
 				}
 				H::Draw->EndClipping();
 				const bool bInputHovered = IsHoveredSimple(nChatX, nInputY, nInputW, nInputH);
+				TrackControl("Message", nullptr, 5, bInputHovered, "Type your NecroNet message here. Enter sends; clicking outside stops typing.");
 				if (bInputHovered && H::Input->IsPressed(VK_LBUTTON) && !m_bClickConsumed && !bAnyPopupActive)
 					bNetChatFocused = true;
 				else if (H::Input->IsPressed(VK_LBUTTON) && !bInputHovered && !m_bClickConsumed)
@@ -7133,9 +7453,11 @@ void CMenu::Snow()
 	}
 	auto GenerateSnowFlake = [](bool bFirstTime = false)
 	{
+		const int nDesignW = F::Menu->GetDesignScreenW();
+		const int nDesignH = F::Menu->GetDesignScreenH();
 		SnowFlake_t Out = {};
-		Out.m_flPosX = static_cast<float>(Utils::RandInt(-(H::Draw->GetScreenW() / 2), H::Draw->GetScreenW()));
-		Out.m_flPosY = static_cast<float>(Utils::RandInt(bFirstTime ? -(H::Draw->GetScreenH() * 2) : -100, -50));
+		Out.m_flPosX = static_cast<float>(Utils::RandInt(-(nDesignW / 2), nDesignW));
+		Out.m_flPosY = static_cast<float>(Utils::RandInt(bFirstTime ? -(nDesignH * 2) : -100, -50));
 		Out.m_flFallSpeed = static_cast<float>(Utils::RandInt(100, 200));
 		Out.m_flDriftXSpeed = static_cast<float>(Utils::RandInt(10, 70));
 		Out.m_nAlpha = static_cast<byte>(Utils::RandInt(5, 255));
@@ -7151,7 +7473,7 @@ void CMenu::Snow()
 	}
 	for (auto &SnowFlake : vecSnowFlakes)
 	{
-		if (SnowFlake.m_flPosY > H::Draw->GetScreenH() + 50)
+		if (SnowFlake.m_flPosY > F::Menu->GetDesignScreenH() + 50)
 		{
 			SnowFlake = GenerateSnowFlake();
 			continue;
@@ -7179,8 +7501,8 @@ void CMenu::DrawNetNotifications()
 	const int nW = 280;
 	const int nH = 52;
 	const int nAvatarSize = 36;
-	const int nScreenW = H::Draw->GetScreenW();
-	const int nScreenH = H::Draw->GetScreenH();
+	const int nScreenW = GetDesignScreenW();
+	const int nScreenH = GetDesignScreenH();
 	const auto tpNow = std::chrono::steady_clock::now();
 	constexpr float flLifetime = 6.0f;
 	constexpr float flFade = 0.5f;
@@ -7262,7 +7584,7 @@ void CMenu::DrawToasts()
 	const auto &font = H::Fonts->Get(EFonts::Menu);
 	const int nW = 280;
 	const int nH = 34;
-	int nY = H::Draw->GetScreenH() - 10;
+	int nY = GetDesignScreenH() - 10;
 
 	for (auto it = m_vecToasts.rbegin(); it != m_vecToasts.rend(); ++it)
 	{
@@ -7341,6 +7663,12 @@ void CMenu::Run()
 	Indicators();
 	if (m_bOpen)
 	{
+		m_flLayoutScale = MenuScale::Calculate(H::Draw->GetScreenW(), H::Draw->GetScreenH());
+		const int nDesignW = static_cast<int>(H::Draw->GetScreenW() / m_flLayoutScale);
+		const int nDesignH = static_cast<int>(H::Draw->GetScreenH() / m_flLayoutScale);
+		CFG::Menu_Pos_X = std::clamp(CFG::Menu_Pos_X, 0, std::max(0, nDesignW - CFG::Menu_Width));
+		CFG::Menu_Pos_Y = std::clamp(CFG::Menu_Pos_Y, 0, std::max(0, nDesignH - CFG::Menu_Height));
+		H::Draw->PushTransform(0.0f, 0.0f, 0.0f, 0.0f, m_flLayoutScale);
 		if (!m_bWantTextInput)
 			H::Input->ClearChars();
 		m_bClickConsumed = false;
@@ -7349,6 +7677,7 @@ void CMenu::Run()
 		H::LateRender->Clear();
 		MainWindow();
 		H::LateRender->DrawAll();
+		DrawDescriptionPanel();
 		DrawAchievementConfirm();
 		{
 			static bool is_running{ false };
@@ -7444,6 +7773,7 @@ void CMenu::Run()
 		}
 		DrawNetNotifications();
 		DrawToasts();
+		H::Draw->PopTransform();
 	}
 CMenu::CMenu()
 {
@@ -8026,6 +8356,7 @@ void CMenu::RenderDraggableGroupBoxes(const std::string& szTab, int nContentX, i
 		int dragHandleW = 147;
 		int dragHandleX = boxX + 3;
 		bool headerHovered = IsHoveredSimple(dragHandleX, dragHandleY, dragHandleW, dragHandleH);
+		TrackControl(gb->m_szLabel.c_str(), nullptr, 4, headerHovered, "Drag this header to move the group box. The options inside it stay active.");
 		if (headerHovered && H::Input->IsPressed(VK_LBUTTON) && !m_bClickConsumed && !m_bIsDraggingGroupBox)
 		{
 			m_bIsDraggingGroupBox = true;

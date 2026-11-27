@@ -17,11 +17,36 @@
 
 class CDraw
 {
+	struct Transform_t
+	{
+		float m_flSourceX = 0.0f;
+		float m_flSourceY = 0.0f;
+		float m_flDestX = 0.0f;
+		float m_flDestY = 0.0f;
+		float m_flScaleX = 1.0f;
+		float m_flScaleY = 1.0f;
+		bool m_bActive = false;
+	};
+
 	int m_nScreenW = 0, m_nScreenH = 0;
 	VMatrix m_WorldToProjection = {};
 	std::unordered_map<uint64_t, int> m_mapAvatars = {};
+	Transform_t m_Transforms[8] = {};
+	int m_nTransformDepth = 0;
+
+	const Transform_t &GetTransform() const;
+	int X(int x) const;
+	int Y(int y) const;
+	int W(int w) const;
+	int H(int h) const;
 
 public:
+	void PushTransform(float flSourceX, float flSourceY, float flDestX, float flDestY, float flScaleX, float flScaleY = 0.0f);
+	void PopTransform();
+	void ClearTransforms();
+	int InverseMouseX(int x) const;
+	int InverseMouseY(int y) const;
+	bool IsTransformed() const;
 	void UpdateScreenSize();
 	void UpdateW2SMatrix();
 
@@ -40,7 +65,7 @@ public:
 	void GradientRect(int x, int y, int w, int h, Color_t top_clr, Color_t bottom_clr, bool horizontal);
 	void OutlinedCircle(int x, int y, int radius, int segments, Color_t clr);
 	void FilledCircle(int x, int y, int radius, int segments, Color_t clr);
-	void Texture(int x, int y, int w, int h, int id, short pos);
+	void Texture(int x, int y, int w, int h, int id, short pos, Color_t tint = { 255, 255, 255, 255 });
 	void Polygon(int count, Vertex_t *vertices, Color_t clr);
 	void FilledTriangle(const std::array<Vec2, 3> &points, Color_t clr);
 	void Arc(int x, int y, int radius, float thickness, float start, float end, Color_t col);

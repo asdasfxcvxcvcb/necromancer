@@ -465,6 +465,7 @@
     <ClCompile Include="src\App\Hooks\CBaseViewModel_Interpolate.cpp" />
     <ClCompile Include="src\App\Hooks\CBaseHudChatLine_InsertAndColorizeText.cpp" />
     <ClCompile Include="src\App\Hooks\CBasePlayer_CalcPlayerView.cpp" />
+    <ClCompile Include="src\App\Hooks\CBasePlayer_ItemPostFrame.cpp" />
     <ClCompile Include="src\App\Hooks\CClientScoreBoardDialog_NeedsUpdate.cpp" />
     <ClCompile Include="src\App\Hooks\CClientState_GetClientInterpAmount.cpp" />
     <ClCompile Include="src\App\Hooks\CClientState_GetTime.cpp" />
@@ -544,6 +545,7 @@
     <ClCompile Include="src\App\Hooks\ISteamNetworkingUtils_GetPingToDataCenter.cpp" />
     <ClCompile Include="src\App\Hooks\ISurface_LockCursor.cpp" />
     <ClCompile Include="src\App\Hooks\ISurface_OnScreenSizeChanged.cpp" />
+    <ClCompile Include="src\App\Hooks\ISurface_ResetFontCaches.cpp" />
     <ClCompile Include="src\App\Hooks\IVEngineClient013_ClientCmd.cpp" />
     <ClCompile Include="src\App\Hooks\IVModelRender_DrawModelExecute.cpp" />
     <ClCompile Include="src\App\Hooks\IVModelRender_ForcedMaterialOverride.cpp" />

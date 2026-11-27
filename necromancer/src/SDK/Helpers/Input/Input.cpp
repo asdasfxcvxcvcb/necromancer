@@ -2,6 +2,16 @@
 
 #include "../../SDK.h"
 
+int CInput::GetMouseX()
+{
+	return H::Draw ? H::Draw->InverseMouseX(m_nMouseX) : m_nMouseX;
+}
+
+int CInput::GetMouseY()
+{
+	return H::Draw ? H::Draw->InverseMouseY(m_nMouseY) : m_nMouseY;
+}
+
 std::string CInput::DrainCharsUtf8()
 {
 	std::string strOut;

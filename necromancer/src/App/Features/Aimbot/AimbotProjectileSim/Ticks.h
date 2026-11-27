@@ -12,6 +12,7 @@ class CProjectileTicks
 {
 private:
     Vec3 m_vShootPos = {};
+    bool m_bTimingUnsure = false;
 
 public:
     // Save the current shoot position (call in CreateMove)
@@ -39,20 +40,27 @@ public:
         return m_vShootPos;
     }
 
-    // While a shift batch is executing (doubletap / rapid fire / sticky DT /
-    // warp re-run CreateMove with a manipulated tickbase) the exact cmd the
-    // server will run our attack on is unknown - Amalgam flags this as
-    // m_bTimingUnsure so the aimbot writes its angles on every batch cmd
-    // instead of only on the tick it thinks fires
     bool IsTimingUnsure()
     {
-        return Shifting::bShifting || Shifting::bShiftingWarp;
+        if (!Shifting::bShifting || Shifting::bShiftingWarp)
+        {
+            m_bTimingUnsure = false;
+            return false;
+        }
+
+        if (!Shifting::nCurrentShiftTick)
+        {
+            const auto pWeapon = H::Entities->GetWeapon();
+            m_bTimingUnsure = pWeapon && pWeapon->IsInReload();
+        }
+        return m_bTimingUnsure;
     }
 
     // Reset state
     void Reset()
     {
         m_vShootPos = {};
+        m_bTimingUnsure = false;
     }
 };
 

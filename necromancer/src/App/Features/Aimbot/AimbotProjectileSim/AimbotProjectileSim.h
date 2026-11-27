@@ -156,7 +156,7 @@ private:
     std::vector<Target_t> GetTargets(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon);
     std::vector<Target_t> SortTargets(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon);
 
-    Directs_t GetDirects(int iDirectTier);
+    Directs_t GetDirects();
     Splashes_t GetSplashes();
     void SetupSplashPoints(Vec3& vOrigin, std::vector<Setup_t>& vSplashPoints, int iFlags = CalculateFlagsEnum::None);
     std::vector<Point_t> GetSplashPoints(Vec3 vOrigin, std::vector<Setup_t>& vSplashPoints, int iSimTime, int iFlags = CalculateFlagsEnum::Accuracy, bool bFirst = false);
@@ -168,7 +168,7 @@ private:
     bool HandleDirect(DirectHistory_t& mDirectHistory);
     bool HandleSplash(SplashHistory_t& mSplashHistory);
 
-    int CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, bool bUpdate = true, int iDirectTier = 0);
+    int CanHit(Target_t& tTarget, C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, bool bUpdate = true);
     bool RunMain(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon, CUserCmd* pCmd);
 
     bool Aim(const Vec3& vCurAngle, const Vec3& vToAngle, Vec3& vOut, int iMethod = AimTypeValue());
@@ -202,6 +202,8 @@ private:
     float m_flTimeTo = std::numeric_limits<float>::max();
     std::vector<Vec3> m_vPlayerPath = {};
     std::vector<Vec3> m_vProjectilePath = {};
+    float m_flRocketPathAttack = -1.f;
+    int m_iRocketPathWeapon = 0;
 
     Vec3 m_vAngleTo = {};
     Vec3 m_vPredicted = {};
@@ -224,16 +226,21 @@ private:
     // or HandleSplash evaluation - full rolls across every candidate would
     // multiply the simulation cost by 360/step
     int m_iRollBudget = 0;
+    int m_iArrowTestBudget = 0;
+    bool m_bArrowFallbackStage = false;
+    bool m_bArrowCommitStage = false;
+    float m_flLastHitMargin = -1.f;
+    Vec3 m_vArrowPreferred = {};
+    bool m_bArrowPreferredValid = false;
+    bool m_bFreshSolution = false;
 
     AimTarget_t m_tAimTarget = {};
     AimPoint_t m_tAimPoint = {};
 
 public:
-    // the current CreateMove tick carries a just-validated solution - the
-    // doubletap may only arm on these ticks, never on carried-angle ones
     bool HasFreshSolution() const
     {
-        return m_iLastSolutionTick != -1 && m_iLastSolutionTick == I::GlobalVars->tickcount;
+        return m_bFreshSolution;
     }
 
     // Main entry point. Claims every projectile-type weapon Necromancer

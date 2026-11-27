@@ -895,6 +895,7 @@ namespace CFG
 	CFGVAR(Misc_Auto_Queue, false);
 	CFGVAR(Misc_Auto_F1, false);
 	CFGVAR(Misc_Auto_F2, false);
+	CFGVAR(Players_Auto_Tag_Votekickers, false);
 	CFGVAR(Misc_Auto_Accept_Items, false);
 	CFGVAR(Misc_Auto_FastClassSwitch, false);
 	CFGVAR(Misc_Auto_Rejoin_On_Kick, false);

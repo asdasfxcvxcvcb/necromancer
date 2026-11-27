@@ -693,11 +693,15 @@ void CStatusWindow::DrawSpree(int nX, int nY, int nW, int nBarH, int nRows, floa
 		H::Draw->OutlinedRect(nX, nY, nW, nFullH, HueColor(flPhase, nAlpha));
 	}
 
+	const float flArtScale = std::clamp(std::min((nW - 8.0f) / 84.0f, (nBodyH - 8.0f) / 60.0f), 0.5f, 3.0f);
+	const int nArtW = static_cast<int>(84.0f * flArtScale);
+	const int nArtH = static_cast<int>(60.0f * flArtScale);
+
 	if (m_iKillAnim != KILLA_NONE && nAlpha > 76)
-		DrawKillAnim(m_iKillAnim, nCX - 42 + nShakeX, nBodyCY - 54, 84, 60, flLife);
+		DrawKillAnim(m_iKillAnim, nCX - (nArtW / 2) + nShakeX, nBodyCY - (nArtH / 2) - static_cast<int>(nArtH * 0.12f), nArtW, nArtH, flLife);
 
 	const auto& font = H::Fonts->Get(EFonts::StatusAnnounce);
-	const int nTextY = (m_iKillAnim != KILLA_NONE) ? nBodyCY + 18 : nBodyCY;
+	const int nTextY = (m_iKillAnim != KILLA_NONE) ? (nBodyCY - (nArtH / 2) - static_cast<int>(nArtH * 0.12f)) + nArtH + static_cast<int>(12.0f * flArtScale) : nBodyCY;
 
 	for (int n = 0; n < 4; n++)
 	{
@@ -2578,8 +2582,10 @@ static const char* const szKillaSmg[] =
 
 void CStatusWindow::DrawKillAnim(int iAnim, int ax, int ay, int aw, int ah, float t)
 {
-	const int cx = ax + (aw / 2);
-	const int cy = ay + (ah / 2);
+	const float flScale = std::clamp(std::min(aw / 84.0f, ah / 60.0f), 0.25f, 4.0f);
+	H::Draw->PushTransform(static_cast<float>(ax), static_cast<float>(ay), static_cast<float>(ax), static_cast<float>(ay), flScale);
+	const int cx = ax + 42;
+	const int cy = ay + 30;
 
 	auto PXR = [&](const char* const* pszRows, const Color_t* pPal, int nOffX, int nOffY)
 	{
@@ -2846,7 +2852,7 @@ void CStatusWindow::DrawKillAnim(int iAnim, int ax, int ay, int aw, int ah, floa
 		if (fmodf(t, 0.16f) < 0.09f)
 		{
 			DrawMuzzleStar(ax + 66, ay + 27, 8, Color_t{ 255, 255, 215, 255 }, Color_t{ 255, 205, 70, 255 });
-			H::Draw->Line(ax + 71, ay + 27, ax + aw, ay + 24 + (rand() % 5), Color_t{ 255, 225, 100, 190 });
+			H::Draw->Line(ax + 71, ay + 27, ax + 84, ay + 24 + (rand() % 5), Color_t{ 255, 225, 100, 190 });
 		}
 		break;
 	}
@@ -2985,8 +2991,8 @@ void CStatusWindow::DrawKillAnim(int iAnim, int ax, int ay, int aw, int ah, floa
 	}
 	case KILLA_MEDIC:
 	{
-		const int nCX = ax + (aw / 2) - 4;
-		const int nCY = ay + (ah / 2);
+		const int nCX = ax + 42 - 4;
+		const int nCY = ay + 30;
 		const float flPulse = (std::sin(t * 4.0f) + 1.0f) * 0.5f;
 		H::Draw->OutlinedCircle(nCX, nCY, 15 + static_cast<int>(flPulse * 5.0f), 20, Color_t{ 255, 255, 255, static_cast<byte>(70 + (flPulse * 80.0f)) });
 		H::Draw->FillRectRounded(nCX - 11, nCY - 11, 22, 22, 4, Color_t{ 240, 240, 240, 245 });
@@ -3054,6 +3060,8 @@ void CStatusWindow::DrawKillAnim(int iAnim, int ax, int ay, int aw, int ah, floa
 	default:
 		break;
 	}
+
+	H::Draw->PopTransform();
 }
 
 void CStatusWindow::DrawScrambledText(const CFont& font, int nX, int nY, Color_t tColor, const char* pszText, int nAlign, float flPhase)

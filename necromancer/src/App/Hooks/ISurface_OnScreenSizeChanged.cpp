@@ -9,7 +9,7 @@ MAKE_HOOK(ISurface_OnScreenSizeChanged, Memory::GetVFunc(I::MatSystemSurface, 11
 {
 	CALL_ORIGINAL(ecx, nOldWidth, OldHeight);
 
-	H::Fonts->Reload();
+	H::Fonts->Invalidate();
 	H::Draw->UpdateScreenSize();
 
 	F::Materials->CleanUp();

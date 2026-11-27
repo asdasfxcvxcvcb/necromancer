@@ -9,7 +9,7 @@ class CLateRenderer
 private:
 	struct String_t
 	{
-		CFont m_dwFont;
+		EFonts m_eFont;
 		int m_nX, m_nY;
 		Color_t m_Color;
 		short m_nAlign;
@@ -41,7 +41,7 @@ private:
 	std::vector<Texture_t> m_vecTextures = {};
 
 public:
-	void String(const CFont &font, int x, int y, Color_t col, short align, const char *str, const ClipRegion_t &clip);
+	void String(EFonts font, int x, int y, Color_t col, short align, const char *str, const ClipRegion_t &clip);
 	void Rect(int x, int y, int w, int h, Color_t col);
 	void OutlinedRect(int x, int y, int w, int h, Color_t col);
 	void Texture(int id, int x, int y, int w, int h);

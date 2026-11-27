@@ -11,6 +11,73 @@
 
 #pragma warning (disable : 6385)
 
+const CDraw::Transform_t &CDraw::GetTransform() const
+{
+	static const Transform_t Identity = {};
+	return m_nTransformDepth > 0 ? m_Transforms[m_nTransformDepth - 1] : Identity;
+}
+
+int CDraw::X(int x) const
+{
+	const auto &t = GetTransform();
+	return t.m_bActive ? static_cast<int>(std::lround(t.m_flDestX + (x - t.m_flSourceX) * t.m_flScaleX)) : x;
+}
+
+int CDraw::Y(int y) const
+{
+	const auto &t = GetTransform();
+	return t.m_bActive ? static_cast<int>(std::lround(t.m_flDestY + (y - t.m_flSourceY) * t.m_flScaleY)) : y;
+}
+
+int CDraw::W(int w) const
+{
+	const auto &t = GetTransform();
+	return t.m_bActive ? static_cast<int>(std::lround(w * t.m_flScaleX)) : w;
+}
+
+int CDraw::H(int h) const
+{
+	const auto &t = GetTransform();
+	return t.m_bActive ? static_cast<int>(std::lround(h * t.m_flScaleY)) : h;
+}
+
+void CDraw::PushTransform(float flSourceX, float flSourceY, float flDestX, float flDestY, float flScaleX, float flScaleY)
+{
+	if (m_nTransformDepth >= 8)
+		return;
+	if (flScaleY == 0.0f)
+		flScaleY = flScaleX;
+	m_Transforms[m_nTransformDepth++] = { flSourceX, flSourceY, flDestX, flDestY, flScaleX, flScaleY, flScaleX != 1.0f || flScaleY != 1.0f || flSourceX != flDestX || flSourceY != flDestY };
+}
+
+void CDraw::PopTransform()
+{
+	if (m_nTransformDepth > 0)
+		m_nTransformDepth--;
+}
+
+void CDraw::ClearTransforms()
+{
+	m_nTransformDepth = 0;
+}
+
+int CDraw::InverseMouseX(int x) const
+{
+	const auto &t = GetTransform();
+	return t.m_bActive ? static_cast<int>(std::lround(t.m_flSourceX + (x - t.m_flDestX) / t.m_flScaleX)) : x;
+}
+
+int CDraw::InverseMouseY(int y) const
+{
+	const auto &t = GetTransform();
+	return t.m_bActive ? static_cast<int>(std::lround(t.m_flSourceY + (y - t.m_flDestY) / t.m_flScaleY)) : y;
+}
+
+bool CDraw::IsTransformed() const
+{
+	return GetTransform().m_bActive;
+}
+
 void CDraw::UpdateScreenSize()
 {
 	m_nScreenW = I::BaseClientDLL->GetScreenWidth();
@@ -118,8 +185,8 @@ void CDraw::String(const CFont &font, int x, int y, Color_t clr, short pos, cons
 		if (pos & POS_CENTERY) { y -= (h / 2); }
 	}
 
-	I::MatSystemSurface->DrawSetTextPos(x, y);
-	I::MatSystemSurface->DrawSetTextFont(font.m_dwFont);
+	I::MatSystemSurface->DrawSetTextPos(X(x), Y(y));
+	I::MatSystemSurface->DrawSetTextFont(IsTransformed() && font.m_dwScaledFont ? font.m_dwScaledFont : font.m_dwFont);
 	I::MatSystemSurface->DrawSetTextColor(clr.r, clr.g, clr.b, clr.a);
 	I::MatSystemSurface->DrawPrintText(wstr, int(wcslen(wstr)));
 }
@@ -147,8 +214,8 @@ void CDraw::String(const CFont &font, int x, int y, Color_t clr, short pos, cons
 		if (pos & POS_CENTERY) { y -= (h / 2); }
 	}
 
-	I::MatSystemSurface->DrawSetTextPos(x, y);
-	I::MatSystemSurface->DrawSetTextFont(font.m_dwFont);
+	I::MatSystemSurface->DrawSetTextPos(X(x), Y(y));
+	I::MatSystemSurface->DrawSetTextFont(IsTransformed() && font.m_dwScaledFont ? font.m_dwScaledFont : font.m_dwFont);
 	I::MatSystemSurface->DrawSetTextColor(clr.r, clr.g, clr.b, clr.a);
 	I::MatSystemSurface->DrawPrintText(wstr, int(wcslen(wstr)));
 }
@@ -156,34 +223,35 @@ void CDraw::String(const CFont &font, int x, int y, Color_t clr, short pos, cons
 void CDraw::Line(int x, int y, int x1, int y1, Color_t clr)
 {
 	I::MatSystemSurface->DrawSetColor(clr.r, clr.g, clr.b, clr.a);
-	I::MatSystemSurface->DrawLine(x, y, x1, y1);
+	I::MatSystemSurface->DrawLine(X(x), Y(y), X(x1), Y(y1));
 }
 
 void CDraw::Rect(int x, int y, int w, int h, Color_t clr)
 {
 	I::MatSystemSurface->DrawSetColor(clr.r, clr.g, clr.b, clr.a);
-	I::MatSystemSurface->DrawFilledRect(x, y, x + w, y + h);
+	I::MatSystemSurface->DrawFilledRect(X(x), Y(y), X(x + w), Y(y + h));
 }
 
 void CDraw::OutlinedRect(int x, int y, int w, int h, Color_t clr)
 {
 	I::MatSystemSurface->DrawSetColor(clr.r, clr.g, clr.b, clr.a);
-	I::MatSystemSurface->DrawOutlinedRect(x, y, x + w, y + h);
+	I::MatSystemSurface->DrawOutlinedRect(X(x), Y(y), X(x + w), Y(y + h));
 }
 
 void CDraw::GradientRect(int x, int y, int w, int h, Color_t top_clr, Color_t bottom_clr, bool horizontal)
 {
+	const int nX0 = X(x), nY0 = Y(y), nX1 = X(x + w), nY1 = Y(y + h);
 	I::MatSystemSurface->DrawSetColor(top_clr.r, top_clr.g, top_clr.b, top_clr.a);
-	I::MatSystemSurface->DrawFilledRectFade(x, y, x + w, y + h, 255, 255, horizontal);
+	I::MatSystemSurface->DrawFilledRectFade(nX0, nY0, nX1, nY1, 255, 255, horizontal);
 
 	I::MatSystemSurface->DrawSetColor(bottom_clr.r, bottom_clr.g, bottom_clr.b, bottom_clr.a);
-	I::MatSystemSurface->DrawFilledRectFade(x, y, x + w, y + h, 0, 255, horizontal);
+	I::MatSystemSurface->DrawFilledRectFade(nX0, nY0, nX1, nY1, 0, 255, horizontal);
 }
 
 void CDraw::OutlinedCircle(int x, int y, int radius, int segments, Color_t clr)
 {
 	I::MatSystemSurface->DrawSetColor(clr.r, clr.g, clr.b, clr.a);
-	I::MatSystemSurface->DrawOutlinedCircle(x, y, radius, segments);
+	I::MatSystemSurface->DrawOutlinedCircle(X(x), Y(y), W(radius), segments);
 }
 
 void CDraw::FilledCircle(int x, int y, int radius, int segments, Color_t clr)
@@ -211,7 +279,7 @@ void CDraw::FilledCircle(int x, int y, int radius, int segments, Color_t clr)
 	}
 }
 
-void CDraw::Texture(int x, int y, int w, int h, int id, short pos)
+void CDraw::Texture(int x, int y, int w, int h, int id, short pos, Color_t tint)
 {
 	if (pos)
 	{
@@ -229,8 +297,8 @@ void CDraw::Texture(int x, int y, int w, int h, int id, short pos)
 	}
 
 	I::MatSystemSurface->DrawSetTexture(id);
-	I::MatSystemSurface->DrawSetColor(255, 255, 255, 255);
-	I::MatSystemSurface->DrawTexturedRect(x, y, x + w, y + h);
+	I::MatSystemSurface->DrawSetColor(tint.r, tint.g, tint.b, tint.a);
+	I::MatSystemSurface->DrawTexturedRect(X(x), Y(y), X(x + w), Y(y + h));
 }
 
 void CDraw::Polygon(int count, Vertex_t *vertices, Color_t clr)
@@ -242,7 +310,19 @@ void CDraw::Polygon(int count, Vertex_t *vertices, Color_t clr)
 
 	I::MatSystemSurface->DrawSetColor(clr.r, clr.g, clr.b, clr.a);
 	I::MatSystemSurface->DrawSetTexture(id);
-	I::MatSystemSurface->DrawTexturedPolygon(count, vertices);
+	if (!IsTransformed())
+	{
+		I::MatSystemSurface->DrawTexturedPolygon(count, vertices);
+		return;
+	}
+	thread_local std::vector<Vertex_t> vecTransformed;
+	vecTransformed.assign(vertices, vertices + count);
+	for (auto &v : vecTransformed)
+	{
+		v.m_Position.x = static_cast<float>(X(static_cast<int>(v.m_Position.x)));
+		v.m_Position.y = static_cast<float>(Y(static_cast<int>(v.m_Position.y)));
+	}
+	I::MatSystemSurface->DrawTexturedPolygon(count, vecTransformed.data());
 }
 
 void CDraw::FilledTriangle(const std::array<Vec2, 3> &points, Color_t clr)
@@ -285,7 +365,7 @@ void CDraw::Arc(int x, int y, int radius, float thickness, float start, float en
 void CDraw::StartClipping(int x, int y, int w, int h)
 {
 	I::MatSystemSurface->DisableClipping(false);
-	I::MatSystemSurface->SetClippingRect(x, y, x + w, y + h);
+	I::MatSystemSurface->SetClippingRect(X(x), Y(y), X(x + w), Y(y + h));
 }
 
 void CDraw::EndClipping()
@@ -319,6 +399,7 @@ void CDraw::Avatar(int x, int y, int w, int h, uint32_t nFriendID)
 	if (!I::SteamFriends || !I::SteamUtils)
 		return;
 
+	const int nX0 = X(x), nY0 = Y(y), nX1 = X(x + w), nY1 = Y(y + h);
 	const uint64_t nID = static_cast<uint64_t>(nFriendID) + 0x0110000100000000ULL;
 
 	auto it = m_mapAvatars.find(nID);
@@ -326,7 +407,7 @@ void CDraw::Avatar(int x, int y, int w, int h, uint32_t nFriendID)
 	{
 		I::MatSystemSurface->DrawSetColor(255, 255, 255, 255);
 		I::MatSystemSurface->DrawSetTexture(it->second);
-		I::MatSystemSurface->DrawTexturedRect(x, y, x + w, y + h);
+		I::MatSystemSurface->DrawTexturedRect(nX0, nY0, nX1, nY1);
 		return;
 	}
 
@@ -366,7 +447,7 @@ void CDraw::Avatar(int x, int y, int w, int h, uint32_t nFriendID)
 
 			I::MatSystemSurface->DrawSetColor(255, 255, 255, 255);
 			I::MatSystemSurface->DrawSetTexture(nTextureID);
-			I::MatSystemSurface->DrawTexturedRect(x, y, x + w, y + h);
+			I::MatSystemSurface->DrawTexturedRect(nX0, nY0, nX1, nY1);
 		}
 	}
 

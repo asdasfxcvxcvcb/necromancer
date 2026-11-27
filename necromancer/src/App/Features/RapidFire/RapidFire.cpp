@@ -60,6 +60,9 @@ bool CRapidFire::ShouldStart(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
 	if (G::nTargetIndex <= 0 || !G::bFiring)
 		return false;
 
+	if (H::AimUtils->GetWeaponType(pWeapon) == EWeaponType::PROJECTILE && !F::AimbotProjectileSim->HasFreshSolution())
+		return false;
+
 	if (Shifting::bShifting || Shifting::bRecharging || Shifting::bShiftingWarp)
 		return false;
 
@@ -109,7 +112,7 @@ void CRapidFire::AntiWarp(C_TFPlayer* pLocal, CUserCmd* pCmd, int nTicks)
 
 void CRapidFire::MaintainWait()
 {
-	if (G::Attacking == 1 || (!G::bCanPrimaryAttack && !G::bReloading))
+	if (G::Attacking == 1 && !G::bReloading || (!G::bCanPrimaryAttack && !G::bReloading))
 		m_iWait = CFG::Exploits_RapidFire_Ticks;
 
 	if (m_iWait > 0)
@@ -191,10 +194,13 @@ bool CRapidFire::ShouldExitCreateMove(CUserCmd* pCmd)
 
 void CRapidFire::RunBatchCommand(C_TFPlayer* pLocal, CUserCmd* pCmd)
 {
-	if (Shifting::bShiftingWarp || IsStickyWeapon(H::Entities->GetWeapon()))
+	const auto pBatchWeapon = H::Entities->GetWeapon();
+	if (Shifting::bShiftingWarp || IsStickyWeapon(pBatchWeapon))
 		return;
 
-	if (m_bShiftAttack)
+	const bool bBatchRocket = pBatchWeapon && (pBatchWeapon->GetWeaponID() == TF_WEAPON_ROCKETLAUNCHER || pBatchWeapon->GetWeaponID() == TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT);
+
+	if (m_bShiftAttack && !bBatchRocket)
 		pCmd->buttons |= IN_ATTACK;
 
 	if (CFG::Exploits_RapidFire_Antiwarp && m_bStartedShiftOnGround)
@@ -334,14 +340,21 @@ bool CRapidFire::CanDoubleTapNow(C_TFPlayer* pLocal, C_TFWeaponBase* pWeapon)
 			return false;
 	}
 
+	const int nWeaponID = pWeapon->GetWeaponID();
+	if (nWeaponID == TF_WEAPON_ROCKETLAUNCHER || nWeaponID == TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT)
+	{
+		const float flCurTime = static_cast<float>(pLocal->m_nTickBase()) * I::GlobalVars->interval_per_tick;
+		if (pWeapon->IsInReload() && pWeapon->m_iReloadMode() != 0 && pWeapon->HasPrimaryAmmoForShot())
+			return pWeapon->m_flReloadPriorNextFire() <= flCurTime;
+		const float flBackdatedTime = flCurTime - TICKS_TO_TIME(GetReleaseTicks());
+		return pWeapon->m_flNextPrimaryAttack() <= flBackdatedTime && pLocal->m_flNextAttack() <= flBackdatedTime && pWeapon->HasPrimaryAmmoForShot();
+	}
+
 	const int nSavedTickBase = pLocal->m_nTickBase();
 	pLocal->m_nTickBase() = nSavedTickBase + 1;
 	const bool bCanFireNextTick = pWeapon->CanPrimaryAttack(pLocal) && pWeapon->HasPrimaryAmmoForShot();
 	pLocal->m_nTickBase() = nSavedTickBase;
 
-	// Amalgam's Doubletap has no reload-specific gate: it arms whenever the
-	// weapon can fire now, next tick, or the reload is interruptible, and the
-	// engine's own reload-interrupt timing decides when the batch's shots land
 	return G::bCanPrimaryAttack || bCanFireNextTick || CanInterruptReload(pWeapon);
 }
 

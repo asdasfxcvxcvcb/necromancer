@@ -318,16 +318,23 @@ bool CProjectileSimulation::GetInfo(C_TFPlayer* pPlayer, C_TFWeaponBase* pWeapon
 		return bReturn;
 
 	CGameTrace trace = {};
-	CTraceFilterWorldAndProps filter = {};
-	filter.pSkip = pPlayer;  // Skip the local player in trace
-
-	// Use saved shoot position which accounts for predicted duck state from CrouchWhileAirborne
-	Vec3 vStart = bQuick ? pPlayer->GetEyePosition() : F::ProjectileTicks->GetShootPos();
-	Vec3 vEnd = tProjInfo.m_vPos;
-
-	SDKUtils::TraceHull(vStart, vEnd, tProjInfo.m_vHull * -1.f, tProjInfo.m_vHull, MASK_SOLID, &filter, &trace);
-	// Amalgam clamps the spawn to the trace end so point-blank shots into walls
-	// still simulate (from the pulled-back position) instead of being rejected
+	const int nWeaponID = pWeapon->GetWeaponID();
+	const bool bRocket = nWeaponID == TF_WEAPON_ROCKETLAUNCHER || nWeaponID == TF_WEAPON_ROCKETLAUNCHER_DIRECTHIT;
+	const Vec3 vStart = bQuick ? pPlayer->GetEyePosition() : bRocket ? SDKUtils::GetPredictedShootPos(pPlayer) : F::ProjectileTicks->GetShootPos();
+	const Vec3 vEnd = tProjInfo.m_vPos;
+	if (bRocket)
+	{
+		CTraceFilterRocket filter = {};
+		filter.pSkip = pPlayer;
+		filter.pSkipWeapon = pWeapon;
+		SDKUtils::Trace(vStart, vEnd, MASK_SOLID_BRUSHONLY, &filter, &trace);
+	}
+	else
+	{
+		CTraceFilterWorldAndProps filter = {};
+		filter.pSkip = pPlayer;
+		SDKUtils::TraceHull(vStart, vEnd, tProjInfo.m_vHull * -1.f, tProjInfo.m_vHull, MASK_SOLID, &filter, &trace);
+	}
 	tProjInfo.m_vPos = trace.endpos;
 	return !trace.allsolid;
 }

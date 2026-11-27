@@ -100,3 +100,12 @@ public:
 	C_BaseEntity* pSkip = nullptr;
 	int iTeam = -1;
 };
+
+class CTraceFilterRocket : public CTraceFilter
+{
+public:
+	bool ShouldHitEntity(IHandleEntity* pServerEntity, int contentsMask) override;
+
+	C_BaseEntity* pSkip = nullptr;
+	C_BaseEntity* pSkipWeapon = nullptr;
+};

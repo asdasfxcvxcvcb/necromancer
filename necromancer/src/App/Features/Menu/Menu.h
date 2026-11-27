@@ -2,6 +2,7 @@
 
 #include "../../../SDK/SDK.h"
 #include "MenuAnimations.h"
+#include "MenuScale.h"
 #include <chrono>
 #include <unordered_map>
 
@@ -23,11 +24,23 @@ struct DraggableGroupBox_t
 	std::function<void()> m_fnRenderContent; // Function to render the content
 };
 
-struct MenuToast_t
-{
-	std::string m_strText;
-	std::chrono::steady_clock::time_point m_tpBorn;
-};
+	struct MenuToast_t
+	{
+		std::string m_strText;
+		std::chrono::steady_clock::time_point m_tpBorn;
+	};
+
+	struct DescriptionState_t
+	{
+		std::string m_strKey;
+		std::string m_strTitle;
+		std::string m_strBody;
+		std::string m_strHint;
+		float m_flHoverStart = 0.0f;
+		float m_flLastTrackTime = 0.0f;
+		float m_flAlpha = 0.0f;
+		int m_nSide = 0;
+	};
 
 class CMenu
 {
@@ -41,6 +54,7 @@ private:
 
 	bool m_bClickConsumed = false;
 	std::map<void *, bool> m_mapStates = {};
+	float m_flLayoutScale = 1.0f;
 	
 	// Animation system
 	CAnimationController m_animator;
@@ -74,6 +88,7 @@ private:
 	unsigned int m_nColorPickerTextureId = 0;
 
 	std::vector<MenuToast_t> m_vecToasts;
+	DescriptionState_t m_Description;
 
 	enum class EConfirmAction { NONE = 0, UNLOCK_ACHIEVEMENTS = 1, LOCK_ACHIEVEMENTS = 2, AUTH_LOGIN = 3, AUTH_REGISTER = 4 };
 	EConfirmAction m_eConfirmAction = EConfirmAction::NONE;
@@ -83,6 +98,9 @@ private:
 	void Drag(int &x, int &y, int w, int h, int offset_y);
 	bool IsHovered(int x, int y, int w, int h, void *pVar, bool bStrict = false);
 	bool IsHoveredSimple(int x, int y, int w, int h);
+	void TrackControl(const char *szLabel, void *pVar, int nType, bool bHovered, const char *szBody = nullptr, const char *szHint = nullptr);
+	void DrawDescriptionPanel();
+	void SetDescriptionContext(const char *szTab, const char *szGroup);
 
 	bool CheckBox(const char *szLabel, bool &bVar);
 	bool SliderFloat(const char *szLabel, float &flVar, float flMin, float flMax, float flStep, const char *szFormat);
@@ -111,6 +129,9 @@ public:
 	inline bool IsOpen() { return m_bOpen; }
 	inline bool IsMenuWindowHovered() { return m_bMenuWindowHovered; }
 	inline bool IsDraggingGroupBox() { return m_bIsDraggingGroupBox; }
+	inline float GetLayoutScale() { return m_flLayoutScale; }
+	inline int GetDesignScreenW() { return static_cast<int>(H::Draw->GetScreenW() / m_flLayoutScale); }
+	inline int GetDesignScreenH() { return static_cast<int>(H::Draw->GetScreenH() / m_flLayoutScale); }
 
 	bool m_bWantTextInput = false;
 	bool m_bInKeybind = false;
@@ -136,6 +157,8 @@ public:
 private:
 	std::unordered_map<Color_t*, bool> m_mapContextMenuStates;
 	Color_t m_copiedColor = { 255, 255, 255, 255 };
+	std::string m_strDescTab = "Aim";
+	std::string m_strDescGroup;
 
 	std::unordered_map<uint32, bool> m_mapPlayerContextMenuStates;
 };
